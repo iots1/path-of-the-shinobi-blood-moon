@@ -6,7 +6,7 @@
 *.blend@
 
 # Go
-server/zanshin-server
+server/path-of-the-shinobi-blood-moon
 *.test
 
 # Node (ถ้าย้ายไปใช้ Vite ภายหลัง)

@@ -25,6 +25,6 @@ func main() {
 	if p := os.Getenv("PORT"); p != "" {
 		addr = ":" + p
 	}
-	log.Printf("zanshin dev server: http://localhost%s", addr)
+	log.Printf("Path of the Shinobi: Blood Moon dev server: http://localhost%s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }

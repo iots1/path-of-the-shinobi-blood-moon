@@ -1,4 +1,4 @@
-# HANDOFF — zanshin project status as of 2026-10-17
+# HANDOFF — Path of the Shinobi: Blood Moon project status as of 2026-10-17
 
 This document summarizes what was discussed in the Claude web chat, to hand off to Claude CLI working in the project folder.
 **Read alongside `CLAUDE.md`** (CLAUDE.md = code architecture / this file = status and open work)
