@@ -473,7 +473,6 @@ function loadNinja(){
    same phase so the procedural arm swing / torso twist stay in step with the clip's legs. */
 const RUN_SPEED=4.0;      // top movement speed, m/s
 const WALK_SPEED=1.6;     // movement speed while Shift is held, m/s
-const KNEE_IN=.28, FOOT_IN=.35; // inward yaw (rad) of the thigh (knee+toes follow) and of the foot alone, at full motion
 const RUN_LEAN=.24;       // extra forward spine lean (rad) at full run
 const CADENCE_BOOST=1.2;  // >1 = quicker steps than the stride strictly allows (slight foot slide)
 const LOCO_BONES=['LeftUpLeg','LeftLeg','LeftFoot','LeftToeBase','RightUpLeg','RightLeg','RightFoot','RightToeBase'];
@@ -530,13 +529,6 @@ function driveRealBones(real){
   }
   const L=real.loco;
   if(L && L.w>0) for(const b of L.walk.tracks.keys()) if(L.run.tracks.has(b)) b.quaternion.slerp(locoPose(L,b,_qr), L.w);
-  if(L && L.w>0){ // clips (like the bind pose) toe out — turn knees and feet inward about the vertical axis
-    real.model.updateMatrixWorld(true);
-    for(const [n,amt,sd] of [['LeftUpLeg',KNEE_IN,-1],['RightUpLeg',KNEE_IN,1],['LeftFoot',FOOT_IN,-1],['RightFoot',FOOT_IN,1]]){
-      const b=real.bone[n]; b.parent.getWorldQuaternion(_q1);
-      _q2.setFromAxisAngle(UP,sd*amt*L.w);
-      b.quaternion.premultiply(_q1.clone().invert().multiply(_q2).multiply(_q1)); b.updateMatrixWorld(true); }
-  }
   const hipsRL=real.hipsPos.clone().add(rig.hips.position).sub(DRIVER_REST.hips.p);
   real.bone['Hips'].position.copy(hipsRL.applyMatrix4(real.hipsParentInv));
   real.model.updateMatrixWorld(true);
