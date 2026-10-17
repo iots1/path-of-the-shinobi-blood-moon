@@ -415,19 +415,25 @@ function loadNinja(){
     real.hipsPos=posRL('Hips');
     real.hipsParentInv=rootLocal(hips.parent).invert();
     // Meshy's bind pose has the legs splayed, but the driver's rest legs hang straight down.
-    // Straighten each leg segment first so the pose parameters (spread etc.) mean the same thing;
-    // then lift the hips by however much the straightened legs got longer vertically.
-    real.corr={}; let lift=0;
+    // Each mapped bone's target is computed independently (its own corrected bind direction in
+    // root-local space) — so correcting the thigh and knee to EACH point straight down keeps the
+    // skeleton geometrically straight, but makes the knee's own rotation deviate far from its bind
+    // value, which this model's imperfect auto-rig skin weights render as a visible crease. Using
+    // the SAME correction for the thigh and shin instead rigidly re-aims the leg as one unit, leaving
+    // each bone's rotation close to bind (no crease) while still mostly removing the splay.
+    // The foot is left out on purpose: it keeps its bind orientation (flat on the ground) — giving it
+    // the leg's correction too tips the toes down and reads as standing on tiptoe.
+    real.corr={};
     for(const s of ['Left','Right']){
-      const hip=posRL(`${s}UpLeg`), knee=posRL(`${s}Leg`), ank=posRL(`${s}Foot`);
-      real.corr[`${s}UpLeg`]=new THREE.Quaternion().setFromUnitVectors(knee.clone().sub(hip).normalize(),V(0,-1,0));
-      real.corr[`${s}Leg`]=new THREE.Quaternion().setFromUnitVectors(ank.clone().sub(knee).normalize(),V(0,-1,0));
-      lift+=(ank.y-(hip.y-hip.distanceTo(knee)-knee.distanceTo(ank)))/2;
+      const hip=posRL(`${s}UpLeg`), knee=posRL(`${s}Leg`);
+      real.corr[`${s}UpLeg`]=real.corr[`${s}Leg`]=new THREE.Quaternion().setFromUnitVectors(knee.clone().sub(hip).normalize(),V(0,-1,0));
     }
-    real.hipsPos.y+=lift;
+    // bind-pose heights of the foot contact points (model root sits on the floor in bind pose);
+    // applySkeleton() snaps the hips each frame so the lowest of these touches the ground
+    real.ground=['LeftFoot','LeftToeBase','RightFoot','RightToeBase'].map(n=>[bone[n], posRL(n).y]);
     for(const [side,S0] of [['R','Right'],['L','Left']]){
       const up=bone[`${S0}Arm`], fo=bone[`${S0}ForeArm`], ha=bone[`${S0}Hand`];
-      real.arm[side]={ up, fo,
+      real.arm[side]={ up, fo, ha,
         l1:posRL(`${S0}Arm`).distanceTo(posRL(`${S0}ForeArm`)),
         l2:posRL(`${S0}ForeArm`).distanceTo(posRL(`${S0}Hand`)),
         upDir:fo.position.clone().normalize(), foDir:ha.position.clone().normalize(),
@@ -455,10 +461,53 @@ function loadNinja(){
     for(const s of ['R','L']) for(const p of ['upper','fore','hand']) rig[p+s].visible=false;
     rig.real=real;
     console.log('[GLTF] ninja.glb attached', {flipped:model.rotation.y!==0, armR:[real.arm.R.l1,real.arm.R.l2], hips:real.hipsPos.toArray()});
+    loadLocoClips(real);
   }, undefined, err=>console.error('[GLTF] failed to load assets/ninja.glb — keeping the procedural character', err));
 }
 
-const _rlq=new Map(), _q1=new THREE.Quaternion(), _q2=new THREE.Quaternion();
+/* Locomotion: Meshy's free walk + run clips (same rig, in place) drive the LEGS ONLY while moving;
+   hips, torso, arms/sword IK and attacks stay procedural. Both clips share one normalized phase
+   (left foot furthest forward at u=.25 in each), are blended walk→run by speed, and the result is
+   slerped over the procedural legs by walkAmt. Phase advances at speed / blended stride length (so
+   the planted foot roughly matches the ground) × CADENCE_BOOST, and walkPhase is derived from the
+   same phase so the procedural arm swing / torso twist stay in step with the clip's legs. */
+const RUN_SPEED=4.0;      // top movement speed, m/s
+const CADENCE_BOOST=1.2;  // >1 = quicker steps than the stride strictly allows (slight foot slide)
+const LOCO_BONES=['LeftUpLeg','LeftLeg','LeftFoot','LeftToeBase','RightUpLeg','RightLeg','RightFoot','RightToeBase'];
+function calibrateClip(real, clip){
+  const tracks=new Map();
+  for(const tr of clip.tracks){ const [n,prop]=tr.name.split('.');
+    if(prop==='quaternion' && LOCO_BONES.includes(n) && real.bone[n]) tracks.set(real.bone[n], tr.createInterpolant()); }
+  // sample one cycle with the hips at bind: how fast a planted toe moves backward (= ground speed at
+  // rate 1) and when the left foot is furthest forward
+  for(const name in real.bind) real.bone[name].quaternion.copy(real.bind[name].q);
+  const dur=clip.duration, N=60, toe=real.bone.LeftToeBase, foot=real.bone.LeftFoot, s=[];
+  for(let i=0;i<N;i++){ const t=dur*i/N;
+    for(const [b,it] of tracks) b.quaternion.fromArray(it.evaluate(t)).normalize();
+    real.model.updateMatrixWorld(true);
+    const tp=V().setFromMatrixPosition(rootLocal(toe)), fp=V().setFromMatrixPosition(rootLocal(foot));
+    s.push({t, ty:tp.y, tz:tp.z, fz:fp.z}); }
+  for(const name in real.bind) real.bone[name].quaternion.copy(real.bind[name].q);
+  const minY=Math.min(...s.map(o=>o.ty)); let dz=0, n=0;
+  for(let i=0;i<N;i++){ const a=s[i], b=s[(i+1)%N]; if(a.ty<minY+.015 && b.ty<minY+.015){ dz+=a.tz-b.tz; n++; } }
+  const speed=n ? (dz/n)/(dur/N) : 2;
+  return {tracks, dur, speed, stride:speed*dur, uFwd:s.reduce((m,o)=>o.fz>m.fz?o:m).t/dur};
+}
+function loadLocoClips(real){
+  const ld=f=>new Promise((ok,no)=>new GLTFLoader().load(f, g=>ok(g.animations[0]), undefined, no));
+  Promise.all([ld('assets/anim/walk.glb'), ld('assets/anim/run.glb')]).then(([w,r])=>{
+    real.loco={walk:calibrateClip(real,w), run:calibrateClip(real,r), u:0, w:0, b:0};
+    const L=real.loco; console.log('[GLTF] loco clips ready', {walk:[+L.walk.speed.toFixed(2),+L.walk.dur.toFixed(2)], run:[+L.run.speed.toFixed(2),+L.run.dur.toFixed(2)]});
+  }).catch(err=>console.warn('[GLTF] no locomotion clips — procedural legs only', err));
+}
+const _qw=new THREE.Quaternion();
+function locoPose(L, bone, out){ // walk/run pose for one bone at the shared phase, blended by L.b
+  const at=(c)=>((L.u-.25+c.uFwd)%1+1)%1*c.dur;
+  out.fromArray(L.walk.tracks.get(bone).evaluate(at(L.walk))).normalize();
+  return out.slerp(_qw.fromArray(L.run.tracks.get(bone).evaluate(at(L.run))).normalize(), L.b);
+}
+
+const _rlq=new Map(), _q1=new THREE.Quaternion(), _q2=new THREE.Quaternion(), _qr=new THREE.Quaternion();
 function rlq(o){ // root-local quaternion of a glb node, built from the current local rotations
   let q=_rlq.get(o); if(q) return q;
   q = o.parent===rig.root ? o.quaternion.clone() : rlq(o.parent).clone().multiply(o.quaternion);
@@ -476,6 +525,8 @@ function driveRealBones(real){
     bone.quaternion.copy(rlq(bone.parent)).invert().multiply(want);
     _rlq.set(bone,want.clone());
   }
+  const L=real.loco;
+  if(L && L.w>0) for(const b of L.walk.tracks.keys()) if(L.run.tracks.has(b)) b.quaternion.slerp(locoPose(L,b,_qr), L.w);
   const hipsRL=real.hipsPos.clone().add(rig.hips.position).sub(DRIVER_REST.hips.p);
   real.bone['Hips'].position.copy(hipsRL.applyMatrix4(real.hipsParentInv));
   real.model.updateMatrixWorld(true);
@@ -503,6 +554,13 @@ function aimArm(a, S0, E, W){
     }
   }
   aimBone(a.fo, a.foDir, fd);
+}
+const HAND_GRIP_OFFSET=new THREE.Quaternion(); // local correction between the blade's basis and a natural grip; tuned empirically
+function aimHand(a, bladeQuat, blend){ // rotate the wrist to match the sword's grip, blended by `blend` (0..1)
+  if(!a.ha || blend<=0) return;
+  const parentInv=a.fo.getWorldQuaternion(_q1).invert();
+  const gripLocal=parentInv.multiply(_q2.copy(bladeQuat).multiply(HAND_GRIP_OFFSET));
+  a.ha.quaternion.slerp(gripLocal, clamp(blend,0,1)); a.ha.updateMatrixWorld(true);
 }
 
 /* ---------- 4) ANIM: poses ----------
@@ -579,22 +637,47 @@ const BONES={}; // world positions for debug
 function applySkeleton(p,T){
   const r=rig, t=S.clock/1000;
   r.root.position.copy(S.pos); r.root.rotation.y=S.facing+p.spin*D2R;
-  const w=S.walkAmt, ph=S.walkPhase, breathe=Math.sin(t*1.8);
-  r.hips.position.y=HIP_Y+p.hipY+Math.abs(Math.sin(ph))*.035*w-.012*w+breathe*.004;
+  const real=r.real, L=real&&real.loco;
+  if(L){ const sp=Math.hypot(S.vel.x,S.vel.z);
+    L.b=smooth(clamp((sp/RUN_SPEED-.3)/.5,0,1)); // walk below ~30% of top speed, run above ~80%
+    L.u=(L.u+T*sp/lerp(L.walk.stride,L.run.stride,L.b)*CADENCE_BOOST)%1; L.w=S.walkAmt; }
+  const w=S.walkAmt, breathe=Math.sin(t*1.8);
+  const ph=L ? 2*Math.PI*L.u : S.walkPhase;
+  // run bounce: lowest at mid-stance (ph = 0, π), highest when the legs are spread mid-flight
+  r.hips.position.y=HIP_Y+p.hipY+Math.abs(Math.sin(ph))*.06*w-.03*w+breathe*.004;
   r.hips.rotation.set(0,p.hipYaw+Math.sin(ph)*.12*w,0);
-  r.spine.rotation.set(p.lean+.08*w,0,0);
+  r.spine.rotation.set(p.lean+.16*w,0,0);
   r.chest.rotation.set(breathe*.012,p.chestYaw-Math.sin(ph)*.18*w,0);
   r.head.rotation.set(-p.lean*.6-.05*w,p.headYaw-p.chestYaw*.4,0);
   // legs: stance + walk (rotate legs so the feet stay flat on the ground)
   const crouch=clamp(-p.hipY*3.4,0,1);
   for(const [s,sign,phase] of [['L',1,0],['R',-1,Math.PI]]){
-    const sw=Math.sin(ph+phase)*.62*w, kneeB=(Math.max(0,Math.sin(ph+phase+1.3))*.95)*w+crouch*.9;
-    const th=r['thigh'+s]; th.rotation.set(-sw-crouch*.5, 0, sign*p.spread);
-    r['knee'+s].rotation.x=kneeB; r['ankle'+s].rotation.set(-(-sw-crouch*.5)-kneeB, 0, -sign*p.spread);
+    // θ=ph+phase: thigh swings forward for sin θ>0. The knee drives further forward than the leg
+    // pushes back; the swing knee folds after toe-off, and the stance knee flexes ~17° at
+    // mid-stance (θ=π) to absorb the landing instead of staying locked straight.
+    const th0=ph+phase, s0=Math.sin(th0), sw=(s0>0?.66:.42)*s0*w;
+    const kneeB=(Math.max(0,Math.sin(th0+1.3))*.95+Math.max(0,-Math.cos(th0))*.3)*w+crouch*.9;
+    // Toe-in: the model's bind pose turns the toes out ~25°, which reads as a waddle when running.
+    // Most of the inward turn goes on the ankle — twisting the thigh that far also swings the
+    // knee-bend plane, so every bent knee flicks the shin outward (a bow-legged gallop). The thigh
+    // only gets a slight knee-in twist, and the stance narrows while moving so feet land near the midline.
+    const spread=p.spread*(1-.7*w);
+    const th=r['thigh'+s]; th.rotation.set(-sw-crouch*.5, -sign*(.08+.06*w), sign*spread);
+    r['knee'+s].rotation.x=kneeB; r['ankle'+s].rotation.set(-(-sw-crouch*.5)-kneeB, -sign*(.12+.16*w), -sign*spread);
   }
   const fl=Math.min(Math.abs(dyn.spin.yd)*.00025,.22); r.skirt.scale.set(1+fl+p.spread*.5,1,1+fl);
   r.root.updateMatrixWorld(true);
-  const real=r.real; if(real) driveRealBones(real);
+  if(real){
+    driveRealBones(real);
+    // Leg FK never lands the feet exactly on the floor (crouch poses sink them, the straightened
+    // legs float them), so snap: shift the hips until the lowest foot contact point sits at its
+    // bind-pose height. Keeps the planted foot on the ground in every pose without hand-tuning.
+    // While running, a foot above the ground is fine (that's the flight phase) — only fully snap
+    // down when standing; sinking below the floor is always corrected.
+    let gap=Infinity; for(const [b,y0] of real.ground) gap=Math.min(gap, b.getWorldPosition(_v).y-y0);
+    if(gap>0) gap*=1-.85*w;
+    if(Math.abs(gap)>1e-4){ r.hips.position.y-=gap; r.root.updateMatrixWorld(true); driveRealBones(real); }
+  }
   // ---- right arm + sword ----
   const chest=r.chest;
   const shR=real ? real.arm.R.up.getWorldPosition(V()) : chest.localToWorld(V(-.2,.1,0));
@@ -615,14 +698,16 @@ function applySkeleton(p,T){
   S.prevDir=dir.clone();
   const X=_a.copy(S.edge).addScaledVector(dir,-S.edge.dot(dir)).normalize(), Z=_b.crossVectors(X,dir).normalize();
   _m.makeBasis(X,dir,Z); r.katana.quaternion.setFromRotationMatrix(_m); r.katana.position.copy(wR);
-  if(real) aimArm(real.arm.R,shR,eR,wR); else { placeLimb(r.upperR,shR,eR); placeLimb(r.foreR,eR,wR); r.handR.position.copy(wR); }
+  if(real){ aimArm(real.arm.R,shR,eR,wR); aimHand(real.arm.R,r.katana.quaternion,1); }
+  else { placeLimb(r.upperR,shR,eR); placeLimb(r.foreR,eR,wR); r.handR.position.copy(wR); }
   // ---- left arm: hangs at the side, or grips the hilt ----
   const hang=chest.localToWorld(V(.27,-.43+Math.sin(ph)*.03*w,.03-Math.sin(ph)*.16*w));
   const grip=wR.clone().addScaledVector(dir,-.13);
   const tL=hang.lerp(grip,clamp(p.two,0,1));
   const poleL=V(1,-.6,-.6).applyQuaternion(cq);
   const {E:eL,W:wL}=real ? solveIK(shL,tL,poleL,real.arm.L.l1,real.arm.L.l2) : solveIK(shL,tL,poleL);
-  if(real) aimArm(real.arm.L,shL,eL,wL); else { placeLimb(r.upperL,shL,eL); placeLimb(r.foreL,eL,wL); r.handL.position.copy(wL); }
+  if(real){ aimArm(real.arm.L,shL,eL,wL); aimHand(real.arm.L,r.katana.quaternion,p.two); }
+  else { placeLimb(r.upperL,shL,eL); placeLimb(r.foreL,eL,wL); r.handL.position.copy(wL); }
   // ---- cloak: spring bones ----
   const vLocal=S.vel.clone().applyAxisAngle(UP,-(S.facing+p.spin*D2R));
   const spinV=dyn.spin.yd*D2R;
@@ -794,7 +879,7 @@ function step(T){
   if(ix||iz){ want.addScaledVector(fwd,iz).addScaledVector(right,ix).normalize(); S.moveTo=null; }
   else if(S.moveTo){ const d=V(S.moveTo.x-S.pos.x,0,S.moveTo.z-S.pos.z); if(d.length()<.12) S.moveTo=null; else want.copy(d.normalize()); }
   const canMove=S.phase==='idle';
-  const tv=want.multiplyScalar(canMove?3.1:0);
+  const tv=want.multiplyScalar(canMove?RUN_SPEED:0);
   if(S.act && S.act.def.lunge){ const a=S.act, k0=a.def.keys[0][0], k1=a.def.keys[1][0]; if(a.t>k0-40 && a.t<k1) tv.add(V(Math.sin(S.facing),0,Math.cos(S.facing)).multiplyScalar(a.def.lunge)); }
   S.vel.lerp(tv,1-Math.exp(-T*(tv.lengthSq()?12:9)));
   const np=S.pos.clone().addScaledVector(S.vel,T);
@@ -804,7 +889,7 @@ function step(T){
   const sp=Math.hypot(S.vel.x,S.vel.z);
   if(canMove && sp>.3) S.facing=Math.atan2(S.vel.x,S.vel.z);
   { let d=S.facing-facingS.y; d=Math.atan2(Math.sin(d),Math.cos(d)); facingS.update(T,facingS.y+d); }
-  S.walkAmt=lerp(S.walkAmt,canMove?clamp(sp/3.1,0,1):0,1-Math.exp(-T*8)); S.walkPhase+=T*sp*3.3;
+  S.walkAmt=lerp(S.walkAmt,canMove?clamp(sp/RUN_SPEED,0,1):0,1-Math.exp(-T*8)); S.walkPhase+=T*sp*3.3;
 
   // ---- attack timeline ----
   if(S.act){ const a=S.act; a.t+=T*1000;
