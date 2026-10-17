@@ -1,0 +1,4 @@
+# Run `git lfs install` before committing these files (see README)
+*.glb   filter=lfs diff=lfs merge=lfs -text
+*.fbx   filter=lfs diff=lfs merge=lfs -text
+*.blend filter=lfs diff=lfs merge=lfs -text

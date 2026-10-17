@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Blender backups
+*.blend1
+*.blend@
+
+# Go
+server/zanshin-server
+*.test
+
+# Node (ถ้าย้ายไปใช้ Vite ภายหลัง)
+node_modules/
+dist/
+
+# secrets
+.env
+.env.*
+
+*.log
