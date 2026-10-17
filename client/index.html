@@ -1,0 +1,882 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sword Dojo: Ink Ninja (Isometric)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+Thai:wght@400;600&family=Yuji+Syuku&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #c9c3b8; --bar-ink: #1e1c1a; --bar-ink-soft: #57524c; --btn-line: #8a8378;
+    --btn-on-bg: #1e1c1a; --btn-on-ink: #ece7dc; --on-paper: #1a1918; --seal: #9e2a1f; --focus: #9e2a1f;
+    color-scheme: light; box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151413; --bar-ink: #e6e1d7; --bar-ink-soft: #a29b90; --btn-line: #57524b;
+      --btn-on-bg: #e6e1d7; --btn-on-ink: #151413; --focus: #d4574a; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #151413; --bar-ink: #e6e1d7; --bar-ink-soft: #a29b90; --btn-line: #57524b;
+    --btn-on-bg: #e6e1d7; --btn-on-ink: #151413; --focus: #d4574a; color-scheme: dark;
+  }
+  *, *::before, *::after { box-sizing: inherit; }
+  html { height: 100%; scroll-padding-top: env(safe-area-inset-top, 0px); }
+  body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--bar-ink);
+    font-family: "Noto Serif Thai", "Sarabun", "Leelawadee UI", Tahoma, serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .stage-wrap { flex: 1; min-height: 0; padding: 12px 12px 6px; display: flex; }
+  #stage {
+    position: relative; flex: 1; min-height: 0; background: #e9e4da; overflow: hidden;
+    box-shadow: 0 1px 0 rgba(0,0,0,.08), 0 18px 40px -24px rgba(0,0,0,.45);
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #stage canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  #paper { position: absolute; inset: 0; pointer-events: none; mix-blend-mode: multiply; background-size: 512px 512px; }
+  .kanji {
+    position: absolute; right: 6%; top: 10%; pointer-events: none;
+    font-family: "Yuji Syuku", "Hiragino Mincho ProN", "Yu Mincho", serif;
+    font-size: clamp(48px, 10vw, 140px); line-height: 1; color: var(--on-paper);
+    opacity: 0; transform: translateY(6px) scale(.96); transition: opacity .5s ease, transform .5s ease;
+  }
+  .kanji.show { opacity: .9; transform: none; transition: opacity .06s, transform .12s cubic-bezier(.2,1.6,.4,1); }
+  .kanji.final { color: var(--seal); }
+  .bar {
+    display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; justify-content: space-between;
+    padding: 4px 16px 12px; width: 100%;
+  }
+  .hint { margin: 0; font-size: 14px; line-height: 1.7; color: var(--bar-ink-soft); max-width: 70ch; }
+  .hint span { white-space: nowrap; margin-right: 14px; }
+  kbd { font: inherit; font-size: 12px; padding: 0 5px; border: 1px solid var(--btn-line); border-radius: 3px; color: var(--bar-ink); }
+  .controls { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .controls button {
+    font: inherit; font-size: 14px; color: var(--bar-ink); background: transparent; min-height: 36px;
+    border: 1px solid var(--btn-line); border-radius: 999px; padding: 5px 13px; cursor: pointer;
+  }
+  .controls button.primary { background: var(--btn-on-bg); color: var(--btn-on-ink); border-color: var(--btn-on-bg); padding: 5px 22px; font-weight: 600; }
+  .controls button[aria-pressed="true"] { background: var(--btn-on-bg); color: var(--btn-on-ink); border-color: var(--btn-on-bg); }
+  .controls button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .controls .sep { width: 1px; height: 22px; background: var(--btn-line); margin: 0 4px; }
+  @media (max-width: 700px) { .hint { display: none; } .controls { width: 100%; justify-content: center; } }
+</style>
+</head>
+<body>
+  <div class="stage-wrap">
+    <div id="stage" aria-label="Isometric sword dojo">
+      <div id="paper"></div>
+      <div class="kanji" id="kanji" aria-hidden="true"></div>
+    </div>
+  </div>
+  <div class="bar">
+    <p class="hint">
+      <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or click ground to walk</span>
+      <span><kbd>J</kbd> / <kbd>Space</kbd> slash (press repeatedly for a 3-beat combo)</span>
+      <span><kbd>Q</kbd><kbd>E</kbd> rotate camera</span>
+      <span><kbd>R</kbd><kbd>F</kbd> high/low angle</span>
+      <span>Scroll wheel to zoom, click-drag (or right-click drag) to free rotate</span>
+    </p>
+    <div class="controls">
+      <button id="bRotL" title="Rotate camera left (Q)">⟲ Rotate</button>
+      <button id="bRotR" title="Rotate camera right (E)">Rotate ⟳</button>
+      <button id="bUp" title="High angle (R)">High angle</button>
+      <button id="bDown" title="Low angle (F)">Low angle</button>
+      <span class="sep"></span>
+      <button id="bBones" aria-pressed="false" title="Show skeleton (B)">Skeleton</button>
+      <button id="bSlow" aria-pressed="false" title="Slow-mo (T)">Slow-mo</button>
+      <button id="bAtk" class="primary" title="Slash (J)">Slash</button>
+    </div>
+  </div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// r128 (this game's original target) never applied sRGB/gamma color management at
+// all — colors in, colors out. Three.js 0.160 defaults to physically-based color
+// management, which would shift every hex/canvas color in this file. Disabling it
+// keeps the existing palette and lighting looking exactly like it did under r128.
+THREE.ColorManagement.enabled = false;
+
+/* =====================================================================
+   Isometric sword dojo — Three.js
+   1) ART       ink-style materials (3-tone toon + inverted-hull outline + paper multiply)
+   2) MAP       isometric floating-island map (InstancedMesh)
+   3) RIG       real skeleton: root → hips → spine → chest → neck/head, two legs
+                arms use 2-bone IK, cloak is 7 spring-bone panels
+   4) ANIM      keyframes as targets + second-order dynamics per parameter
+   5) COMBAT    3D sword trail, cuttable bamboo, swaying straw dummy, ink splatter
+   6) CAMERA    orthographic isometric, 90° rotation / tilt / zoom / free drag
+   Units = meters, character faces +Z, character's right hand = -X
+   ===================================================================== */
+const D2R=Math.PI/180, lerp=(a,b,t)=>a+(b-a)*t, clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const smooth=t=>t*t*(3-2*t), smoother=t=>t*t*t*(t*(t*6-15)+10);
+const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rnd=mulberry32(21);
+const V=(x=0,y=0,z=0)=>new THREE.Vector3(x,y,z);
+
+class SOD { // second-order dynamics: f (Hz), z (damping), r (response)
+  constructor(f,z,r,x0){ this.set(f,z,r); this.xp=x0; this.y=x0; this.yd=0; }
+  set(f,z,r){ this.k1=z/(Math.PI*f); this.k2=1/((2*Math.PI*f)**2); this.k3=r*z/(2*Math.PI*f); }
+  update(T,x){ const xd=(x-this.xp)/T; this.xp=x; const k2=Math.max(this.k2,T*T/2+T*this.k1/2,T*this.k1);
+    this.y+=T*this.yd; this.yd+=T*(x+this.k3*xd-this.y-this.k1*this.yd)/k2; return this.y; }
+  shift(d){ this.y+=d; this.xp+=d; }
+}
+
+/* ---------- renderer ---------- */
+const stageEl=document.getElementById('stage');
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+renderer.setClearColor(0xe9e4da);
+renderer.outputColorSpace=THREE.LinearSRGBColorSpace; // no output gamma curve, matches r128's default (no encoding)
+renderer.useLegacyLights=true; // keep r128's light-intensity scale (pre physically-correct-lighting default)
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+stageEl.prepend(renderer.domElement);
+const scene=new THREE.Scene();
+const camera=new THREE.OrthographicCamera(-1,1,1,-1,0.1,200);
+
+/* ---------- 1) ART ---------- */
+const PAL={ ink:0x1c1b1a, robe:0x222120, cloak:0x7a7671, cloakD:0x5f5b57, pants:0x948f88, white:0xefebe3,
+  stone:0xd2cbbf, earth:0xb9b1a4, cliff:0xa39b8e, pond:0x6f7473, bamboo:0x6c6a63, straw:0xbfb39a, wood:0x5a544c, seal:0x9e2a1f };
+const grad=new THREE.DataTexture(new Uint8Array([70,70,70,255, 160,160,160,255, 255,255,255,255]),3,1,THREE.RGBAFormat);
+grad.minFilter=grad.magFilter=THREE.NearestFilter; grad.generateMipmaps=false; grad.needsUpdate=true;
+const matCache={};
+function toon(color,map){ const k=color+'_'+(map?map.uuid:''); return matCache[k]||(matCache[k]=new THREE.MeshToonMaterial({color,gradientMap:grad,map:map||null})); }
+const olCache={};
+function outlineMat(t){
+  if(olCache[t]) return olCache[t];
+  const m=new THREE.MeshBasicMaterial({color:0x151413, side:THREE.BackSide});
+  m.onBeforeCompile=s=>{ s.vertexShader=s.vertexShader.replace('#include <begin_vertex>', `vec3 transformed = position + normal * ${t.toFixed(4)};`); };
+  m.customProgramCacheKey=()=>'ol'+t;
+  return olCache[t]=m;
+}
+/** mesh + ink outline */
+let OL_SCALE=1;
+function inked(geo,color,t=0.012,opt={}){
+  t=+(t*OL_SCALE).toFixed(4); const g=new THREE.Group();
+  const m=new THREE.Mesh(geo, opt.mat||toon(color,opt.map)); m.castShadow=opt.shadow!==false; m.receiveShadow=true;
+  g.add(m); if(t>0){ const o=new THREE.Mesh(geo,outlineMat(t)); g.add(o); }
+  g.userData.mesh=m; return g;
+}
+function canvasTex(w,h,draw,repeat){ const c=document.createElement('canvas'); c.width=w; c.height=h; draw(c.getContext('2d'),w,h);
+  const t=new THREE.CanvasTexture(c); if(repeat){t.wrapS=t.wrapT=THREE.RepeatWrapping;} return t; }
+function strokes(c,w,h,n,colors,R=rnd,len=60,width=4){
+  c.lineCap='round';
+  for(let i=0;i<n;i++){ c.globalAlpha=.05+R()*.16; c.strokeStyle=colors[Math.floor(R()*colors.length)]; c.lineWidth=.8+R()*width;
+    const x=R()*w,y=R()*h,a=(R()-.5)*.5,l=len*(.4+R()); c.beginPath(); c.moveTo(x-Math.cos(a)*l/2,y-Math.sin(a)*l/2);
+    c.quadraticCurveTo(x+(R()-.5)*8,y+(R()-.5)*8,x+Math.cos(a)*l/2,y+Math.sin(a)*l/2); c.stroke(); }
+  c.globalAlpha=1;
+}
+const tileTex=canvasTex(256,256,(c,w,h)=>{ c.fillStyle='#fff'; c.fillRect(0,0,w,h); strokes(c,w,h,120,['#8d867a','#6e685e','#fff'],mulberry32(4),90,5);
+  c.globalAlpha=.25; c.strokeStyle='#5d574e'; c.lineWidth=2; c.strokeRect(3,3,w-6,h-6); c.globalAlpha=1; });
+const clothTex=canvasTex(128,256,(c,w,h)=>{ c.fillStyle='#fff'; c.fillRect(0,0,w,h);
+  c.save(); c.translate(w/2,h/2); c.rotate(Math.PI/2); c.translate(-h/2,-w/2); strokes(c,h,w,90,['#6a655f','#fff','#4b4743'],mulberry32(9),120,6); c.restore(); });
+// paper overlay for the whole screen (multiply)
+(function(){ const c=document.createElement('canvas'); c.width=c.height=512; const x=c.getContext('2d'), R=mulberry32(3);
+  x.fillStyle='#fff'; x.fillRect(0,0,512,512);
+  for(let i=0;i<5000;i++){ x.globalAlpha=.03+R()*.05; x.strokeStyle=R()<.6?'#9a9182':'#c9c0b0'; x.lineWidth=.7;
+    const px=R()*512,py=R()*512,a=R()*Math.PI,l=3+R()*12; x.beginPath(); x.moveTo(px,py); x.lineTo(px+Math.cos(a)*l,py+Math.sin(a)*l); x.stroke(); }
+  for(let i=0;i<900;i++){ x.globalAlpha=.05+R()*.08; x.fillStyle='#8f8676'; x.fillRect(R()*512,R()*512,1,1); }
+  const p=document.getElementById('paper'); p.style.backgroundImage=`url(${c.toDataURL()})`;
+  p.style.boxShadow='inset 0 0 160px rgba(120,108,90,.28)';
+})();
+
+/* ---------- lights ---------- */
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8f897f, .55));
+const sun=new THREE.DirectionalLight(0xffffff,.8); sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048); const sc=sun.shadow.camera; sc.left=-11; sc.right=11; sc.top=11; sc.bottom=-11; sc.near=1; sc.far=60;
+sun.shadow.bias=-0.0008; scene.add(sun, sun.target);
+
+/* ---------- 2) MAP ---------- */
+const MAP_N=20, tiles=new Map(), colliders=[], targets=[];
+const key=(i,j)=>i+','+j;
+const tileAt=(x,z)=>tiles.get(key(Math.floor(x+MAP_N/2), Math.floor(z+MAP_N/2)));
+(function buildMap(){
+  const R=mulberry32(77);
+  for(let i=0;i<MAP_N;i++) for(let j=0;j<MAP_N;j++){
+    const x=i-MAP_N/2+.5, z=j-MAP_N/2+.5;
+    const r=Math.hypot(x*1.0,z*1.08)+Math.sin(Math.atan2(z,x)*3+1)*.6+R()*.5;
+    if(r>8.7) continue;
+    let type='earth';
+    if(Math.abs(x)<.9 && z<-1.5) type='stone';                       // stone path
+    if(Math.hypot(x,z)<2.6) type='stone';                            // central courtyard
+    if(Math.hypot(x-4.6,z-3.4)<1.7) type='pond';                     // pond
+    tiles.set(key(i,j),{i,j,x,z,type});
+  }
+  const box=new THREE.BoxGeometry(1,1.2,1); box.translate(0,-.6,0);
+  const list=[...tiles.values()].filter(t=>t.type!=='pond');
+  const mesh=new THREE.InstancedMesh(box, toon(0xffffff,tileTex), list.length);
+  const ol=new THREE.InstancedMesh(box, outlineMat(0.012), list.length);
+  const m=new THREE.Matrix4(), col=new THREE.Color();
+  list.forEach((t,k)=>{ m.makeTranslation(t.x,0,t.z); mesh.setMatrixAt(k,m); ol.setMatrixAt(k,m);
+    col.setHex(t.type==='stone'?PAL.stone:PAL.earth); col.offsetHSL(0,0,(R()-.5)*.05); mesh.setColorAt(k,col); });
+  mesh.receiveShadow=true; mesh.instanceColor.needsUpdate=true; scene.add(mesh, ol);
+  const water=[...tiles.values()].filter(t=>t.type==='pond');
+  const wbox=new THREE.BoxGeometry(1,1.1,1); wbox.translate(0,-.68,0);
+  const wm=new THREE.InstancedMesh(wbox, toon(PAL.pond), water.length);
+  water.forEach((t,k)=>{ m.makeTranslation(t.x,0,t.z); wm.setMatrixAt(k,m); }); wm.receiveShadow=true; scene.add(wm);
+  // ink ripple rings on the water
+  for(let k=0;k<3;k++){ const ring=new THREE.Mesh(new THREE.RingGeometry(.3+k*.35,.33+k*.35,40), new THREE.MeshBasicMaterial({color:0xe9e4da,transparent:true,opacity:.5}));
+    ring.rotation.x=-Math.PI/2; ring.position.set(4.6+k*.2,-.07,3.4-k*.1); scene.add(ring); }
+})();
+const walkable=(x,z)=>{ const t=tileAt(x,z); return t && t.type!=='pond'; };
+
+/* ---------- decor & targets ---------- */
+function addCollider(x,z,r){ colliders.push({x,z,r}); }
+function rock(x,z,s){ const g=inked(new THREE.DodecahedronGeometry(s,0),0x8b857b,.014); g.position.set(x,s*.45,z);
+  g.rotation.set(rnd()*3,rnd()*3,rnd()*3); g.scale.y=.7; scene.add(g); addCollider(x,z,s*.9); }
+function lantern(x,z){ const g=new THREE.Group();
+  const parts=[[new THREE.CylinderGeometry(.18,.24,.12,6),.06],[new THREE.CylinderGeometry(.07,.09,.55,6),.4],[new THREE.BoxGeometry(.34,.08,.34),.7],
+    [new THREE.BoxGeometry(.26,.24,.26),.86],[new THREE.ConeGeometry(.33,.22,4),1.1],[new THREE.SphereGeometry(.05,6,4),1.24]];
+  parts.forEach(([geo,y],k)=>{ const p=inked(geo,0x9a948a,.012); p.position.y=y; if(k===4) p.rotation.y=Math.PI/4; g.add(p); });
+  const glow=new THREE.Mesh(new THREE.BoxGeometry(.2,.12,.27), new THREE.MeshBasicMaterial({color:0x2a2826})); glow.position.y=.86; g.add(glow);
+  g.position.set(x,0,z); scene.add(g); addCollider(x,z,.3); }
+function torii(x,z,ry){ const g=new THREE.Group(), red=0x8f2519;
+  for(const s of [-1,1]){ const p=inked(new THREE.CylinderGeometry(.09,.11,2.4,8),red,.016); p.position.set(s*1.05,1.2,0); g.add(p); }
+  const k=inked(new THREE.BoxGeometry(2.9,.14,.2),PAL.ink,.016); k.position.y=2.42; g.add(k);
+  const k2=inked(new THREE.BoxGeometry(2.5,.12,.14),red,.014); k2.position.y=2.0; g.add(k2);
+  const tab=inked(new THREE.BoxGeometry(.18,.38,.06),PAL.ink,.01); tab.position.y=2.2; g.add(tab);
+  g.position.set(x,0,z); g.rotation.y=ry; scene.add(g);
+  for(const s of [-1,1]) addCollider(x+Math.cos(ry)*s*1.05, z-Math.sin(ry)*s*1.05, .2); }
+function bamboo(x,z,h){
+  const g=new THREE.Group(); g.position.set(x,0,z); scene.add(g);
+  const t={type:'bamboo', x,z,r:.07,h, g, alive:true, lastHit:-1, pieces:[], regrow:0};
+  buildBamboo(t); targets.push(t); addCollider(x,z,.12); return t;
+}
+const LEAF_GEO=new THREE.ConeGeometry(.045,.42,3).scale(1,1,.18).translate(0,.21,0);
+const LEAF_MAT=new THREE.MeshToonMaterial({color:0x4d4a45,gradientMap:grad,side:THREE.DoubleSide});
+function bambooStalk(h,withLeaves){
+  const s=new THREE.Group();
+  s.add(inked(new THREE.CylinderGeometry(.05,.056,h,8).translate(0,h/2,0),PAL.bamboo,.01));
+  for(let y=.35;y<h-.05;y+=.42){ const n=inked(new THREE.CylinderGeometry(.062,.062,.025,8),0x3e3c38,0,{shadow:false}); n.position.y=y; s.add(n); }
+  if(withLeaves) for(let c=0;c<3;c++){ const y=h-.1-c*.32-rnd()*.1, base=rnd()*6.28;
+    for(let k=0;k<4;k++){ const lf=new THREE.Mesh(LEAF_GEO, LEAF_MAT); lf.castShadow=true;
+      const holder=new THREE.Group(); holder.position.y=y; holder.rotation.y=base+k*1.4+rnd()*.5; s.add(holder);
+      lf.rotation.x=1.9+rnd()*.5; holder.add(lf); } }
+  return s;
+}
+function buildBamboo(t){ while(t.g.children.length) t.g.remove(t.g.children[0]); t.stalk=bambooStalk(t.h,true); t.g.add(t.stalk); t.alive=true; }
+function dummy(x,z){
+  const g=new THREE.Group(); g.position.set(x,0,z); scene.add(g);
+  const pivot=new THREE.Group(); g.add(pivot);
+  const post=inked(new THREE.CylinderGeometry(.05,.06,1.7,8).translate(0,.85,0),PAL.wood,.012); pivot.add(post);
+  const body=inked(new THREE.CylinderGeometry(.17,.19,.75,10),PAL.straw,.014); body.position.y=1.05; pivot.add(body);
+  for(const y of [.8,1.05,1.32]){ const b=inked(new THREE.CylinderGeometry(.195,.195,.04,10),0x5c5446,0,{shadow:false}); b.position.y=y; pivot.add(b); }
+  const arm=inked(new THREE.CylinderGeometry(.035,.035,.9,6),PAL.wood,.01); arm.rotation.z=Math.PI/2; arm.position.y=1.3; pivot.add(arm);
+  const head=inked(new THREE.SphereGeometry(.13,10,8),PAL.straw,.012); head.position.y=1.6; pivot.add(head);
+  const t={type:'dummy',x,z,r:.2,h:1.75,g,pivot,lastHit:-1,tx:new SOD(1.3,.12,0,0),tz:new SOD(1.3,.12,0,0),hits:0};
+  targets.push(t); addCollider(x,z,.25); return t;
+}
+// place scene props
+torii(0,-7.3,0);
+lantern(-1.4,-4.6); lantern(1.4,-4.6);
+for(const [x,z,s] of [[-5.5,2.5,.45],[-6.2,1.6,.3],[3,-5.2,.35],[6.4,-1.5,.5],[2.8,6.2,.4],[-3,6.4,.32],[5.6,5.4,.3]]) rock(x,z,s);
+for(const [x,z] of [[-4.6,-2.8],[-5.4,-2.2],[-4.9,-1.6],[-5.9,-3.0],[-6.1,-1.2],[-4.2,-3.6],[-5.2,-3.9],[-6.6,-2.3],[-3.9,-1.9]]) bamboo(x+(rnd()-.5)*.3,z+(rnd()-.5)*.3,2.2+rnd()*1.1);
+dummy(2.4,1.2); dummy(3.4,-.6); dummy(1.2,2.8);
+// ink-line grass blades
+(function(){ const geo=new THREE.ConeGeometry(.02,.2,3).translate(0,.1,0), mat=new THREE.MeshBasicMaterial({color:0x5a564f});
+  const ok=[...tiles.values()].filter(t=>t.type==='earth'); const n=240, im=new THREE.InstancedMesh(geo,mat,n), m=new THREE.Matrix4(), q=new THREE.Quaternion(), e=new THREE.Euler();
+  for(let k=0;k<n;k++){ const t=ok[Math.floor(rnd()*ok.length)]; e.set((rnd()-.5)*1.1,rnd()*6,(rnd()-.5)*1.1); q.setFromEuler(e);
+    m.compose(V(t.x+(rnd()-.5),0,t.z+(rnd()-.5)),q,V(1,.6+rnd()*.9,1)); im.setMatrixAt(k,m); } scene.add(im); })();
+
+/* ---------- 3) RIG: character ---------- */
+const HIP_Y=.93, L1=.29, L2=.27;
+const rig={};
+(function buildChar(){
+  OL_SCALE=1.45;
+  const root=new THREE.Group(); scene.add(root); rig.root=root;
+  const hips=new THREE.Group(); hips.position.y=HIP_Y; root.add(hips); rig.hips=hips;
+  // hakama (black skirt)
+  const skirt=inked(new THREE.CylinderGeometry(.17,.31,.52,14).translate(0,-.26,0),PAL.robe,.012,{map:clothTex}); skirt.position.y=.03; hips.add(skirt); rig.skirt=skirt;
+  // legs
+  for(const [side,sx] of [['L',.1],['R',-.1]]){
+    const thigh=new THREE.Group(); thigh.position.set(sx,-.05,0); hips.add(thigh);
+    const pants=inked(new THREE.CylinderGeometry(.085,.115,.44,10).translate(0,-.2,0),PAL.pants,.011,{map:clothTex}); thigh.add(pants);
+    const knee=new THREE.Group(); knee.position.y=-.42; thigh.add(knee);
+    const shin=inked(new THREE.CylinderGeometry(.048,.04,.42,8).translate(0,-.21,0),PAL.ink,.01); knee.add(shin);
+    const ankle=new THREE.Group(); ankle.position.y=-.42; knee.add(ankle);
+    const foot=inked(new THREE.BoxGeometry(.1,.055,.23).translate(0,-.02,.05),PAL.ink,.01); ankle.add(foot);
+    rig['thigh'+side]=thigh; rig['knee'+side]=knee; rig['ankle'+side]=ankle;
+  }
+  const spine=new THREE.Group(); spine.position.y=.02; hips.add(spine); rig.spine=spine;
+  const chest=new THREE.Group(); chest.position.y=.3; spine.add(chest); rig.chest=chest;
+  const torso=inked(new THREE.CylinderGeometry(.16,.15,.46,12).translate(0,-.1,0),PAL.robe,.012,{map:clothTex}); torso.scale.z=.72; chest.add(torso);
+  const belt=inked(new THREE.CylinderGeometry(.152,.152,.035,16,1,true),PAL.white,0); belt.scale.z=.73; belt.position.y=-.27; chest.add(belt);
+  for(const s of [-1,1]){ const st=inked(new THREE.BoxGeometry(.026,.3,.012),PAL.white,0,{shadow:false}); st.position.set(0,-.03,.112); st.rotation.z=s*.62; chest.add(st); }
+  // two swords on the back
+  const back=new THREE.Group(); back.position.set(0,0,-.14); chest.add(back); rig.back=back;
+  for(const [rz,ox] of [[-.78,-.02],[-.95,.05]]){
+    const s=new THREE.Group(); s.rotation.z=rz; s.position.x=ox; back.add(s);
+    const saya=inked(new THREE.CylinderGeometry(.019,.017,.78,6).translate(0,-.2,0),PAL.ink,.008); s.add(saya);
+    const tsuka=inked(new THREE.CylinderGeometry(.016,.016,.24,6).translate(0,.32,0),0x2c2a28,.007); s.add(tsuka);
+    const tsuba=inked(new THREE.CylinderGeometry(.04,.04,.012,10).translate(0,.19,0),PAL.ink,.006); s.add(tsuba);
+  }
+  // head + hood
+  const neck=new THREE.Group(); neck.position.y=.15; chest.add(neck); rig.neck=neck;
+  const head=new THREE.Group(); head.position.y=.02; neck.add(head); rig.head=head;
+  // hood open at the front (phi around the Y axis, front +Z is at phi = π/2)
+  const hoodGeo=new THREE.SphereGeometry(.14,16,12,Math.PI/2+.85,Math.PI*2-1.7,0,Math.PI*.82);
+  const hood=inked(hoodGeo,PAL.cloak,.014,{map:clothTex}); hood.userData.mesh.material=new THREE.MeshToonMaterial({color:PAL.cloak,gradientMap:grad,map:clothTex,side:THREE.DoubleSide});
+  hood.scale.set(1,1.12,1.06); hood.position.set(0,.13,-.01); head.add(hood); rig.hood=hood;
+  const face=inked(new THREE.SphereGeometry(.088,12,10),0x121110,0); face.scale.set(.95,1.05,.55); face.position.set(0,.11,.075); head.add(face);
+  const mask=new THREE.Mesh(new THREE.BoxGeometry(.105,.024,.01), new THREE.MeshBasicMaterial({color:PAL.white})); mask.position.set(0,.09,.124); head.add(mask); rig.mask=mask;
+  const eyeMat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0,depthTest:false,depthWrite:false});
+  rig.eyes=[];
+  for(const s of [-1,1]){ // narrow, inward-angled slits — a sharp squint rather than a flat glow
+    const e=new THREE.Mesh(new THREE.BoxGeometry(.044,.007,.01),eyeMat);
+    e.position.set(s*.03,.125,.124); e.rotation.z=-s*.3; e.renderOrder=20;
+    head.add(e); rig.eyes.push(e);
+  }
+  rig.eyeMat=eyeMat;
+  // cloak: 7 panels around the shoulders (gap at the front), each a spring bone
+  rig.cloak=[];
+  const cloakRoot=new THREE.Group(); cloakRoot.position.y=.15; chest.add(cloakRoot); rig.cloakRoot=cloakRoot;
+  const n=7, gap=.55, span=(Math.PI*2-gap*2)/n;
+  for(let k=0;k<n;k++){
+    const th=gap+span*(k+.5);
+    const yaw=new THREE.Group(); yaw.rotation.y=th; cloakRoot.add(yaw);
+    const hinge=new THREE.Group(); hinge.position.z=.2; yaw.add(hinge);
+    const geo=new THREE.CylinderGeometry(.2,.33,.78,4,1,true,-span/2-.07,span+.14).translate(0,-.39,0);
+    const panel=inked(geo,PAL.cloak,.011,{map:clothTex}); panel.userData.mesh.material=new THREE.MeshToonMaterial({color:k%2?PAL.cloak:0x75716c,gradientMap:grad,map:clothTex,side:THREE.DoubleSide});
+    panel.position.z=-.2; hinge.add(panel);
+    rig.cloak.push({hinge, th, flap:new SOD(1.7,.3,0,0), side:new SOD(1.7,.3,0,0)});
+  }
+  const collar=inked(new THREE.CylinderGeometry(.13,.2,.13,12,1,true,.5,Math.PI*2-1),PAL.cloak,.011,{map:clothTex});
+  collar.userData.mesh.material=new THREE.MeshToonMaterial({color:PAL.cloak,gradientMap:grad,map:clothTex,side:THREE.DoubleSide});
+  collar.position.y=.2; chest.add(collar); rig.collar=collar;
+  // arms (live in world space, positioned via IK)
+  const arm=(r1,r2,len,color)=>{ const g=inked(new THREE.CylinderGeometry(r1,r2,len,9).translate(0,-len/2,0),color,.011,{map:clothTex}); scene.add(g); return g; };
+  for(const s of ['R','L']){
+    rig['upper'+s]=arm(.07,.06,L1,PAL.robe); rig['fore'+s]=arm(.05,.04,L2,PAL.robe);
+    const h=inked(new THREE.SphereGeometry(.048,8,6),PAL.ink,.008); scene.add(h); rig['hand'+s]=h;
+  }
+  // katana: +Y axis = blade length, +X = cutting edge
+  const kat=new THREE.Group(); scene.add(kat); rig.katana=kat;
+  const tsuka=inked(new THREE.CylinderGeometry(.017,.017,.26,6).translate(0,-.1,0),0x2a2827,.007); kat.add(tsuka);
+  const tsuba=inked(new THREE.CylinderGeometry(.045,.045,.012,10).translate(0,.035,0),PAL.ink,.006); kat.add(tsuba);
+  const sh=new THREE.Shape(); const BL=.76;
+  sh.moveTo(-.012,.04); for(let i=1;i<=12;i++){ const u=i/12, y=.04+u*BL, c=-.035*u*u; sh.lineTo(c-.012+u*.004,y); }
+  sh.lineTo(-.03,.04+BL+.02); for(let i=12;i>=0;i--){ const u=i/12, y=.04+u*BL, c=-.035*u*u; sh.lineTo(c+.014-u*.012,y); }
+  const blade=inked(new THREE.ExtrudeGeometry(sh,{depth:.006,bevelEnabled:false}).translate(0,0,-.003),0x2b2a29,.006); kat.add(blade);
+  const glintMat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0});
+  const glint=new THREE.Mesh(new THREE.BoxGeometry(.004,BL*.9,.008).translate(-.004,.04+BL*.48,0),glintMat); kat.add(glint); rig.glint=glintMat;
+  OL_SCALE=1;
+})();
+
+/* ---------- 3b) RIG: real model (assets/ninja.glb) ----------
+   The procedural rig above stays as an invisible driver: applySkeleton() poses it as before,
+   then driveRealBones() copies each driver's rotation (relative to its rest pose) onto the
+   matching real bone. Arms are aimed straight from the IK result. See docs/BONES.md.
+   This model's hood/cloak/back-swords are sculpted into the mesh itself (not a separate driver
+   piece) — only the eye glow still gets socketed onto the real head bone. */
+const BONE_MAP=[ // [driver, glb bone] — parents before children
+  ['hips','Hips'],['spine','Spine02'],['chest','Spine'],
+  ['neck','neck'],['head','Head'],
+  ['thighL','LeftUpLeg'],['kneeL','LeftLeg'],['ankleL','LeftFoot'],
+  ['thighR','RightUpLeg'],['kneeR','RightLeg'],['ankleR','RightFoot'],
+];
+// Driver rest transforms, captured now while the root is still at the origin (= root-local space).
+const DRIVER_REST={};
+rig.root.updateMatrixWorld(true);
+for(const [d] of BONE_MAP) DRIVER_REST[d]={
+  m:rig[d].matrixWorld.clone(),
+  qInv:rig[d].getWorldQuaternion(new THREE.Quaternion()).invert(),
+  p:rig[d].getWorldPosition(V()),
+};
+function rootLocal(o){ rig.root.updateMatrixWorld(true); return rig.root.matrixWorld.clone().invert().multiply(o.matrixWorld); }
+
+function loadNinja(){
+  new GLTFLoader().load('assets/ninja.glb', gltf=>{
+    const model=gltf.scene, bone={}; let skinned=null;
+    model.traverse(o=>{ if(o.isBone) bone[o.name]=o; if(o.isSkinnedMesh) skinned=o; });
+    rig.root.add(model);
+    const posRL=n=>V().setFromMatrixPosition(rootLocal(bone[n]));
+    // Game convention: the character's right hand is on -X. Flip the model if it was exported facing -Z.
+    if(posRL('RightArm').x>posRL('LeftArm').x) model.rotation.y=Math.PI;
+
+    const real={model, bone, bind:{}, arm:{}};
+    const _rm=new THREE.Matrix4();
+    for(const name in bone) real.bind[name]={q:bone[name].quaternion.clone(), rl:new THREE.Quaternion().setFromRotationMatrix(_rm.extractRotation(rootLocal(bone[name])))};
+    const hips=bone['Hips'];
+    real.hipsPos=posRL('Hips');
+    real.hipsParentInv=rootLocal(hips.parent).invert();
+    // Meshy's bind pose has the legs splayed, but the driver's rest legs hang straight down.
+    // Straighten each leg segment first so the pose parameters (spread etc.) mean the same thing;
+    // then lift the hips by however much the straightened legs got longer vertically.
+    real.corr={}; let lift=0;
+    for(const s of ['Left','Right']){
+      const hip=posRL(`${s}UpLeg`), knee=posRL(`${s}Leg`), ank=posRL(`${s}Foot`);
+      real.corr[`${s}UpLeg`]=new THREE.Quaternion().setFromUnitVectors(knee.clone().sub(hip).normalize(),V(0,-1,0));
+      real.corr[`${s}Leg`]=new THREE.Quaternion().setFromUnitVectors(ank.clone().sub(knee).normalize(),V(0,-1,0));
+      lift+=(ank.y-(hip.y-hip.distanceTo(knee)-knee.distanceTo(ank)))/2;
+    }
+    real.hipsPos.y+=lift;
+    for(const [side,S0] of [['R','Right'],['L','Left']]){
+      const up=bone[`${S0}Arm`], fo=bone[`${S0}ForeArm`], ha=bone[`${S0}Hand`];
+      real.arm[side]={ up, fo,
+        l1:posRL(`${S0}Arm`).distanceTo(posRL(`${S0}ForeArm`)),
+        l2:posRL(`${S0}ForeArm`).distanceTo(posRL(`${S0}Hand`)),
+        upDir:fo.position.clone().normalize(), foDir:ha.position.clone().normalize(),
+        // in a T-pose the elbow naturally flexes toward the character's front (+Z)
+        bendLocal:V(0,0,1).applyQuaternion(real.bind[up.name].rl.clone().invert()) };
+    }
+
+    skinned.material=new THREE.MeshToonMaterial({color:0xffffff, map:skinned.material.map, gradientMap:grad});
+    skinned.castShadow=true; skinned.receiveShadow=true; skinned.frustumCulled=false;
+    const ol=new THREE.SkinnedMesh(skinned.geometry, outlineMat(.014));
+    ol.bind(skinned.skeleton, skinned.bindMatrix); ol.frustumCulled=false;
+    ol.position.copy(skinned.position); ol.quaternion.copy(skinned.quaternion); ol.scale.copy(skinned.scale);
+    skinned.parent.add(ol);
+
+    // This model's hood, cloak and back-swords are sculpted into the mesh — hide our procedural
+    // stand-ins entirely. The eye glow still shows (the model's own eyes are hidden in shadow),
+    // but a Mesh parented directly to a Bone under this particular rig silently fails to render
+    // (the nested 0.01 Armature scale seems to confuse frustum culling) — so instead the eyes are
+    // kept as world-space objects, like the hands/katana, and placed from Head's matrix each frame.
+    real.eyeLocal=[-3.5,3.5].map(x=>new THREE.Vector3(x,7,10));
+    for(const e of rig.eyes) scene.add(e);
+    rig.back.visible=false; rig.cloakRoot.visible=false; rig.hood.visible=false; rig.mask.visible=false;
+    // hide the procedural body; the driver groups themselves keep running invisibly
+    for(const [d] of BONE_MAP) for(const c of rig[d].children) if(c.userData.mesh) c.visible=false;
+    for(const s of ['R','L']) for(const p of ['upper','fore','hand']) rig[p+s].visible=false;
+    rig.real=real;
+    console.log('[GLTF] ninja.glb attached', {flipped:model.rotation.y!==0, armR:[real.arm.R.l1,real.arm.R.l2], hips:real.hipsPos.toArray()});
+  }, undefined, err=>console.error('[GLTF] failed to load assets/ninja.glb — keeping the procedural character', err));
+}
+
+const _rlq=new Map(), _q1=new THREE.Quaternion(), _q2=new THREE.Quaternion();
+function rlq(o){ // root-local quaternion of a glb node, built from the current local rotations
+  let q=_rlq.get(o); if(q) return q;
+  q = o.parent===rig.root ? o.quaternion.clone() : rlq(o.parent).clone().multiply(o.quaternion);
+  _rlq.set(o,q); return q;
+}
+function driveRealBones(real){
+  _rlq.clear();
+  for(const name in real.bind) real.bone[name].quaternion.copy(real.bind[name].q); // reset → no drift
+  const rootInv=_q1.copy(rig.root.quaternion).invert();
+  for(const [d,b] of BONE_MAP){
+    const bone=real.bone[b];
+    const want=rig[d].getWorldQuaternion(_q2).premultiply(rootInv).multiply(DRIVER_REST[d].qInv);
+    if(real.corr[b]) want.multiply(real.corr[b]);
+    want.multiply(real.bind[b].rl);
+    bone.quaternion.copy(rlq(bone.parent)).invert().multiply(want);
+    _rlq.set(bone,want.clone());
+  }
+  const hipsRL=real.hipsPos.clone().add(rig.hips.position).sub(DRIVER_REST.hips.p);
+  real.bone['Hips'].position.copy(hipsRL.applyMatrix4(real.hipsParentInv));
+  real.model.updateMatrixWorld(true);
+  const headM=real.bone.Head.matrixWorld, headQ=real.bone.Head.getWorldQuaternion(_q1);
+  rig.eyes.forEach((e,i)=>{ e.position.copy(real.eyeLocal[i]).applyMatrix4(headM); e.quaternion.copy(headQ); e.rotateZ(-Math.sign(real.eyeLocal[i].x)*.3); });
+}
+function aimBone(bone, childDir, target){ // rotate bone (from its bind-relative pose) so childDir points at target
+  const pq=bone.parent.getWorldQuaternion(new THREE.Quaternion());
+  const wq=pq.clone().multiply(bone.quaternion);
+  wq.premultiply(_q1.setFromUnitVectors(childDir.clone().applyQuaternion(wq), target));
+  bone.quaternion.copy(pq.invert().multiply(wq)); bone.updateMatrixWorld(true);
+  return wq;
+}
+function aimArm(a, S0, E, W){
+  const ud=E.clone().sub(S0).normalize(), fd=W.clone().sub(E).normalize();
+  aimBone(a.up, a.upDir, ud);
+  // twist the upper arm so the mesh's natural elbow hinge lines up with the IK bend plane
+  const bend=fd.clone().addScaledVector(ud,-ud.dot(fd));
+  if(bend.lengthSq()>1e-6){
+    const wq=a.up.getWorldQuaternion(new THREE.Quaternion());
+    const nb=a.bendLocal.clone().applyQuaternion(wq); nb.addScaledVector(ud,-ud.dot(nb));
+    if(nb.lengthSq()>1e-6){
+      wq.premultiply(_q2.setFromUnitVectors(nb.normalize(), bend.normalize()));
+      a.up.quaternion.copy(a.up.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(wq)); a.up.updateMatrixWorld(true);
+    }
+  }
+  aimBone(a.fo, a.foDir, fd);
+}
+
+/* ---------- 4) ANIM: poses ----------
+   hx,hy,hz = right hand (chest-local coordinates)   by,el = blade angle: yaw plane and elevation (el>90 = past the head, behind)
+   hipY crouch, hipYaw/chestYaw twist, lean tilt, headYaw head, spin body rotation (degrees), spread leg stance
+   two = left hand gripping the hilt (0..1), eye eye glow, glint blade shine                     */
+const IDLE={hx:-.3,hy:-.36,hz:.14, by:-42, el:-48, hipY:0, hipYaw:0, chestYaw:0, lean:.05, headYaw:0, spin:0, spread:.12, two:0, eye:0, glint:0};
+const P=o=>Object.assign({},IDLE,{eye:1},o);
+const COMBO=[
+  { kanji:'一', lunge:2.6, impactMin:240, chain:380, end:1000, reach:2.0,
+    keys:[ [200, P({hx:-.14,hy:.4, hz:.02, by:35, el:122, hipY:-.02, hipYaw:-.25, chestYaw:-.35, lean:-.05, headYaw:.15, two:1, spread:.18, glint:.4}),'out'],
+           [330, P({hx:.07,hy:-.15,hz:.4,  by:35, el:-38, hipY:-.12, hipYaw:.22, chestYaw:.42, lean:.28, headYaw:-.1, two:1, spread:.26, glint:1}),'snap'],
+           [480, P({hx:.1, hy:-.2, hz:.36, by:38, el:-46, hipY:-.13, hipYaw:.25, chestYaw:.46, lean:.3,  headYaw:-.1, two:1, spread:.26, glint:.6}),'out'] ],
+    dyn:{hand:[3.4,.55,1.1], blade:[2.7,.45,.5]} },
+  { kanji:'二', lunge:2.2, impactMin:180, chain:320, end:950, reach:2.0,
+    keys:[ [110, P({hx:.12,hy:-.26,hz:.32, by:30, el:-50, hipY:-.13, hipYaw:.25, chestYaw:.4, lean:.3, two:1, spread:.26, glint:.6}),'out'],
+           [240, P({hx:-.24,hy:.32,hz:.2,  by:-25, el:105, hipY:.02, hipYaw:-.25, chestYaw:-.45, lean:-.08, headYaw:.15, two:1, spread:.2, glint:1}),'snap'],
+           [400, P({hx:-.26,hy:.38,hz:.12, by:-30, el:118, hipY:.02, hipYaw:-.28, chestYaw:-.5, lean:-.1, headYaw:.15, two:1, spread:.2, glint:.6}),'out'] ],
+    dyn:{hand:[3.8,.5,1.3], blade:[3.0,.42,.4]} },
+  { kanji:'三', lunge:0, impactMin:300, chain:99999, end:1250, final:true, reach:2.4, spinHit:true,
+    keys:[ [220, P({hx:.16,hy:.0, hz:.24, by:80, el:6, hipY:-.12, hipYaw:.3, chestYaw:.55, lean:.12, headYaw:-.3, spread:.3, two:.6, glint:.5}),'out'],
+           [470, P({hx:-.56,hy:.02,hz:.16, by:-95, el:0, hipY:-.18, hipYaw:-.1, chestYaw:-.25, lean:.15, spin:-360, spread:.32, two:0, glint:1}),'io'],
+           [640, P({hx:-.52,hy:-.04,hz:.08, by:-110, el:-12, hipY:-.2, hipYaw:-.12, chestYaw:-.3, lean:.18, spin:-372, spread:.32, two:0, glint:.6}),'out'] ],
+    dyn:{hand:[3.0,.55,1.0], blade:[2.6,.45,.4], spin:[2.2,.6,.2]} },
+];
+const KEYS=Object.keys(IDLE);
+const EASE={ out:t=>1-Math.pow(1-t,3), snap:t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2, io:smoother };
+const GROUP=k=>(k==='hx'||k==='hy'||k==='hz')?'hand':(k==='by'||k==='el')?'blade':k==='spin'?'spin':(k==='eye'||k==='glint')?'fx':k==='two'?'two':'body';
+const DYN={hand:[2.4,.7,.5], blade:[2.0,.6,.2], spin:[2,.7,0], fx:[4,1,0], two:[3,.8,0], body:[2.3,.6,.15]};
+const dyn={}; for(const k of KEYS) dyn[k]=new SOD(...DYN[GROUP(k)],IDLE[k]);
+function setDyn(o){ for(const k of KEYS){ const g=GROUP(k); dyn[k].set(...((o&&o[g])||DYN[g])); } }
+
+/* ---------- player state ---------- */
+const S={ speed:1, pos:V(0,0,-1), facing:0, vel:V(), moveTo:null, phase:'idle', combo:-1, act:null, queued:false,
+  hitstop:0, clock:0, shake:0, walkPhase:0, walkAmt:0, target:{...IDLE}, st:{...IDLE}, trailId:0, prevTip:null, prevDir:null, edge:V(1,0,0), attackId:0 };
+const facingS=new SOD(3,.9,0,0);
+const keys={};
+
+function press(){
+  if(S.phase==='idle'){ startAttack(0); return; }
+  const a=S.act; if(!a) return;
+  if(S.combo<COMBO.length-1 && a.t>=a.def.chain){ startAttack(S.combo+1); return; }
+  if(a.t>=a.def.impactMin-80) S.queued=true;
+}
+function startAttack(i){
+  S.combo=i; S.queued=false; S.phase='attack'; S.trailId++; S.attackId++; S.moveTo=null;
+  // turn toward the nearest target if it's not too far (soft lock-on)
+  let best=null, bd=2.8; for(const t of targets){ if(t.type==='bamboo'&&!t.alive) continue; const d=Math.hypot(t.x-S.pos.x,t.z-S.pos.z); if(d<bd){bd=d;best=t;} }
+  if(best){ const want=Math.atan2(best.x-S.pos.x,best.z-S.pos.z); let d=want-facingS.y; d=Math.atan2(Math.sin(d),Math.cos(d)); if(Math.abs(d)<1.6) S.facing=facingS.y+d; }
+  S.act={def:COMBO[i], t:0, from:{...S.target}, maxSp:0, decel:false, impacted:false};
+  setDyn(COMBO[i].dyn);
+}
+function mix(a,b,u){ const o={}; for(const k of KEYS) o[k]=lerp(a[k],b[k],u); return o; }
+function timeline(a){
+  let pt=0, prev=a.from;
+  for(const [t,pose,e] of a.def.keys){ if(a.t<=t) return mix(prev,pose,EASE[e]((a.t-pt)/(t-pt))); pt=t; prev=pose; }
+  const last=a.def.keys[a.def.keys.length-1][1];
+  const idle={...IDLE, spin:last.spin<-180?-360:0};
+  return mix(last, idle, EASE.io(clamp((a.t-pt)/(a.def.end-pt),0,1)));
+}
+
+/* ---------- IK + skeleton apply ---------- */
+const _v=V(),_a=V(),_b=V(),_c=V(),_m=new THREE.Matrix4(),_q=new THREE.Quaternion(),DOWN=V(0,-1,0),UP=V(0,1,0);
+function solveIK(S0,T,pole,l1=L1,l2=L2){
+  const dir=_a.copy(T).sub(S0); let d=dir.length(); dir.normalize(); d=clamp(d,.04,l1+l2-.005);
+  const cosA=clamp((l1*l1+d*d-l2*l2)/(2*l1*d),-1,1), sinA=Math.sqrt(1-cosA*cosA);
+  const pp=_b.copy(pole).addScaledVector(dir,-pole.dot(dir)).normalize();
+  const E=S0.clone().addScaledVector(dir,l1*cosA).addScaledVector(pp,l1*sinA);
+  const W=S0.clone().addScaledVector(dir,d);
+  return {E,W};
+}
+function placeLimb(obj,from,to){ obj.position.copy(from); _v.copy(to).sub(from).normalize(); obj.quaternion.setFromUnitVectors(DOWN,_v); }
+const BONES={}; // world positions for debug
+function applySkeleton(p,T){
+  const r=rig, t=S.clock/1000;
+  r.root.position.copy(S.pos); r.root.rotation.y=S.facing+p.spin*D2R;
+  const w=S.walkAmt, ph=S.walkPhase, breathe=Math.sin(t*1.8);
+  r.hips.position.y=HIP_Y+p.hipY+Math.abs(Math.sin(ph))*.035*w-.012*w+breathe*.004;
+  r.hips.rotation.set(0,p.hipYaw+Math.sin(ph)*.12*w,0);
+  r.spine.rotation.set(p.lean+.08*w,0,0);
+  r.chest.rotation.set(breathe*.012,p.chestYaw-Math.sin(ph)*.18*w,0);
+  r.head.rotation.set(-p.lean*.6-.05*w,p.headYaw-p.chestYaw*.4,0);
+  // legs: stance + walk (rotate legs so the feet stay flat on the ground)
+  const crouch=clamp(-p.hipY*3.4,0,1);
+  for(const [s,sign,phase] of [['L',1,0],['R',-1,Math.PI]]){
+    const sw=Math.sin(ph+phase)*.62*w, kneeB=(Math.max(0,Math.sin(ph+phase+1.3))*.95)*w+crouch*.9;
+    const th=r['thigh'+s]; th.rotation.set(-sw-crouch*.5, 0, sign*p.spread);
+    r['knee'+s].rotation.x=kneeB; r['ankle'+s].rotation.set(-(-sw-crouch*.5)-kneeB, 0, -sign*p.spread);
+  }
+  const fl=Math.min(Math.abs(dyn.spin.yd)*.00025,.22); r.skirt.scale.set(1+fl+p.spread*.5,1,1+fl);
+  r.root.updateMatrixWorld(true);
+  const real=r.real; if(real) driveRealBones(real);
+  // ---- right arm + sword ----
+  const chest=r.chest;
+  const shR=real ? real.arm.R.up.getWorldPosition(V()) : chest.localToWorld(V(-.2,.1,0));
+  const shL=real ? real.arm.L.up.getWorldPosition(V()) : chest.localToWorld(V(.2,.1,0));
+  // the sword arm swings forward when the opposite (left) leg swings forward — same contralateral
+  // timing as the off-hand below, just a smaller amplitude since it's carrying the blade
+  const tgt=chest.localToWorld(V(p.hx,p.hy+Math.sin(t*1.8+.5)*.006,p.hz+Math.sin(ph)*.09*w));
+  const cq=chest.getWorldQuaternion(new THREE.Quaternion());
+  const poleR=V(-1,-.5,-.6).applyQuaternion(cq);
+  const {E:eR,W:wR}=real ? solveIK(shR,tgt,poleR,real.arm.R.l1,real.arm.R.l2) : solveIK(shR,tgt,poleR);
+  const by=p.by*D2R, el=p.el*D2R;
+  const dir=V(Math.sin(by)*Math.cos(el),Math.sin(el),Math.cos(by)*Math.cos(el)).applyQuaternion(cq).normalize();
+  // blade edge faces the direction the sword is moving
+  if(S.prevDir){ const mv=_c.copy(dir).sub(S.prevDir); const sp=mv.length()/T;
+    const fall=V(-Math.sin(by)*Math.sin(el),Math.cos(el),-Math.cos(by)*Math.sin(el)).multiplyScalar(-1).applyQuaternion(cq);
+    const want = sp>1.5 ? mv.normalize() : fall;
+    S.edge.lerp(want, sp>1.5?.35:.08); }
+  S.prevDir=dir.clone();
+  const X=_a.copy(S.edge).addScaledVector(dir,-S.edge.dot(dir)).normalize(), Z=_b.crossVectors(X,dir).normalize();
+  _m.makeBasis(X,dir,Z); r.katana.quaternion.setFromRotationMatrix(_m); r.katana.position.copy(wR);
+  if(real) aimArm(real.arm.R,shR,eR,wR); else { placeLimb(r.upperR,shR,eR); placeLimb(r.foreR,eR,wR); r.handR.position.copy(wR); }
+  // ---- left arm: hangs at the side, or grips the hilt ----
+  const hang=chest.localToWorld(V(.27,-.43+Math.sin(ph)*.03*w,.03-Math.sin(ph)*.16*w));
+  const grip=wR.clone().addScaledVector(dir,-.13);
+  const tL=hang.lerp(grip,clamp(p.two,0,1));
+  const poleL=V(1,-.6,-.6).applyQuaternion(cq);
+  const {E:eL,W:wL}=real ? solveIK(shL,tL,poleL,real.arm.L.l1,real.arm.L.l2) : solveIK(shL,tL,poleL);
+  if(real) aimArm(real.arm.L,shL,eL,wL); else { placeLimb(r.upperL,shL,eL); placeLimb(r.foreL,eL,wL); r.handL.position.copy(wL); }
+  // ---- cloak: spring bones ----
+  const vLocal=S.vel.clone().applyAxisAngle(UP,-(S.facing+p.spin*D2R));
+  const spinV=dyn.spin.yd*D2R;
+  const handHigh=clamp((p.hy+.1)/.5,0,1);
+  for(const c of r.cloak){
+    const nx=Math.sin(c.th), nz=Math.cos(c.th);
+    const into=-(vLocal.x*nx+vLocal.z*nz);
+    let flap=-clamp(into*.22,-.15,.7) - Math.min(Math.abs(spinV)*.06,.55) - (nx<-.3?handHigh*.5:0);
+    flap=Math.max(flap,-.8);
+    flap+=Math.sin(t*1.4+c.th*2)*.03;
+    const side=clamp(spinV*.05,-.5,.5)*(nz<0?1:-1);
+    c.hinge.rotation.x=c.flap.update(T,flap); c.hinge.rotation.z=c.side.update(T,side);
+  }
+  r.eyeMat.opacity=clamp(p.eye,0,1); r.glint.opacity=clamp(p.glint,0,1)*.7;
+  return {shR,eR,wR,shL,eL,wL,dir, base:wR.clone().addScaledVector(dir,.3), tip:wR.clone().addScaledVector(dir,.82)};
+}
+
+/* ---------- 5) COMBAT FX ---------- */
+const TRAIL_MAX=200;
+const trailMat=new THREE.ShaderMaterial({ transparent:true, depthWrite:false, side:THREE.DoubleSide,
+  vertexShader:`attribute float aAge; attribute float aV; attribute float aU; varying float vAge; varying float vV; varying float vU;
+    void main(){ vAge=aAge; vV=aV; vU=aU; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+  fragmentShader:`varying float vAge; varying float vV; varying float vU;
+    void main(){ float life=clamp(1.0-vAge,0.0,1.0); float taper=pow(sin(3.14159*clamp(vU*1.05,0.0,1.0)),0.6);
+      float w=pow(life,1.2)*taper*0.8; if(vV>w) discard;
+      float bristle=0.72+0.28*step(0.25,fract(vV*9.0+sin(vU*20.0)*0.15));
+      float a=0.93*bristle*smoothstep(0.0,0.06,w-vV)*pow(life,0.45);
+      gl_FragColor=vec4(0.075,0.07,0.065,a); }` });
+const strokesList=[];
+function newStroke(id){
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(TRAIL_MAX*6),3));
+  for(const n of ['aAge','aV','aU']) g.setAttribute(n,new THREE.BufferAttribute(new Float32Array(TRAIL_MAX*2),1));
+  const idx=[]; for(let i=0;i<TRAIL_MAX-1;i++){ const a=i*2; idx.push(a,a+1,a+2, a+1,a+3,a+2); } g.setIndex(idx);
+  g.setDrawRange(0,0);
+  const m=new THREE.Mesh(g,trailMat); m.frustumCulled=false; m.renderOrder=5; scene.add(m);
+  const s={id,mesh:m,samples:[]}; strokesList.push(s); return s;
+}
+function updateStrokes(){
+  const LIFE=380, now=S.clock;
+  for(const s of strokesList){
+    s.samples=s.samples.filter(q=>now-q.time<LIFE);
+    const n=Math.min(s.samples.length,TRAIL_MAX), g=s.mesh.geometry;
+    const P=g.attributes.position.array, A=g.attributes.aAge.array, Vv=g.attributes.aV.array, U=g.attributes.aU.array;
+    for(let i=0;i<n;i++){ const q=s.samples[s.samples.length-n+i], age=(now-q.time)/LIFE, u=n>1?i/(n-1):0;
+      P.set([q.t.x,q.t.y,q.t.z, q.b.x,q.b.y,q.b.z], i*6); A[i*2]=A[i*2+1]=age; Vv[i*2]=0; Vv[i*2+1]=1; U[i*2]=U[i*2+1]=u; }
+    for(const k of ['position','aAge','aV','aU']) g.attributes[k].needsUpdate=true;
+    g.setDrawRange(0, n>1?(n-1)*6:0);
+  }
+  for(let i=strokesList.length-1;i>=0;i--){ const s=strokesList[i]; if(!s.samples.length && s.id!==S.trailId){ scene.remove(s.mesh); s.mesh.geometry.dispose(); strokesList.splice(i,1); } }
+}
+// ink splatter + straw debris (Points)
+const PMAX=600;
+const dotTex=canvasTex(32,32,(c)=>{ c.fillStyle='#fff'; c.beginPath(); c.arc(16,16,14,0,7); c.fill(); });
+const pGeo=new THREE.BufferGeometry(); pGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(PMAX*3),3)); pGeo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(PMAX*3),3));
+const pts=new THREE.Points(pGeo,new THREE.PointsMaterial({size:7,sizeAttenuation:false,vertexColors:true,map:dotTex,alphaTest:.5,transparent:false}));
+pts.frustumCulled=false; scene.add(pts);
+const parts=[];
+function spawn(p,v,col,life=1.2){ if(parts.length<PMAX) parts.push({p:p.clone(),v:v.clone(),c:col,life,max:life}); }
+const STAIN_MAX=160, stainMesh=new THREE.InstancedMesh(new THREE.CircleGeometry(1,12).rotateX(-Math.PI/2), new THREE.MeshBasicMaterial({color:0x1b1a19,transparent:true,opacity:.6,depthWrite:false}), STAIN_MAX);
+stainMesh.count=0; stainMesh.renderOrder=1; scene.add(stainMesh); const stains=[];
+function inkBurst(at,dir,n,big){
+  for(let i=0;i<n;i++){ const v=dir.clone().multiplyScalar(1.5+rnd()*(big?5:3.5)).add(V((rnd()-.5)*2.4,1.2+rnd()*2.6,(rnd()-.5)*2.4));
+    spawn(at,v,[.08,.075,.07],1.6); }
+}
+function updateParticles(T){
+  const P=pGeo.attributes.position.array, C=pGeo.attributes.color.array;
+  for(let i=parts.length-1;i>=0;i--){ const q=parts[i]; q.v.y-=9.8*T; q.p.addScaledVector(q.v,T); q.life-=T;
+    if(q.p.y<=0.005 && walkable(q.p.x,q.p.z)){ if(q.c[0]<.2 && stains.length<STAIN_MAX && rnd()<.7) stains.push({x:q.p.x,z:q.p.z,r:.02+rnd()*.05,life:1}); parts.splice(i,1); continue; }
+    if(q.life<=0||q.p.y<-6) parts.splice(i,1); }
+  parts.forEach((q,i)=>{ P[i*3]=q.p.x; P[i*3+1]=q.p.y; P[i*3+2]=q.p.z; C[i*3]=q.c[0]; C[i*3+1]=q.c[1]; C[i*3+2]=q.c[2]; });
+  pGeo.setDrawRange(0,parts.length); pGeo.attributes.position.needsUpdate=true; pGeo.attributes.color.needsUpdate=true;
+  const m=new THREE.Matrix4(); let k=0;
+  for(let i=stains.length-1;i>=0;i--){ stains[i].life-=T*.12; if(stains[i].life<=0) stains.splice(i,1); }
+  for(const s of stains){ const r=s.r*Math.min(1,s.life*2); m.makeScale(r*1.6,1,r); m.setPosition(s.x,.012,s.z); stainMesh.setMatrixAt(k++,m); }
+  stainMesh.count=k; stainMesh.instanceMatrix.needsUpdate=true;
+}
+// cut bamboo debris
+const pieces=[];
+function cutBamboo(t,y,dir){
+  t.alive=false; t.regrow=7; while(t.g.children.length) t.g.remove(t.g.children[0]);
+  const stump=bambooStalk(y,false); t.g.add(stump);
+  const top=new THREE.Group(); top.position.set(t.x,y,t.z); scene.add(top);
+  const piece=bambooStalk(t.h-y,true); top.add(piece);
+  const axis=V(dir.z,0,-dir.x).normalize();
+  pieces.push({g:top, axis, ang:0, av:1.2+rnd()*1.5, v:dir.clone().multiplyScalar(1.4).setY(.6), life:4.5, len:t.h-y});
+  // white cut-face at the end
+  const cap=new THREE.Mesh(new THREE.CircleGeometry(.05,8).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({color:0xefe9dc})); cap.position.y=y+.001; t.g.add(cap);
+  for(let i=0;i<10;i++) spawn(V(t.x,y,t.z),V((rnd()-.5)*2,1+rnd()*2,(rnd()-.5)*2),[.42,.41,.38],1.2);
+}
+function updatePieces(T){
+  for(let i=pieces.length-1;i>=0;i--){ const p=pieces[i];
+    if(p.g.position.y>0.02 || p.ang<1.45){ p.v.y-=9.8*T; p.g.position.addScaledVector(p.v,T); p.av+=3.5*T; p.ang=Math.min(1.55,p.ang+p.av*T);
+      if(p.g.position.y<0.02){ p.g.position.y=0.02; p.v.multiplyScalar(.3); p.v.y=0; } }
+    p.g.quaternion.setFromAxisAngle(p.axis,p.ang); p.life-=T;
+    if(p.life<0){ p.g.scale.multiplyScalar(.9); if(p.g.scale.x<.05){ scene.remove(p.g); pieces.splice(i,1); } } }
+  for(const t of targets) if(t.type==='bamboo' && !t.alive){ t.regrow-=T; if(t.regrow<=0){ buildBamboo(t); t.g.scale.set(1,.01,1); t.grow=0; } }
+  for(const t of targets) if(t.type==='bamboo' && t.alive && t.g.scale.y<1){ t.g.scale.y=Math.min(1,t.g.scale.y+T*.8); }
+}
+// hit test: distance from the blade line segment (base→tip) to the target's axis
+function segDist2D(ax,az,bx,bz,px,pz){ const dx=bx-ax,dz=bz-az, l=dx*dx+dz*dz||1e-6; const u=clamp(((px-ax)*dx+(pz-az)*dz)/l,0,1); return [Math.hypot(ax+dx*u-px, az+dz*u-pz),u]; }
+function hitTest(arm){
+  if(!S.act) return; const a=S.act, k0=a.def.keys[0][0], k2=a.def.keys[2][0];
+  if(a.t<k0 || a.t>k2+40) return;
+  const b=S.wristPrev||arm.base;
+  for(const t of targets){
+    if(t.lastHit===S.attackId) continue; if(t.type==='bamboo' && !t.alive) continue;
+    const [d,u]=segDist2D(arm.wR.x,arm.wR.z,arm.tip.x,arm.tip.z,t.x,t.z);
+    const y=lerp(arm.wR.y,arm.tip.y,u);
+    if(d<t.r+.06 && u>.25 && y>.15 && y<t.h){
+      t.lastHit=S.attackId;
+      const away=V(t.x-S.pos.x,0,t.z-S.pos.z).normalize();
+      const mv=S.edge.clone().setY(0).normalize();
+      if(t.type==='bamboo') cutBamboo(t,clamp(y,.25,t.h-.3),mv.lengthSq()>0?mv:away);
+      else { t.tx.yd+=away.z*90*(a.def.final?1.6:1); t.tz.yd+=-away.x*90*(a.def.final?1.6:1); t.hits++;
+        for(let i=0;i<12;i++) spawn(V(t.x,y,t.z),V((rnd()-.5)*3,1+rnd()*2.5,(rnd()-.5)*3),[.62,.58,.5],1.3); }
+      inkBurst(V(t.x,y,t.z),mv.lengthSq()?mv:away,a.def.final?16:10,a.def.final);
+      S.hitstop=Math.max(S.hitstop,a.def.final?80:55); S.shake=Math.max(S.shake,reduceMotion?0:(a.def.final?.16:.09));
+    }
+  }
+}
+const kanjiEl=document.getElementById('kanji'); let kanjiTimer;
+function showKanji(def){ kanjiEl.textContent=def.kanji; kanjiEl.classList.toggle('final',!!def.final);
+  kanjiEl.classList.remove('show'); void kanjiEl.offsetWidth; kanjiEl.classList.add('show');
+  clearTimeout(kanjiTimer); kanjiTimer=setTimeout(()=>kanjiEl.classList.remove('show'),def.final?900:600); }
+
+/* ---------- debug skeleton ---------- */
+const boneGeo=new THREE.BufferGeometry(); boneGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(64*3),3));
+const boneLines=new THREE.LineSegments(boneGeo,new THREE.LineBasicMaterial({color:0xc0392b,depthTest:false}));
+const jointGeo=new THREE.BufferGeometry(); jointGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(32*3),3));
+const joints=new THREE.Points(jointGeo,new THREE.PointsMaterial({color:0xc0392b,size:9,sizeAttenuation:false,map:dotTex,alphaTest:.5,depthTest:false}));
+boneLines.renderOrder=joints.renderOrder=10; boneLines.visible=joints.visible=false; boneLines.frustumCulled=joints.frustumCulled=false; scene.add(boneLines,joints);
+function drawBones(arm){
+  const w=o=>o.getWorldPosition(V()), r=rig;
+  const J={root:w(r.root),hips:w(r.hips),chest:w(r.chest),neck:w(r.neck),head:w(r.head).add(V(0,.15,0)),
+    tL:w(r.thighL),kL:w(r.kneeL),aL:w(r.ankleL),tR:w(r.thighR),kR:w(r.kneeR),aR:w(r.ankleR),
+    shR:arm.shR,eR:arm.eR,wR:arm.wR,shL:arm.shL,eL:arm.eL,wL:arm.wL,tip:arm.tip};
+  const pairs=[['root','hips'],['hips','chest'],['chest','neck'],['neck','head'],['hips','tL'],['tL','kL'],['kL','aL'],['hips','tR'],['tR','kR'],['kR','aR'],
+    ['chest','shR'],['shR','eR'],['eR','wR'],['wR','tip'],['chest','shL'],['shL','eL'],['eL','wL']];
+  const P=boneGeo.attributes.position.array; pairs.forEach(([a,b],i)=>{ P.set([J[a].x,J[a].y,J[a].z,J[b].x,J[b].y,J[b].z],i*6); });
+  boneGeo.setDrawRange(0,pairs.length*2); boneGeo.attributes.position.needsUpdate=true;
+  const Q=jointGeo.attributes.position.array; Object.values(J).forEach((p,i)=>Q.set([p.x,p.y,p.z],i*3));
+  jointGeo.setDrawRange(0,Object.keys(J).length); jointGeo.attributes.position.needsUpdate=true;
+}
+
+/* ---------- 6) CAMERA ---------- */
+const CAM={ yaw:new SOD(1.6,1,0,45), pitch:new SOD(1.6,1,0,35.26), zoom:new SOD(1.6,1,0,4.6), yawT:45, pitchT:35.26, zoomT:4.6, focus:V(0,.9,-1) };
+function rotateCam(d){ CAM.yawT+=d; } function tiltCam(d){ CAM.pitchT=clamp(CAM.pitchT+d,12,82); }
+function updateCamera(T){
+  const yaw=CAM.yaw.update(T,CAM.yawT)*D2R, pitch=CAM.pitch.update(T,CAM.pitchT)*D2R, zoom=CAM.zoom.update(T,CAM.zoomT);
+  CAM.focus.lerp(V(S.pos.x,.85,S.pos.z),1-Math.exp(-T*5));
+  const off=V(Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch)).multiplyScalar(40);
+  camera.position.copy(CAM.focus).add(off);
+  camera.up.set(0,1,0); camera.lookAt(CAM.focus);
+  if(S.shake>0){ const r=V(Math.cos(yaw),0,-Math.sin(yaw)); camera.position.addScaledVector(r,(rnd()-.5)*S.shake).y+=(rnd()-.5)*S.shake; S.shake*=.86; if(S.shake<.004) S.shake=0; }
+  const w=stageEl.clientWidth, h=stageEl.clientHeight||1, asp=w/h;
+  camera.top=zoom; camera.bottom=-zoom; camera.left=-zoom*asp; camera.right=zoom*asp; camera.updateProjectionMatrix();
+  sun.position.copy(CAM.focus).add(V(-6,14,5)); sun.target.position.copy(CAM.focus);
+}
+function camBasis(){ const yaw=CAM.yaw.y*D2R; return {fwd:V(-Math.sin(yaw),0,-Math.cos(yaw)), right:V(Math.cos(yaw),0,-Math.sin(yaw))}; }
+
+/* ---------- simulation step ---------- */
+let lastArm=null;
+function step(T){
+  S.clock+=T*1000;
+  // ---- movement ----
+  let ix=0,iz=0; if(keys.w||keys.arrowup) iz+=1; if(keys.s||keys.arrowdown) iz-=1; if(keys.d||keys.arrowright) ix+=1; if(keys.a||keys.arrowleft) ix-=1;
+  const {fwd,right}=camBasis(); const want=V();
+  if(ix||iz){ want.addScaledVector(fwd,iz).addScaledVector(right,ix).normalize(); S.moveTo=null; }
+  else if(S.moveTo){ const d=V(S.moveTo.x-S.pos.x,0,S.moveTo.z-S.pos.z); if(d.length()<.12) S.moveTo=null; else want.copy(d.normalize()); }
+  const canMove=S.phase==='idle';
+  const tv=want.multiplyScalar(canMove?3.1:0);
+  if(S.act && S.act.def.lunge){ const a=S.act, k0=a.def.keys[0][0], k1=a.def.keys[1][0]; if(a.t>k0-40 && a.t<k1) tv.add(V(Math.sin(S.facing),0,Math.cos(S.facing)).multiplyScalar(a.def.lunge)); }
+  S.vel.lerp(tv,1-Math.exp(-T*(tv.lengthSq()?12:9)));
+  const np=S.pos.clone().addScaledVector(S.vel,T);
+  for(const c of colliders){ const dx=np.x-c.x, dz=np.z-c.z, d=Math.hypot(dx,dz), m=c.r+.28; if(d<m&&d>1e-4){ np.x=c.x+dx/d*m; np.z=c.z+dz/d*m; } }
+  const pad=.3; const ok=(x,z)=>walkable(x,z)&&walkable(x+pad,z)&&walkable(x-pad,z)&&walkable(x,z+pad)&&walkable(x,z-pad);
+  if(ok(np.x,np.z)) S.pos.copy(np); else if(ok(np.x,S.pos.z)) S.pos.x=np.x; else if(ok(S.pos.x,np.z)) S.pos.z=np.z; else S.moveTo=null;
+  const sp=Math.hypot(S.vel.x,S.vel.z);
+  if(canMove && sp>.3) S.facing=Math.atan2(S.vel.x,S.vel.z);
+  { let d=S.facing-facingS.y; d=Math.atan2(Math.sin(d),Math.cos(d)); facingS.update(T,facingS.y+d); }
+  S.walkAmt=lerp(S.walkAmt,canMove?clamp(sp/3.1,0,1):0,1-Math.exp(-T*8)); S.walkPhase+=T*sp*3.3;
+
+  // ---- attack timeline ----
+  if(S.act){ const a=S.act; a.t+=T*1000;
+    if(S.queued && a.t>=a.def.chain && S.combo<COMBO.length-1) startAttack(S.combo+1);
+    else if(a.t>=a.def.end){ S.act=null; S.phase='idle'; S.combo=-1; setDyn(null);
+      if(Math.abs(dyn.spin.y)>180){ const off=360*Math.round(dyn.spin.y/360); dyn.spin.shift(-off); S.facing+=off*D2R; facingS.shift(off*D2R); }
+      if(S.queued){ S.queued=false; startAttack(0); } }
+    S.target = S.act ? timeline(S.act) : {...IDLE};
+  } else S.target={...IDLE};
+  for(const k of KEYS) S.st[k]=dyn[k].update(T,S.target[k]);
+  const saveF=S.facing; S.facing=facingS.y;
+  const arm=applySkeleton(S.st,T); lastArm=arm;
+  S.facing=saveF;
+  // ---- trail ----
+  const tsp=S.prevTip?arm.tip.distanceTo(S.prevTip)/T:0; S.prevTip=arm.tip.clone();
+  if(S.act){ const a=S.act, k0=a.def.keys[0][0], k1=a.def.keys[1][0];
+    if(a.t>k0+15 && a.t<k1+170 && tsp>5.5){ let s=strokesList.find(x=>x.id===S.trailId)||newStroke(S.trailId); s.samples.push({b:arm.base,t:arm.tip,time:S.clock}); if(s.samples.length>TRAIL_MAX) s.samples.shift(); }
+    if(a.t>k0){ a.maxSp=Math.max(a.maxSp,tsp); if(!a.impacted && ((a.maxSp>8 && tsp<a.maxSp*.45 && a.t>a.def.impactMin) || a.t>a.def.impactMin+220)){ a.impacted=true; showKanji(a.def); if(!S.shake) S.shake=reduceMotion?0:.05; } }
+    hitTest(arm);
+  }
+  // ---- world ----
+  for(const t of targets) if(t.type==='dummy'){ t.pivot.rotation.x=t.tx.update(T,0)*D2R; t.pivot.rotation.z=t.tz.update(T,0)*D2R; }
+  updatePieces(T); updateParticles(T);
+}
+
+/* ---------- loop ---------- */
+let acc=0, last=performance.now();
+function frame(now, manualMs, noRender){
+  const ms=Math.min(manualMs ?? (now-last),50)*S.speed; last=now;
+  if(S.hitstop>0){ S.hitstop-=ms; }
+  else { acc+=ms; while(acc>=4){ step(.004); acc-=4; } }
+  updateCamera(Math.max(ms,1)/1000);
+  updateStrokes();
+  if(boneLines.visible && lastArm) drawBones(lastArm);
+  if(!noRender) renderer.render(scene,camera);
+}
+let rafOn=true; function raf(t){ if(!rafOn) return; frame(t); requestAnimationFrame(raf); }
+function resize(){ const w=stageEl.clientWidth, h=stageEl.clientHeight; renderer.setSize(w,h); }
+new ResizeObserver(resize).observe(stageEl); resize();
+for(let i=0;i<60;i++) step(.004);
+requestAnimationFrame(raf);
+
+/* ---------- input ---------- */
+const ray=new THREE.Raycaster(), ground=new THREE.Plane(V(0,1,0),0);
+window.addEventListener('keydown',e=>{ const k=e.key.toLowerCase();
+  if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k)){ keys[k]=true; e.preventDefault(); }
+  if(e.repeat) return;
+  if(k==='j'||k===' '||k==='k'){ e.preventDefault(); press(); }
+  else if(k==='q') rotateCam(-90); else if(k==='e') rotateCam(90);
+  else if(k==='r') tiltCam(12); else if(k==='f') tiltCam(-12);
+  else if(k==='b') toggle('bBones'); else if(k==='t') toggle('bSlow'); });
+window.addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; });
+window.addEventListener('blur',()=>{ for(const k in keys) keys[k]=false; });
+const cv=renderer.domElement; let drag=null;
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId); drag={x:e.clientX,y:e.clientY,moved:false,isClick:e.button===0&&!e.shiftKey}; });
+cv.addEventListener('pointermove',e=>{ if(!drag) return; const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+  if(!drag.moved && Math.hypot(dx,dy)>7) drag.moved=true;
+  if(drag.moved){ CAM.yawT-=dx*.35; tiltCam(dy*.18); drag.x=e.clientX; drag.y=e.clientY; } }); // any held drag free-orbits (full 360° yaw)
+cv.addEventListener('pointerup',e=>{ if(drag && !drag.moved && drag.isClick){
+    const r=cv.getBoundingClientRect(); ray.setFromCamera({x:(e.clientX-r.left)/r.width*2-1,y:-(e.clientY-r.top)/r.height*2+1},camera);
+    const p=ray.ray.intersectPlane(ground,V()); if(p && walkable(p.x,p.z)) S.moveTo=p; }
+  drag=null; });
+cv.addEventListener('wheel',e=>{ e.preventDefault(); CAM.zoomT=clamp(CAM.zoomT*Math.pow(1.0015,e.deltaY),2.2,9); },{passive:false});
+function toggle(id){ const b=document.getElementById(id), on=b.getAttribute('aria-pressed')!=='true'; b.setAttribute('aria-pressed',on);
+  if(id==='bBones'){ boneLines.visible=joints.visible=on; } if(id==='bSlow') S.speed=on?.25:1; }
+const bind=(id,fn)=>document.getElementById(id).addEventListener('click',e=>{ fn(); e.currentTarget.blur(); });
+bind('bRotL',()=>rotateCam(-90)); bind('bRotR',()=>rotateCam(90)); bind('bUp',()=>tiltCam(12)); bind('bDown',()=>tiltCam(-12));
+bind('bBones',()=>toggle('bBones')); bind('bSlow',()=>toggle('bSlow'));
+document.getElementById('bAtk').addEventListener('pointerdown',e=>{ e.preventDefault(); press(); });
+window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,CAM,rotateCam,tiltCam,rig};
+loadNinja();
+</script>
+</body>
+</html>
