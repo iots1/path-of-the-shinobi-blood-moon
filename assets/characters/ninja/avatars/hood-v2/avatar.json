@@ -1,0 +1,8 @@
+{
+  "id": "hood-v2",
+  "status": "in-game",
+  "model": "assets/ninja.glb",
+  "heightM": 1.75,
+  "scale": 1.0,
+  "notes": "Current in-game model (Meshy rig 01a14b18..., eyes + fists sculpted in Blender). Not moved yet: client/index.html loads assets/ninja.glb directly."
+}

@@ -1,0 +1,11 @@
+{
+  "id": "ninja",
+  "name": "Shinobi (grey hood, black kimono, katana)",
+  "units": "meters",
+  "canonicalHeight": 1.75,
+  "facing": "+Z",
+  "rightHandSide": "-X",
+  "skeleton": "docs/BONES.md",
+  "sharedAnimations": ["assets/anim/walk.glb", "assets/anim/run.glb"],
+  "defaultAvatar": "hood-v2"
+}

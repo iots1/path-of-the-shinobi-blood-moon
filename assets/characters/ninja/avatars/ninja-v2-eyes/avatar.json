@@ -1,0 +1,8 @@
+{
+  "id": "ninja-v2-eyes",
+  "status": "rigging",
+  "model": "assets/characters/ninja/avatars/ninja-v2-eyes/ninja.glb",
+  "heightM": 1.75,
+  "scale": 1.0,
+  "notes": "New model with clear eyes. Rigged on Meshy with Height 1.75 m, Rotate 0/0/0, Offset 0. Download the rigged glb here as ninja.glb, and walk/run only if the skeleton differs. Put the Meshy task id in raw/README.md and docs/CREDITS.md."
+}

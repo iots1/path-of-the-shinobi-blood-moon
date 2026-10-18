@@ -337,7 +337,7 @@ const rig={};
   const eyeMat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0,depthTest:false,depthWrite:false});
   rig.eyes=[];
   for(const s of [-1,1]){ // narrow, inward-angled slits — a sharp squint rather than a flat glow
-    const e=new THREE.Mesh(new THREE.BoxGeometry(.044,.007,.01),eyeMat);
+    const e=new THREE.Mesh(new THREE.BoxGeometry(.044,.012,.01),eyeMat);
     e.position.set(s*.03,.125,.124); e.rotation.z=-s*.3; e.renderOrder=20;
     head.add(e); rig.eyes.push(e);
   }
@@ -366,14 +366,53 @@ const rig={};
   }
   // katana: +Y axis = blade length, +X = cutting edge
   const kat=new THREE.Group(); scene.add(kat); rig.katana=kat;
-  const tsuka=inked(new THREE.CylinderGeometry(.017,.017,.26,6).translate(0,-.1,0),0x2a2827,.007); kat.add(tsuka);
-  const tsuba=inked(new THREE.CylinderGeometry(.045,.045,.012,10).translate(0,.035,0),PAL.ink,.006); kat.add(tsuba);
-  const sh=new THREE.Shape(); const BL=.76;
-  sh.moveTo(-.012,.04); for(let i=1;i<=12;i++){ const u=i/12, y=.04+u*BL, c=-.035*u*u; sh.lineTo(c-.012+u*.004,y); }
-  sh.lineTo(-.03,.04+BL+.02); for(let i=12;i>=0;i--){ const u=i/12, y=.04+u*BL, c=-.035*u*u; sh.lineTo(c+.014-u*.012,y); }
-  const blade=inked(new THREE.ExtrudeGeometry(sh,{depth:.006,bevelEnabled:false}).translate(0,0,-.003),0x2b2a29,.006); kat.add(blade);
+  // Layout along +Y, built in sword space (kashira -.23, tsuka -.22..+.008, fuchi, tsuba .034, habaki, blade .04..) and then the
+  // whole sword is lifted by .075 so the right wrist (origin) sits a palm-width below the tsuba, the off-hand (wrist-.13) near the
+  // kashira. The tip ends at .075+.745=.82 — the hit test (wrist→tip, line "tip:" in the pose result) assumes 0.82 m, keep it there.
+  const BL=.685, BASE=.04, TIPY=BASE+BL+.02, METAL=0x2b2a29, BRASS=0x8d8576;
+  // blade: ridged cross-section (back | shinogi ridge | edge) along a curved spine (sori), kissaki point.
+  // The edge-side bevel is a lighter band (hamon-like). Two copies: faceted for shading (flat normals keep the
+  // ridge crisp), smooth+indexed for the inverted-hull outline (split vertices would tear the hull open).
+  const bladeGeo=(()=>{
+    const N=30, P=[], cv=u=>-.035*u*u;
+    for(let i=0;i<=N;i++){ const u=i/N, y=BASE+u*BL, c=cv(u);
+      const xb=c-.012+u*.004, xe=c+.014-.012*u, xr=xb+.5*(xe-xb);
+      const tb=.0034-.0012*u, tm=.0036-.0012*u;                     // half thickness at the back / at the ridge
+      P.push([[xb,y,tb],[xr,y,tm],[xe,y,0],[xr,y,-tm],[xb,y,-tb]]); }
+    const apex=[cv(1)+.004,TIPY,0], pos=[], idx=[], fpos=[], fcol=[];
+    for(const row of P) for(const p of row) pos.push(...p);
+    pos.push(...apex);
+    const DARK=new THREE.Color(METAL), EDGE=new THREE.Color(0x9a958c);
+    const tri=(a,b,c,col)=>{ for(const v of [a,b,c]) fpos.push(...v); fcol.push(col.r,col.g,col.b,col.r,col.g,col.b,col.r,col.g,col.b); };
+    for(let i=0;i<N;i++) for(let k=0;k<5;k++){
+      const k2=(k+1)%5, a=P[i][k], b=P[i][k2], c=P[i+1][k2], d=P[i+1][k], col=(k===1||k===2)?EDGE:DARK;
+      tri(a,b,c,col); tri(a,c,d,col); idx.push(i*5+k,i*5+k2,(i+1)*5+k2, i*5+k,(i+1)*5+k2,(i+1)*5+k); }
+    for(let k=0;k<5;k++){ const k2=(k+1)%5; tri(P[N][k],P[N][k2],apex,(k===1||k===2)?EDGE:DARK); idx.push(N*5+k,N*5+k2,(N+1)*5); }
+    const smooth=new THREE.BufferGeometry(); smooth.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); smooth.setIndex(idx); smooth.computeVertexNormals();
+    const flat=new THREE.BufferGeometry(); flat.setAttribute('position',new THREE.Float32BufferAttribute(fpos,3)); flat.setAttribute('color',new THREE.Float32BufferAttribute(fcol,3)); flat.computeVertexNormals();
+    return {flat,smooth};
+  })();
+  const bladeMesh=new THREE.Mesh(bladeGeo.flat,new THREE.MeshToonMaterial({vertexColors:true,gradientMap:grad,side:THREE.DoubleSide}));
+  bladeMesh.castShadow=true; bladeMesh.receiveShadow=true; kat.add(bladeMesh);
+  kat.add(new THREE.Mesh(bladeGeo.smooth,outlineMat(.005)));
+  // habaki (brass collar on the blade root), tsuba (guard), fuchi (collar under the guard)
+  const habaki=inked(new THREE.BoxGeometry(.03,.026,.0105).translate(.001,BASE+.012,0),BRASS,.004); kat.add(habaki);
+  const tsubaGeo=new THREE.LatheGeometry([[.006,-.0035],[.039,-.0035],[.0445,-.0015],[.0445,.0025],[.039,.0045],[.006,.0045]].map(([r,y])=>new THREE.Vector2(r,y)),20);
+  tsubaGeo.scale(1,1,.9); tsubaGeo.translate(0,.0335,0);
+  const tsuba=inked(tsubaGeo,0x1f1e1d,.005); kat.add(tsuba);
+  const fuchi=inked(new THREE.CylinderGeometry(.0175,.0185,.016,12).scale(1.05,1,.88).translate(0,.018,0),BRASS,.004); kat.add(fuchi);
+  // tsuka: oval grip with a diamond-wrapped cord (tsuka-ito) over pale ray skin, two menuki ornaments, kashira pommel
+  const wrapTex=canvasTex(32,64,(c,w,h)=>{ c.fillStyle='#262321'; c.fillRect(0,0,w,h);
+    c.fillStyle='#d6d0c3'; for(const [cx,cy] of [[w/2,h/2],[0,0],[w,0],[0,h],[w,h]]){ c.beginPath(); c.moveTo(cx,cy-h*.3); c.lineTo(cx+w*.3,cy); c.lineTo(cx,cy+h*.3); c.lineTo(cx-w*.3,cy); c.closePath(); c.fill(); } },true);
+  wrapTex.repeat.set(8,10);
+  const tsukaGeo=new THREE.LatheGeometry([[.0158,-.222],[.0168,-.2],[.0176,-.11],[.0168,-.02],[.0162,.004]].map(([r,y])=>new THREE.Vector2(r,y)),16);
+  tsukaGeo.scale(1.06,1,.86);
+  const tsuka=inked(tsukaGeo,0xffffff,.0055,{map:wrapTex}); kat.add(tsuka);
+  for(const s of [-1,1]) kat.add(inked(new THREE.BoxGeometry(.004,.022,.008).translate(0,-.1,s*.0155),BRASS,.003));
+  const kashira=inked(new THREE.CylinderGeometry(.0175,.0165,.014,12).scale(1.06,1,.86).translate(0,-.229,0),METAL,.004); kat.add(kashira);
   const glintMat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0});
   const glint=new THREE.Mesh(new THREE.BoxGeometry(.004,BL*.9,.008).translate(-.004,.04+BL*.48,0),glintMat); kat.add(glint); rig.glint=glintMat;
+  const sword=new THREE.Group(); sword.position.y=.075; while(kat.children.length) sword.add(kat.children[0]); kat.add(sword);
   OL_SCALE=1;
 })();
 
@@ -437,11 +476,23 @@ function loadNinja(){
         l1:posRL(`${S0}Arm`).distanceTo(posRL(`${S0}ForeArm`)),
         l2:posRL(`${S0}ForeArm`).distanceTo(posRL(`${S0}Hand`)),
         upDir:fo.position.clone().normalize(), foDir:ha.position.clone().normalize(),
+        foBind:fo.quaternion.clone(), q0:ha.quaternion.clone(),   // bind-local rotations: forearm (roll is rebuilt each frame) and hand-vs-forearm
         // in a T-pose the elbow naturally flexes toward the character's front (+Z)
         bendLocal:V(0,0,1).applyQuaternion(real.bind[up.name].rl.clone().invert()) };
     }
+    real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)};
 
-    skinned.material=new THREE.MeshToonMaterial({color:0xffffff, map:skinned.material.map, gradientMap:grad});
+    // keep the glb's normal map: the cloth folds live there. The base-colour texture is nearly black
+    // (mean ~28/255, 96% of pixels < 64), so through the shared 3-band toon ramp (darkest band 27%) the
+    // whole body read as a flat silhouette. Fix: a lighter ramp just for the character + a gamma lift on
+    // the albedo (dark tones only, the white rope barely moves) + a stronger normal map.
+    const bodyGrad=new THREE.DataTexture(new Uint8Array([118,118,118,255, 190,190,190,255, 255,255,255,255]),3,1,THREE.RGBAFormat);
+    bodyGrad.minFilter=bodyGrad.magFilter=THREE.NearestFilter; bodyGrad.generateMipmaps=false; bodyGrad.needsUpdate=true;
+    skinned.material=new THREE.MeshToonMaterial({color:0xffffff, map:skinned.material.map, normalMap:skinned.material.normalMap, gradientMap:bodyGrad});
+    skinned.material.normalScale.set(2.2,2.2);
+    // the trousers/boots albedo is ~0, so gamma alone leaves them black: add a small floor (0.07) so their folds read
+    skinned.material.onBeforeCompile=s=>{ s.fragmentShader=s.fragmentShader.replace('#include <map_fragment>','#include <map_fragment>\n diffuseColor.rgb=vec3(0.07)+0.93*pow(diffuseColor.rgb,vec3(0.42));'); };
+    skinned.material.customProgramCacheKey=()=>'ninjaBodyLift';
     skinned.castShadow=true; skinned.receiveShadow=true; skinned.frustumCulled=false;
     const ol=new THREE.SkinnedMesh(skinned.geometry, outlineMat(.014));
     ol.bind(skinned.skeleton, skinned.bindMatrix); ol.frustumCulled=false;
@@ -453,7 +504,11 @@ function loadNinja(){
     // but a Mesh parented directly to a Bone under this particular rig silently fails to render
     // (the nested 0.01 Armature scale seems to confuse frustum culling) — so instead the eyes are
     // kept as world-space objects, like the hands/katana, and placed from Head's matrix each frame.
-    real.eyeLocal=[-3.5,3.5].map(x=>new THREE.Vector3(x,7,10));
+    // Head-bone-local (cm) centres of the eyes painted on the face plate in ninja.glb, in rig.eyes order (-x first).
+    // Computed in Blender (bone frame == glTF Head frame); re-measure if the face is ever remodelled.
+    // Also per-eye slant (rad, rotateZ in the head frame, outer end up): the head bone is rolled ~4° at rest, so the two differ.
+    real.eyeLocal=[new THREE.Vector3(-2.77,10.97,11.35), new THREE.Vector3(3.58,11.59,10.90)];
+    real.eyeRot=[-0.053,0.179];
     for(const e of rig.eyes) scene.add(e);
     rig.back.visible=false; rig.cloakRoot.visible=false; rig.hood.visible=false; rig.mask.visible=false;
     // hide the procedural body; the driver groups themselves keep running invisibly
@@ -533,7 +588,7 @@ function driveRealBones(real){
   real.bone['Hips'].position.copy(hipsRL.applyMatrix4(real.hipsParentInv));
   real.model.updateMatrixWorld(true);
   const headM=real.bone.Head.matrixWorld, headQ=real.bone.Head.getWorldQuaternion(_q1);
-  rig.eyes.forEach((e,i)=>{ e.position.copy(real.eyeLocal[i]).applyMatrix4(headM); e.quaternion.copy(headQ); e.rotateZ(-Math.sign(real.eyeLocal[i].x)*.3); });
+  rig.eyes.forEach((e,i)=>{ e.position.copy(real.eyeLocal[i]).applyMatrix4(headM); e.quaternion.copy(headQ); e.rotateZ(real.eyeRot[i]); });
 }
 function aimBone(bone, childDir, target){ // rotate bone (from its bind-relative pose) so childDir points at target
   const pq=bone.parent.getWorldQuaternion(new THREE.Quaternion());
@@ -555,41 +610,113 @@ function aimArm(a, S0, E, W){
       a.up.quaternion.copy(a.up.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(wq)); a.up.updateMatrixWorld(true);
     }
   }
+  a.fo.quaternion.copy(a.foBind);   // re-aim from the bind roll every frame (stateless) so aimHand's forearm twist can't accumulate
   aimBone(a.fo, a.foDir, fd);
 }
-const HAND_GRIP_OFFSET=new THREE.Quaternion(); // local correction between the blade's basis and a natural grip; tuned empirically
-function aimHand(a, bladeQuat, blend){ // rotate the wrist to match the sword's grip, blended by `blend` (0..1)
-  if(!a.ha || blend<=0) return;
+/* Grip. This model's hand bones (measured from the skinned mesh, cm): in the T-pose the fingers run along local +Y, the thumb side is
+   local +Z, and the palm faces -X on the right hand / +X on the left; the hand mesh spans ~19 cm from the wrist. The sword's axis must run
+   ACROSS the palm (diagonally, like a hammer grip: toward the thumb and slightly toward the fingertips), through the palm — NOT along the
+   fingers and NOT through the wrist (the old identity offset did both: the wrist was twisted ~155° and the blade came out of the wrist).
+   GRIP_CFG: palmSign = sign of the hand-local X axis that points out of the palm; P = blade-space direction the palm faces (which side of
+   the hilt the hand wraps from; hands face each other across it); phi = diagonal tilt (deg); pt = grip point in hand-local cm. */
+const GRIP_CFG={
+  R:{palmSign:-1, P:[.7071,0,-.7071], phi:30, pt:[-3.6,7.8,-0.4]},
+  L:{palmSign: 1, P:[.7071,0,-.7071], phi:30, pt:[ 3.6,7.8,-0.4]} };
+// The hands are now modelled loose fists in ninja.glb (wrapped around a 1.75 cm-radius hilt tunnel; palm surface at x≈∓2.6, hilt axis 1 cm outside it:
+// pt = that axis' point in hand-local cm, direction (0, sin phi, cos phi)). P = which way the palm faces in blade space (see the twisted-arm note in CLAUDE.md).
+function makeGrip(c){
+  const eX=new THREE.Vector3(...c.P).multiplyScalar(c.palmSign), eZ0=new THREE.Vector3(0,1,0), eY0=new THREE.Vector3().crossVectors(eZ0,eX), f=c.phi*D2R;
+  const eY=eY0.clone().multiplyScalar(Math.cos(f)).addScaledVector(eZ0,Math.sin(f)), eZ=eZ0.clone().multiplyScalar(Math.cos(f)).addScaledVector(eY0,-Math.sin(f));
+  return { K:new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(eX,eY,eZ)), pt:new THREE.Vector3(...c.pt).multiplyScalar(.01) };
+}
+const _gq=new THREE.Quaternion(), _gv=new THREE.Vector3(), GRIP_TUNE={share:1, rollMax:80, bladeRollMax:90, handRollMax:90, tauRoll:.02, swivelBias:.15, swivelHold:.5, tauSwivel:.05, tauCarry:.08};
+// share = fraction of the hand's twist given to the forearm (clamped to ±rollMax° first: beyond that the sign flips and the forearm would snap)
+const wrapA=x=>Math.atan2(Math.sin(x),Math.cos(x));
+function smoothAngle(cur,target,T,tau){ return cur+wrapA(target-cur)*(1-Math.exp(-T/tau)); }
+function aimHand(a, bladeQuat, blend, grip, T, hold=0){ // rotate the wrist so the hand wraps the hilt, blended by `blend` (0..1)
+  if(!a.ha || blend<=0){ a.rollS=0; return; }
+  // pronation/supination is mostly forearm: move the hand's twist (about the finger axis, relative to the bind pose) onto the forearm
+  const qd=_q2.copy(bladeQuat).multiply(grip.K);
+  const d=_gq.copy(a.fo.getWorldQuaternion(_q1)).invert().multiply(qd); d.premultiply(_q1.copy(a.q0).invert());
+  const raw=wrapA(2*Math.atan2(d.y,d.w)), lim=GRIP_TUNE.rollMax*D2R, prev=a.rollS||0;
+  // past the limit, stay on the side the forearm is already on: when the wanted twist wrapped through ±180° the clamp used to jump from -80° to +80°
+  let t=clamp(raw,-lim,lim); if(Math.abs(raw)>lim && Math.abs(prev)>lim*.5 && Math.sign(prev)!==Math.sign(raw)) t=Math.sign(prev)*lim;
+  t*=GRIP_TUNE.share*clamp(blend,0,1);
+  if(hold>0 && a.rollIdle!==undefined) t+=(a.rollIdle-t)*hold;   // carrying (running/stopping): keep the standing-idle twist instead of chasing the grip
+  a.rollS=prev+(t-prev)*(1-Math.exp(-T/GRIP_TUNE.tauRoll));   // smoothed: no pops
+  a.fo.quaternion.multiply(_q1.setFromAxisAngle(a.foDir,a.rollS)); a.fo.updateMatrixWorld(true);
   const parentInv=a.fo.getWorldQuaternion(_q1).invert();
-  const gripLocal=parentInv.multiply(_q2.copy(bladeQuat).multiply(HAND_GRIP_OFFSET));
+  const gripLocal=parentInv.multiply(_q2.copy(bladeQuat).multiply(grip.K));
   a.ha.quaternion.slerp(gripLocal, clamp(blend,0,1)); a.ha.updateMatrixWorld(true);
+}
+// wrist position that puts the palm's grip point on `G`, given the blade orientation (hand world orientation = blade * K)
+function wristFor(grip, G, bladeQuat){ return G.clone().sub(_gv.copy(grip.pt).applyQuaternion(_gq.copy(bladeQuat).multiply(grip.K))); }
+// One IK pass for a gripping hand: wrist target = G minus the palm offset for blade orientation qB. clampG: if the wrist target is out of reach pull it
+// back to the reach limit and let G follow the hand (right/top hand only — it defines where the sword is).
+function gripPass(grip, arm, sh, G, qB, pole, clampG, T){
+  const qh=_gq.copy(qB).multiply(grip.K), off=grip.pt.clone().applyQuaternion(qh);
+  const w=G.clone().sub(off); let Gp=G;
+  if(clampG){ const d=w.clone().sub(sh), reach=(arm.l1+arm.l2)*.998; if(d.length()>reach){ w.copy(sh).addScaledVector(d.normalize(),reach); Gp=w.clone().add(off); } }
+  const ik=solveIK(sh,w,pole,arm.l1,arm.l2); let E=ik.E;
+  // Elbow swivel: the elbow may sit anywhere on a circle around the shoulder→wrist axis. Pick the angle that puts the forearm closest to the
+  // hand's finger axis (neutral wrist), with a mild preference for staying near the natural (pole) side. Fixed-pole IK let the wrist fold back
+  // up to 150–170° in the slashes (a real wrist manages ~80°).
+  // Continuity: the per-frame argmin used to hop between two far-apart minima (measured: the left elbow jumped 32 cm in one 4 ms step as the hand
+  // reached for the hilt), so moving away from last frame's angle (arm.sw, committed by the caller) costs swivelHold per degree, and the chosen
+  // angle is eased (tauSwivel) instead of applied instantly.
+  const yh=new THREE.Vector3(0,1,0).applyQuaternion(qh), axis=ik.W.clone().sub(sh).normalize(), e0=E.clone().sub(sh), prev=arm.sw??0;
+  const bendAt=al=>{ const Ek=e0.clone().applyAxisAngle(axis,al*D2R).add(sh); return [Ek, Math.acos(clamp(ik.W.clone().sub(Ek).normalize().dot(yh),-1,1))*57.2958]; };
+  let best=1e9, bestA=0;
+  for(let k=-24;k<=24;k++){ const al=k*5, cost=bendAt(al)[1]+GRIP_TUNE.swivelBias*Math.abs(al)+GRIP_TUNE.swivelHold*Math.abs(al-prev);
+    if(cost<best){ best=cost; bestA=al; } }
+  const sw=prev+(bestA-prev)*(1-Math.exp(-T/GRIP_TUNE.tauSwivel)), [Es,bendS]=bendAt(sw);
+  return {G:Gp, wRaw:w, E:Es, W:ik.W, bend:bendS, sw};
+}
+// Angle about the blade axis that turns the hand's finger axis toward the forearm direction f (so the wrist stays near neutral); null if f ∥ blade.
+function rollToward(grip, qB, dir, f){
+  const y0=new THREE.Vector3(0,1,0).applyQuaternion(_gq.copy(qB).multiply(grip.K));
+  const yp=y0.addScaledVector(dir,-y0.dot(dir)), fp=f.clone().addScaledVector(dir,-f.dot(dir));
+  if(yp.lengthSq()<1e-6||fp.length()<.2) return null;
+  return Math.atan2(dir.dot(new THREE.Vector3().crossVectors(yp,fp)), yp.dot(fp));
 }
 
 /* ---------- 4) ANIM: poses ----------
    hx,hy,hz = right hand (chest-local coordinates)   by,el = blade angle: yaw plane and elevation (el>90 = past the head, behind)
    hipY crouch, hipYaw/chestYaw twist, lean tilt, headYaw head, spin body rotation (degrees), spread leg stance
    two = left hand gripping the hilt (0..1), eye eye glow, glint blade shine                     */
-const IDLE={hx:-.3,hy:-.36,hz:.14, by:-42, el:-48, hipY:0, hipYaw:0, chestYaw:0, lean:.05, headYaw:0, spin:0, spread:.12, two:0, eye:0, glint:0};
+// Idle blade direction was by -42/el -48 (hanging along the forearm, 25° apart): the hammer grip then needed a ~90° wrist hinge + ~45° twist ("twisted arm"), and the
+// forearm-twist workaround flipped ~175° when running started (elbow snap). Scanned (by, el, palm angle psi) analytically for the least hinge+twist: by 30 (blade across
+// the body toward the left), el -30, psi 315° → hinge ≈35°, twist ≈22°, so no forearm twist is needed.
+const IDLE={hx:-.3,hy:-.36,hz:.14, by:30, el:-30, hipY:0, hipYaw:0, chestYaw:0, lean:.05, headYaw:0, spin:0, spread:.12, two:0, eye:0, glint:0};
 const P=o=>Object.assign({},IDLE,{eye:1},o);
+/* The strikes are authored for the real model's reach (arm 0.456 m; shoulders at chest-local (∓.19,.17,.02)): every two-handed key keeps G within
+   ~0.45 m of the right shoulder and the off-hand within reach of the left. The old keys pushed the hands 0.55–0.6 m out (authored for the procedural
+   rig), so the right arm locked straight, G got clamped and the left hand let go mid-cut. A two-handed cut is four keys: wind-up (hands above the
+   forehead) → mid-swing (arms extending, blade still up) → strike (`hit`: arms extended, blade level, torso squared) → follow-through. The hands
+   travel an arc in front of the body and the blade angle follows them, instead of the blade pivoting around a hand that already arrived. */
 const COMBO=[
-  { kanji:'一', lunge:2.6, impactMin:240, chain:380, end:1000, reach:2.0,
-    keys:[ [200, P({hx:-.14,hy:.4, hz:.02, by:35, el:122, hipY:-.02, hipYaw:-.25, chestYaw:-.35, lean:-.05, headYaw:.15, two:1, spread:.18, glint:.4}),'out'],
-           [330, P({hx:.07,hy:-.15,hz:.4,  by:35, el:-38, hipY:-.12, hipYaw:.22, chestYaw:.42, lean:.28, headYaw:-.1, two:1, spread:.26, glint:1}),'snap'],
-           [480, P({hx:.1, hy:-.2, hz:.36, by:38, el:-46, hipY:-.13, hipYaw:.25, chestYaw:.46, lean:.3,  headYaw:-.1, two:1, spread:.26, glint:.6}),'out'] ],
-    dyn:{hand:[3.4,.55,1.1], blade:[2.7,.45,.5]} },
-  { kanji:'二', lunge:2.2, impactMin:180, chain:320, end:950, reach:2.0,
-    keys:[ [110, P({hx:.12,hy:-.26,hz:.32, by:30, el:-50, hipY:-.13, hipYaw:.25, chestYaw:.4, lean:.3, two:1, spread:.26, glint:.6}),'out'],
-           [240, P({hx:-.24,hy:.32,hz:.2,  by:-25, el:105, hipY:.02, hipYaw:-.25, chestYaw:-.45, lean:-.08, headYaw:.15, two:1, spread:.2, glint:1}),'snap'],
-           [400, P({hx:-.26,hy:.38,hz:.12, by:-30, el:118, hipY:.02, hipYaw:-.28, chestYaw:-.5, lean:-.1, headYaw:.15, two:1, spread:.2, glint:.6}),'out'] ],
-    dyn:{hand:[3.8,.5,1.3], blade:[3.0,.42,.4]} },
+  { kanji:'一', lunge:2.6, impactMin:260, chain:400, end:1000, reach:2.0, hit:2,
+    keys:[ [170, P({hx:-.1, hy:.5, hz:.12, by:45, el:128, hipY:-.03, hipYaw:-.22, chestYaw:-.35, lean:-.05, headYaw:.15, two:1, spread:.2, glint:.4}),'out'],
+           [250, P({hx:-.03,hy:.22,hz:.34, by:35, el:60,  hipY:-.08, hipYaw:0, chestYaw:0, lean:.12, headYaw:0, two:1, spread:.24, glint:.8}),'in'],
+           [300, P({hx:.04, hy:-.02,hz:.34, by:0,  el:-12, hipY:-.12, hipYaw:.1, chestYaw:.18, lean:.25, headYaw:-.1, two:1, spread:.26, glint:1}),'lin'],
+           [450, P({hx:.02, hy:-.1, hz:.22, by:50, el:-50, hipY:-.13, hipYaw:.25, chestYaw:.45, lean:.3,  headYaw:-.1, two:1, spread:.26, glint:.6}),'out'] ],
+    dyn:{hand:[3.6,.55,.7], blade:[3.3,.5,.4], two:[7,1,0]} },
+  { kanji:'二', lunge:2.2, impactMin:180, chain:320, end:950, reach:2.0, hit:2,
+    keys:[ [90,  P({hx:.03, hy:-.17,hz:.24, by:55, el:-48, hipY:-.14, hipYaw:.3, chestYaw:.5, lean:.25, headYaw:-.15, two:1, spread:.26, glint:.6}),'out'],
+           [170, P({hx:-.02,hy:.02, hz:.34, by:20, el:15,  hipY:-.1, hipYaw:.05, chestYaw:.1, lean:.15, two:1, spread:.24, glint:.8}),'in'],
+           [220, P({hx:-.12,hy:.26, hz:.3,  by:-30,el:65,  hipY:-.03, hipYaw:-.2, chestYaw:-.3, lean:0, headYaw:.1, two:1, spread:.22, glint:1}),'lin'],
+           [380, P({hx:-.14,hy:.4,  hz:.16, by:-40,el:115, hipY:0, hipYaw:-.28, chestYaw:-.45, lean:-.08, headYaw:.15, two:1, spread:.2, glint:.6}),'out'] ],
+    dyn:{hand:[4.0,.5,.8], blade:[3.6,.45,.4], two:[7,1,0]} },
   { kanji:'三', lunge:0, impactMin:300, chain:99999, end:1250, final:true, reach:2.4, spinHit:true,
-    keys:[ [220, P({hx:.16,hy:.0, hz:.24, by:80, el:6, hipY:-.12, hipYaw:.3, chestYaw:.55, lean:.12, headYaw:-.3, spread:.3, two:.6, glint:.5}),'out'],
+    keys:[ [220, P({hx:.14,hy:.04,hz:.22, by:80, el:8, hipY:-.12, hipYaw:.3, chestYaw:.55, lean:.12, headYaw:-.3, spread:.3, two:1, glint:.5}),'out'],
            [470, P({hx:-.56,hy:.02,hz:.16, by:-95, el:0, hipY:-.18, hipYaw:-.1, chestYaw:-.25, lean:.15, spin:-360, spread:.32, two:0, glint:1}),'io'],
            [640, P({hx:-.52,hy:-.04,hz:.08, by:-110, el:-12, hipY:-.2, hipYaw:-.12, chestYaw:-.3, lean:.18, spin:-372, spread:.32, two:0, glint:.6}),'out'] ],
     dyn:{hand:[3.0,.55,1.0], blade:[2.6,.45,.4], spin:[2.2,.6,.2]} },
 ];
+// keys[0] = wind-up, keys[hit] = the strike (default 1; lunge + trail run k0→hit), last key = follow-through (hit test runs k0→last+40)
+const kHit=d=>d.keys[d.hit??1][0], kLast=d=>d.keys[d.keys.length-1][0];
 const KEYS=Object.keys(IDLE);
-const EASE={ out:t=>1-Math.pow(1-t,3), snap:t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2, io:smoother };
+const EASE={ out:t=>1-Math.pow(1-t,3), in:t=>t*t, lin:t=>t, snap:t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2, io:smoother };
 const GROUP=k=>(k==='hx'||k==='hy'||k==='hz')?'hand':(k==='by'||k==='el')?'blade':k==='spin'?'spin':(k==='eye'||k==='glint')?'fx':k==='two'?'two':'body';
 const DYN={hand:[2.4,.7,.5], blade:[2.0,.6,.2], spin:[2,.7,0], fx:[4,1,0], two:[3,.8,0], body:[2.3,.6,.15]};
 const dyn={}; for(const k of KEYS) dyn[k]=new SOD(...DYN[GROUP(k)],IDLE[k]);
@@ -687,10 +814,9 @@ function applySkeleton(p,T){
   const shL=real ? real.arm.L.up.getWorldPosition(V()) : chest.localToWorld(V(.2,.1,0));
   // the sword arm swings forward when the opposite (left) leg swings forward — same contralateral
   // timing as the off-hand below, just a smaller amplitude since it's carrying the blade
-  const tgt=chest.localToWorld(V(p.hx,p.hy+Math.sin(t*1.8+.5)*.006,p.hz+Math.sin(ph)*.09*w));
+  const tgt=chest.localToWorld(V(p.hx,p.hy+Math.sin(t*1.8+.5)*.006,p.hz+Math.sin(ph)*(.15+.1*(L?L.b:0))*w));
   const cq=chest.getWorldQuaternion(new THREE.Quaternion());
   const poleR=V(-1,-.5,-.6).applyQuaternion(cq);
-  const {E:eR,W:wR}=real ? solveIK(shR,tgt,poleR,real.arm.R.l1,real.arm.R.l2) : solveIK(shR,tgt,poleR);
   const by=p.by*D2R, el=p.el*D2R;
   const dir=V(Math.sin(by)*Math.cos(el),Math.sin(el),Math.cos(by)*Math.cos(el)).applyQuaternion(cq).normalize();
   // blade edge faces the direction the sword is moving
@@ -699,18 +825,68 @@ function applySkeleton(p,T){
     const want = sp>1.5 ? mv.normalize() : fall;
     S.edge.lerp(want, sp>1.5?.35:.08); }
   S.prevDir=dir.clone();
-  const X=_a.copy(S.edge).addScaledVector(dir,-S.edge.dot(dir)).normalize(), Z=_b.crossVectors(X,dir).normalize();
-  _m.makeBasis(X,dir,Z); r.katana.quaternion.setFromRotationMatrix(_m); r.katana.position.copy(wR);
-  if(real){ aimArm(real.arm.R,shR,eR,wR); aimHand(real.arm.R,r.katana.quaternion,1); }
-  else { placeLimb(r.upperR,shR,eR); placeLimb(r.foreR,eR,wR); r.handR.position.copy(wR); }
-  // ---- left arm: hangs at the side, or grips the hilt ----
-  const hang=chest.localToWorld(V(.27,-.43+Math.sin(ph)*.03*w,.03-Math.sin(ph)*.16*w));
-  const grip=wR.clone().addScaledVector(dir,-.13);
-  const tL=hang.lerp(grip,clamp(p.two,0,1));
-  const poleL=V(1,-.6,-.6).applyQuaternion(cq);
-  const {E:eL,W:wL}=real ? solveIK(shL,tL,poleL,real.arm.L.l1,real.arm.L.l2) : solveIK(shL,tL,poleL);
-  if(real){ aimArm(real.arm.L,shL,eL,wL); aimHand(real.arm.L,r.katana.quaternion,p.two); }
-  else { placeLimb(r.upperL,shL,eL); placeLimb(r.foreL,eL,wL); r.handL.position.copy(wL); }
+  // The blade basis uses the smooth analytic `fall` direction (⊥ dir, varies continuously with by/el), not S.edge: S.edge snaps between "fall"
+  // and the motion direction as the swing starts/stops, and since the fist is locked to the blade's roll, every snap spun the wrist (measured
+  // 40,000°/s hand-vs-forearm spikes). The roll is then set by rollToward (ρ) for a neutral wrist; S.edge is still used for the hit FX direction.
+  const fall=V(Math.sin(by)*Math.sin(el),-Math.cos(el),Math.cos(by)*Math.sin(el)).applyQuaternion(cq);
+  const X=_a.copy(fall).addScaledVector(dir,-fall.dot(dir)).normalize(), Z=_b.crossVectors(X,dir).normalize();
+  _m.makeBasis(X,dir,Z); r.katana.quaternion.setFromRotationMatrix(_m);
+  // G = the sword's grip point (what the pose parameters hx,hy,hz describe); with the real hands it lies in the palm, so the IK wrist target is
+  // G minus the palm offset in the hand's (blade-determined) orientation. The idle/pose targets are often out of reach (idle: 0.56 m vs arm 0.456 m),
+  // then G follows the hand (see gripPass). The hammer grip fixes the hand's orientation relative to the blade, but the combo keyframes set blade and
+  // hand targets independently, so the wrist used to be forced through 100–150° hinge/±150° twist. Fix: roll the BLADE about its own axis (ρ, ±90°,
+  // smoothed) so the finger axis follows the forearm direction, and let the off-hand roll up to ±90° relative to the right hand (±45° made it let go in most two-handed strike poses; tauRoll .07 lagged mid-swing and did the same). Only the blade's
+  // flat/edge facing changes; the tip, trail and hit test don't depend on it.
+  const G=tgt.clone(), poleL=V(1,-.6,-.6).applyQuaternion(cq);
+  const hang=chest.localToWorld(V(.27,-.43+Math.sin(ph)*.04*w,.03-Math.sin(ph)*(.22+.14*(L?L.b:0))*w));
+  let eR,wR,eL,wL;
+  S.rho=S.rho||{R:0,L:0};
+  if(real){
+    const gR=real.grip.R, gL=real.grip.L, qB0=r.katana.quaternion.clone();
+    // Carrying (running, and the slow-down after it): the sword just rides in the fist. The wrist keeps the twist/bend it has when standing
+    // idle (learned below) and the blade follows the forearm — before, the grip solver re-twisted the wrist every frame to hold the IDLE blade
+    // angle against the arm swing, and when the run stopped the wanted twist swept through the ±80° limit and the wrist flicked back and forth.
+    const aR=real.arm.R, carryT=S.phase==='idle' ? w : 0;
+    S.carry=(S.carry??0)+(carryT-(S.carry??0))*(1-Math.exp(-T/GRIP_TUNE.tauCarry));
+    const p1=gripPass(gR,aR,shR,G,qB0,poleR,true,T), roR=rollToward(gR,qB0,dir,p1.W.clone().sub(p1.E));
+    S.rho.R=smoothAngle(S.rho.R, roR===null?S.rho.R:clamp(roR,-GRIP_TUNE.bladeRollMax*D2R,GRIP_TUNE.bladeRollMax*D2R), T, GRIP_TUNE.tauRoll);
+    const qBR=new THREE.Quaternion().setFromAxisAngle(dir,S.rho.R).multiply(qB0);
+    const p2=gripPass(gR,aR,shR,G,qBR,poleR,true,T); aR.sw=p2.sw;
+    G.copy(p2.G); eR=p2.E; wR=p2.W;
+    aimArm(aR,shR,eR,wR); aimHand(aR,qBR,1,gR,T,S.carry);
+    if(S.phase==='idle' && w<.02 && S.carry<.02){ const k=1-Math.exp(-T/.3);   // standing still: learn the resting wrist (twist + hand-vs-forearm)
+      aR.rollIdle=aR.rollIdle===undefined ? aR.rollS : aR.rollIdle+(aR.rollS-aR.rollIdle)*k;
+      aR.relIdle=aR.relIdle ? aR.relIdle.slerp(aR.ha.quaternion,k) : aR.ha.quaternion.clone(); }
+    if(S.carry>1e-3 && aR.relIdle){ aR.ha.quaternion.slerp(aR.relIdle,S.carry); aR.ha.updateMatrixWorld(true); }
+    // the sword is glued to the fist: blade = hand * K⁻¹, G = wrist + palm offset (identical to qBR/G when not carrying)
+    const qH=aR.ha.getWorldQuaternion(new THREE.Quaternion());
+    qBR.copy(qH).multiply(_q.copy(gR.K).invert()); dir.set(0,1,0).applyQuaternion(qBR);
+    G.copy(aR.ha.getWorldPosition(V())).add(gR.pt.clone().applyQuaternion(qH));
+    r.katana.quaternion.copy(qBR); r.katana.position.copy(G);
+    // ---- left arm: hangs at the side, or grips the hilt below the right hand ----
+    // The off-hand may slide along the hilt (6–17 cm below the right hand) to stay reachable and keep the wrist sane; if even the best spot needs
+    // a wrist bend past ~140° (extreme swings) it lets go (re-grips below 115°) instead of folding the wrist back.
+    const gripAt=sd=>G.clone().addScaledVector(dir,sd);
+    const q1=gripPass(gL,real.arm.L,shL,gripAt(-.11),qBR,poleL,false,T), roL=rollToward(gL,qBR,dir,q1.W.clone().sub(q1.E));
+    S.rho.L=smoothAngle(S.rho.L, roL===null?S.rho.L:clamp(roL,-GRIP_TUNE.handRollMax*D2R,GRIP_TUNE.handRollMax*D2R), T, GRIP_TUNE.tauRoll);
+    const qBL=new THREE.Quaternion().setFromAxisAngle(dir,S.rho.L).multiply(qBR);
+    let q2=null, bestC=1e9;
+    for(const sd of [-.11,-.08,-.14,-.06,-.17]){ const q=gripPass(gL,real.arm.L,shL,gripAt(sd),qBL,poleL,false,T), c=q.bend+Math.abs(sd+.11)*250; if(c<bestC){ bestC=c; q2=q; } }
+    real.arm.L.sw=q2.sw;
+    // grip or let go — never a steady half-weight (that blended the hand halfway between the hilt and the hip, floating in mid-air); hysteresis stops flicker
+    if(q2.bend>140) S.gripOn=false; else if(q2.bend<115 || S.gripOn===undefined) S.gripOn=true;
+    // `two` is read as grab (>.5) / release, then eased over ~150 ms — a fractional `two` mid-transition used to leave the hand floating half-way
+    const twoT=(p.two>.5 && S.gripOn)?1:0;
+    S.twoEff=(S.twoEff===undefined?twoT:S.twoEff)+(twoT-(S.twoEff===undefined?twoT:S.twoEff))*(1-Math.exp(-T/.05));
+    const tL=hang.lerp(q2.wRaw, S.twoEff);
+    const ik=solveIK(shL,tL,poleL,real.arm.L.l1,real.arm.L.l2); eL=ik.E.lerp(q2.E,S.twoEff); wL=ik.W;
+    aimArm(real.arm.L,shL,eL,wL); aimHand(real.arm.L,qBL,S.twoEff,gL,T);
+  } else {
+    r.katana.position.copy(G);
+    ({E:eR,W:wR}=solveIK(shR,tgt,poleR)); placeLimb(r.upperR,shR,eR); placeLimb(r.foreR,eR,wR); r.handR.position.copy(wR);
+    const grip=G.clone().addScaledVector(dir,-.11), tL=hang.lerp(grip,clamp(p.two,0,1));
+    ({E:eL,W:wL}=solveIK(shL,tL,poleL)); placeLimb(r.upperL,shL,eL); placeLimb(r.foreL,eL,wL); r.handL.position.copy(wL);
+  }
   // ---- cloak: spring bones ----
   const vLocal=S.vel.clone().applyAxisAngle(UP,-(S.facing+p.spin*D2R));
   const spinV=dyn.spin.yd*D2R;
@@ -725,7 +901,8 @@ function applySkeleton(p,T){
     c.hinge.rotation.x=c.flap.update(T,flap); c.hinge.rotation.z=c.side.update(T,side);
   }
   r.eyeMat.opacity=clamp(p.eye,0,1); r.glint.opacity=clamp(p.glint,0,1)*.7;
-  return {shR,eR,wR,shL,eL,wL,dir, base:wR.clone().addScaledVector(dir,.3), tip:wR.clone().addScaledVector(dir,.82)};
+  // wR = the sword grip point G (hit test / trail / debug use it as the blade root); wristR = the real IK wrist
+  return {shR,eR,wR:G,wristR:wR,shL,eL,wL,dir, base:G.clone().addScaledVector(dir,.3), tip:G.clone().addScaledVector(dir,.82)};
 }
 
 /* ---------- 5) COMBAT FX ---------- */
@@ -813,7 +990,7 @@ function updatePieces(T){
 // hit test: distance from the blade line segment (base→tip) to the target's axis
 function segDist2D(ax,az,bx,bz,px,pz){ const dx=bx-ax,dz=bz-az, l=dx*dx+dz*dz||1e-6; const u=clamp(((px-ax)*dx+(pz-az)*dz)/l,0,1); return [Math.hypot(ax+dx*u-px, az+dz*u-pz),u]; }
 function hitTest(arm){
-  if(!S.act) return; const a=S.act, k0=a.def.keys[0][0], k2=a.def.keys[2][0];
+  if(!S.act) return; const a=S.act, k0=a.def.keys[0][0], k2=kLast(a.def);
   if(a.t<k0 || a.t>k2+40) return;
   const b=S.wristPrev||arm.base;
   for(const t of targets){
@@ -883,7 +1060,7 @@ function step(T){
   else if(S.moveTo){ const d=V(S.moveTo.x-S.pos.x,0,S.moveTo.z-S.pos.z); if(d.length()<.12) S.moveTo=null; else want.copy(d.normalize()); }
   const canMove=S.phase==='idle';
   const tv=want.multiplyScalar(canMove?(keys.shift?WALK_SPEED:RUN_SPEED):0);
-  if(S.act && S.act.def.lunge){ const a=S.act, k0=a.def.keys[0][0], k1=a.def.keys[1][0]; if(a.t>k0-40 && a.t<k1) tv.add(V(Math.sin(S.facing),0,Math.cos(S.facing)).multiplyScalar(a.def.lunge)); }
+  if(S.act && S.act.def.lunge){ const a=S.act, k0=a.def.keys[0][0], k1=kHit(a.def); if(a.t>k0-40 && a.t<k1) tv.add(V(Math.sin(S.facing),0,Math.cos(S.facing)).multiplyScalar(a.def.lunge)); }
   S.vel.lerp(tv,1-Math.exp(-T*(tv.lengthSq()?12:9)));
   const np=S.pos.clone().addScaledVector(S.vel,T);
   for(const c of colliders){ const dx=np.x-c.x, dz=np.z-c.z, d=Math.hypot(dx,dz), m=c.r+.28; if(d<m&&d>1e-4){ np.x=c.x+dx/d*m; np.z=c.z+dz/d*m; } }
@@ -908,7 +1085,7 @@ function step(T){
   S.facing=saveF;
   // ---- trail ----
   const tsp=S.prevTip?arm.tip.distanceTo(S.prevTip)/T:0; S.prevTip=arm.tip.clone();
-  if(S.act){ const a=S.act, k0=a.def.keys[0][0], k1=a.def.keys[1][0];
+  if(S.act){ const a=S.act, k0=a.def.keys[0][0], k1=kHit(a.def);
     if(a.t>k0+15 && a.t<k1+170 && tsp>5.5){ let s=strokesList.find(x=>x.id===S.trailId)||newStroke(S.trailId); s.samples.push({b:arm.base,t:arm.tip,time:S.clock}); if(s.samples.length>TRAIL_MAX) s.samples.shift(); }
     if(a.t>k0){ a.maxSp=Math.max(a.maxSp,tsp); if(!a.impacted && ((a.maxSp>8 && tsp<a.maxSp*.45 && a.t>a.def.impactMin) || a.t>a.def.impactMin+220)){ a.impacted=true; showKanji(a.def); if(!S.shake) S.shake=reduceMotion?0:.05; } }
     hitTest(arm);
@@ -963,7 +1140,8 @@ const bind=(id,fn)=>document.getElementById(id).addEventListener('click',e=>{ fn
 bind('bRotL',()=>rotateCam(-90)); bind('bRotR',()=>rotateCam(90)); bind('bUp',()=>tiltCam(12)); bind('bDown',()=>tiltCam(-12));
 bind('bBones',()=>toggle('bBones')); bind('bSlow',()=>toggle('bSlow'));
 document.getElementById('bAtk').addEventListener('pointerdown',e=>{ e.preventDefault(); press(); });
-window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,CAM,rotateCam,tiltCam,rig};
+window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,CAM,rotateCam,tiltCam,rig,
+  GRIP_CFG, GRIP_TUNE, IDLE, COMBO, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; }};  // edit GRIP_CFG in the console, call regrip(), to tune the grip live
 loadNinja();
 </script>
 </body>
