@@ -18,3 +18,7 @@ dist/
 .env.*
 
 *.log
+
+# Claude Code motion-guard marker (set by .claude/hooks/motion_guard.py)
+.claude/.motion-dirty
+.claude/settings.local.json
