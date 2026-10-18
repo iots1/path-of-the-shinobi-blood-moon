@@ -50,6 +50,9 @@
   #dim { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .25s ease;
     background: radial-gradient(ellipse at 50% 55%, rgba(24,21,19,0) 28%, rgba(24,21,19,.62) 100%); }
   #dim.on { opacity: 1; transition: opacity .5s ease; }
+  #flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: #f6f1e6; }
+  #flash.go { animation: flash .3s ease-out; }
+  @keyframes flash { 0% { opacity: .85; } 100% { opacity: 0; } }
   .bar {
     display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; justify-content: space-between;
     padding: 4px 16px 12px; width: 100%;
@@ -74,6 +77,7 @@
     <div id="stage" aria-label="Isometric sword dojo">
       <div id="paper"></div>
       <div id="dim" aria-hidden="true"></div>
+      <div id="flash" aria-hidden="true"></div>
       <div class="kanji" id="kanji" aria-hidden="true"></div>
     </div>
   </div>
@@ -820,7 +824,7 @@ const ATTACK2={ kanji:'突', lunge:10, impactMin:140, chain:99999, end:760, reac
 // first key), then one very fast step-and-sweep (right → left, ~2 m), then hold — the cut only *lands* when the blade is flicked clean (血振り, `release`):
 // targets the sweep crossed are marked at the cut and fall/burst at the release (`delayed`). The stroke lingers `trailLife` so the single ink line hangs
 // in the air through the stillness. Hit test stops right after the strike (`hitEnd`) so the flick can't cut anything.
-const ISSEN={ kanji:'斬', lunge:12, impactMin:640, chain:99999, end:1800, final:true, delayed:true, charge:true, release:1280, hitEnd:760,
+const ISSEN={ kanji:'斬', lunge:12, impactMin:640, chain:99999, end:1800, final:true, delayed:true, charge:true, release:1280, burst:575, hitEnd:760,
   trailLife:1500, trailTail:260, reach:2.4, hit:2,
   keys:[ [520, P({hx:-.17,hy:-.06,hz:.29, by:-78, el:-4, hipY:-.2,  hipYaw:-.4,  chestYaw:-.52, lean:.16, headYaw:.25, spread:.34, step:.4, two:1, glint:.5}),'io'],
          [575, P({hx:-.02,hy:-.04,hz:.36, by:4,   el:2,  hipY:-.28, hipYaw:-.02, chestYaw:-.02, lean:.4,  headYaw:0,   spread:.34, step:.8, two:1, glint:1}),'lin'],
@@ -1121,7 +1125,7 @@ const pGeo=new THREE.BufferGeometry(); pGeo.setAttribute('position',new THREE.Bu
 const pts=new THREE.Points(pGeo,new THREE.PointsMaterial({size:7,sizeAttenuation:false,vertexColors:true,map:dotTex,alphaTest:.5,transparent:false}));
 pts.frustumCulled=false; scene.add(pts);
 const parts=[];
-function spawn(p,v,col,life=1.2){ if(parts.length<PMAX) parts.push({p:p.clone(),v:v.clone(),c:col,life,max:life}); }
+function spawn(p,v,col,life=1.2,g=1){ if(parts.length<PMAX) parts.push({p:p.clone(),v:v.clone(),c:col,life,max:life,g}); }   // g = gravity scale (<0 floats up)
 const STAIN_MAX=160, stainMesh=new THREE.InstancedMesh(new THREE.CircleGeometry(1,12).rotateX(-Math.PI/2), new THREE.MeshBasicMaterial({color:0x1b1a19,transparent:true,opacity:.6,depthWrite:false}), STAIN_MAX);
 stainMesh.count=0; stainMesh.renderOrder=1; scene.add(stainMesh); const stains=[];
 function inkBurst(at,dir,n,big){
@@ -1135,9 +1139,30 @@ function finisherImpact(at,dir){
   for(let i=0;i<7;i++){ const d=.5+rnd()*1.6, sp=(rnd()-.5)*1.5; if(stains.length<STAIN_MAX){ const x=at.x+dir.x*d+side.x*sp, z=at.z+dir.z*d+side.z*sp; if(walkable(x,z)) stains.push({x,z,r:.07+rnd()*.12,life:1}); } }
   S.punch=Math.max(S.punch||0, reduceMotion?0:.09);
 }
+// Ink lightning: a jagged brush ribbon from a to b, drawn with the same stroke material as the sword trail (it tapers and fades with `life` ms).
+let boltId=0;
+function bolt(a,b,w=.05,jag=.16,life=260){
+  if(strokesList.length>48) return;
+  const n=9, dir=b.clone().sub(a), len=dir.length(); if(len<1e-3) return; dir.normalize();
+  const side=V().crossVectors(dir,camera.getWorldDirection(V())).normalize(), up=V().crossVectors(dir,side).normalize();
+  const st=newStroke(-(++boltId)); st.life=life;
+  for(let i=0;i<=n;i++){ const p=a.clone().lerp(b,i/n);
+    if(i>0&&i<n){ const j=Math.min(jag,len*.12); p.addScaledVector(side,(rnd()-.5)*2*j).addScaledVector(up,(rnd()-.5)*2*j); }
+    st.samples.push({b:p.clone().addScaledVector(side,-w),t:p.clone().addScaledVector(side,w),time:S.clock}); }
+}
+const flashEl=document.getElementById('flash');
+function flash(){ if(reduceMotion) return; flashEl.classList.remove('go'); void flashEl.offsetWidth; flashEl.classList.add('go'); }
+// the instant the dash begins: lightning bursts out of the body, a ring of ink races across the floor, white flash
+function issenBurst(){
+  const c=S.pos, y0=.15;
+  for(let i=0;i<9;i++){ const ang=rnd()*6.283, r0=.3+rnd()*.3, r1=1.6+rnd()*1.8;
+    bolt(V(c.x+Math.cos(ang)*r0,y0+rnd()*1.1,c.z+Math.sin(ang)*r0), V(c.x+Math.cos(ang)*r1,.05+rnd()*1.6,c.z+Math.sin(ang)*r1), .035+rnd()*.03, .22, 300+rnd()*160); }
+  for(let i=0;i<34;i++){ const ang=rnd()*6.283, sp=3.5+rnd()*3; spawn(V(c.x,.05,c.z),V(Math.cos(ang)*sp,.6+rnd()*1.4,Math.sin(ang)*sp),[.08,.075,.07],1.1); }
+  flash(); S.shake=Math.max(S.shake,reduceMotion?0:.12);
+}
 function updateParticles(T){
   const P=pGeo.attributes.position.array, C=pGeo.attributes.color.array;
-  for(let i=parts.length-1;i>=0;i--){ const q=parts[i]; q.v.y-=9.8*T; q.p.addScaledVector(q.v,T); q.life-=T;
+  for(let i=parts.length-1;i>=0;i--){ const q=parts[i]; q.v.y-=9.8*T*(q.g??1); q.p.addScaledVector(q.v,T); q.life-=T;
     if(q.p.y<=0.005 && walkable(q.p.x,q.p.z)){ if(q.c[0]<.2 && stains.length<STAIN_MAX && rnd()<.7) stains.push({x:q.p.x,z:q.p.z,r:.02+rnd()*.05,life:1}); parts.splice(i,1); continue; }
     if(q.life<=0||q.p.y<-6) parts.splice(i,1); }
   parts.forEach((q,i)=>{ P[i*3]=q.p.x; P[i*3+1]=q.p.y; P[i*3+2]=q.p.z; C[i*3]=q.c[0]; C[i*3+1]=q.c[1]; C[i*3+2]=q.c[2]; });
@@ -1289,10 +1314,21 @@ function step(T){
     if(a.t>k0+15 && a.t<k1+(a.def.trailTail??(a.def.final?260:170)) && tsp>5.5){ let s=strokesList.find(x=>x.id===S.trailId)||newStroke(S.trailId); const tl=a.def.trailLife??(a.def.final?700:0); if(tl) s.life=tl; s.samples.push({b:arm.base,t:arm.tip,time:S.clock}); if(s.samples.length>TRAIL_MAX) s.samples.shift(); }
     if(a.t>k0){ a.maxSp=Math.max(a.maxSp,tsp); if(!a.impacted && ((a.maxSp>8 && tsp<a.maxSp*.45 && a.t>a.def.impactMin) || a.t>a.def.impactMin+220)){ a.impacted=true; if(!a.def.delayed){ showKanji(a.def); if(!S.shake) S.shake=reduceMotion?0:(a.def.final?.14:.05); if(a.def.final && !reduceMotion) S.punch=Math.max(S.punch||0,.05); } } }
     hitTest(arm);
-    if(a.def.delayed && !a.released && a.t>=a.def.release){ a.released=true; for(const m of a.marked||[]) applyHit(m.t,m.y,m.dir,a.def); showKanji(a.def); }
+    if(a.def.delayed && !a.released && a.t>=a.def.release){ a.released=true; for(const m of a.marked||[]){ applyHit(m.t,m.y,m.dir,a.def);
+        for(let i=0;i<3;i++){ const top=V(m.t.x+(rnd()-.5)*.9,4.2+rnd()*.8,m.t.z+(rnd()-.5)*.9); bolt(top,V(m.t.x+(rnd()-.5)*.25,m.y,m.t.z+(rnd()-.5)*.25),.05,.3,420); } }
+      showKanji(a.def); }
     // charge: grey ink motes rise off the floor ring toward the blade while the stage dims
-    if(a.def.charge && a.t<a.def.keys[0][0] && rnd()<.14){ const r=.6+rnd()*.5, ang=rnd()*6.283, c=S.pos;
-      spawn(V(c.x+Math.cos(ang)*r,.03,c.z+Math.sin(ang)*r),V(-Math.cos(ang)*1.2,2.4+rnd()*1.6,-Math.sin(ang)*1.2),[.21,.2,.19],.7); }
+    if(a.def.charge && a.t<a.def.keys[0][0]){ const c=S.pos, p=clamp(a.t/a.def.keys[0][0],0,1);
+      if(rnd()<.14){ const r=.6+rnd()*.5, ang=rnd()*6.283;
+        spawn(V(c.x+Math.cos(ang)*r,.03,c.z+Math.sin(ang)*r),V(-Math.cos(ang)*1.2,2.4+rnd()*1.6,-Math.sin(ang)*1.2),[.21,.2,.19],.7); }
+      // ki: grey ink wisps wind up around the body (thicker as the charge builds)
+      if(rnd()<.08+.45*p){ const ang=rnd()*6.283+S.clock*.004, r=.3+rnd()*.3;
+        spawn(V(c.x+Math.cos(ang)*r,.05+rnd()*1.5,c.z+Math.sin(ang)*r),V(-Math.sin(ang)*1.1,.8+rnd()*1.2,Math.cos(ang)*1.1),[.27,.26,.25],.9+rnd()*.5,-.1); }
+      // crackling bolts leap off the blade, faster as the charge peaks
+      if(a.t>a.def.keys[0][0]*.3 && a.t>=(a.nextBolt||0)){ a.nextBolt=a.t+170-110*p;
+        const o=arm.base.clone().lerp(arm.tip,rnd()), d=V(rnd()-.5,rnd()-.2,rnd()-.5).normalize().multiplyScalar(.5+rnd()*.5+.5*p);
+        bolt(o,o.clone().add(d),.025+.015*p,.1,200+120*p); } }
+    if(a.def.burst!=null && !a.burstDone && a.t>=a.def.burst){ a.burstDone=true; issenBurst(); }
   }
   { const ch=!!(S.act && S.act.def.charge && S.act.t<kHit(S.act.def)-60); if(ch!==chargeOn){ chargeOn=ch; dimEl.classList.toggle('on',ch); }
     S.charge=lerp(S.charge||0, ch&&!reduceMotion?1:0, 1-Math.exp(-T*(ch?3:8))); }
