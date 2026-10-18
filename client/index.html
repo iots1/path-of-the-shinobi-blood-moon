@@ -533,6 +533,7 @@ function loadNinja(){
         bendLocal:V(0,0,1).applyQuaternion(real.bind[`${S0}Arm`].rl.clone().invert()) };
     }
     real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)};
+    real.fingers=prepFingers(real);
 
     // keep the glb's normal map: the cloth folds live there. The base-colour texture is nearly black
     // (mean ~28/255, 96% of pixels < 64), so through the shared 3-band toon ramp (darkest band 27%) the
@@ -656,6 +657,36 @@ function driveRealBones(real){
   rig.eyes.forEach((e,i)=>{ e.position.copy(real.eyeLocal[i]).applyMatrix4(headM); e.quaternion.copy(headQ); e.rotateZ(real.eyeRot[i]); });
   for(const s of real.backSwords) _m4.multiplyMatrices(real.bone.Spine01.matrixWorld,s.M).decompose(s.g.position,s.g.quaternion,s.g.scale);
 }
+/* Fingers. The glb's hands are open with full finger bones (the previous model had a fist modelled into the mesh). Each finger is curled by rotating
+   its three joints about a hand-local axis (right hand: +Z turns +Y toward -X = into the palm; left hand: the mirror), so the fist is a pure function of
+   the hand-relative bind pose — stateless, nothing accumulates. local' = parentBind⁻¹ · R(axis, θ) · bind, both bind orientations relative to the hand.
+   FIST.curl = MCP/PIP/DIP angle (rad) of the four fingers, FIST.thumb the same for the thumb about an axis that sweeps it across the hilt toward the
+   fingers (`thumbPd`: palm-side direction, x flipped for the left hand). Live-tunable via __iso.FIST + __iso.refist(). */
+const FIST={curl:[.9,1.3,.85], thumb:[.35,.5,.4], thumbPd:[1,.25,-.55]};
+function prepFingers(real){
+  const out=[], qa=new THREE.Quaternion();
+  for(const [S0,sgn] of [['Right',1],['Left',-1]]){
+    const hand=real.bone[`${S0}Hand`];
+    for(const f of ['Index','Middle','Ring','Pinky','Thumb']){
+      const bs=[1,2,3].map(i=>real.bone[`${S0}Hand${f}${i}`]), tip=real.bone[`${S0}Hand${f}4`];
+      if(bs.some(b=>!b)) continue;
+      let A=V(0,0,sgn);
+      if(f==='Thumb'){
+        const d=(real.thumbD??={})[S0]??=hand.worldToLocal(tip.getWorldPosition(V())).sub(hand.worldToLocal(bs[0].getWorldPosition(V()))).normalize();   // measured once, at bind
+        A=d.clone().cross(V(-sgn*FIST.thumbPd[0],FIST.thumbPd[1],FIST.thumbPd[2]).normalize()).normalize();
+      }
+      let h=new THREE.Quaternion(), prev=new THREE.Quaternion();
+      out.push({ f, thumb:f==='Thumb', side:S0, A, joints:bs.map((b,i)=>{ h=h.clone().multiply(real.bind[`${S0}Hand${f}${i+1}`].q); const j={b, bindH:h.clone(), prevInv:prev.clone().invert()}; prev=h.clone(); return j; }) });
+    }
+  }
+  return out;
+}
+function setFingers(real, kL=1, kR=1){ // k = how closed each fist is (0 = bind/open, 1 = full grip)
+  const a=real.fingers; if(!a) return;
+  for(const c of a){ const ang=c.thumb?FIST.thumb:FIST.curl, k=c.side==='Right'?kR:kL;
+    c.joints.forEach((j,i)=>j.b.quaternion.copy(j.prevInv).multiply(qa_.setFromAxisAngle(c.A,ang[i]*k)).multiply(j.bindH)); }
+}
+const qa_=new THREE.Quaternion();
 function aimBone(bone, childDir, target){ // rotate bone (from its bind-relative pose) so childDir points at target
   const pq=bone.parent.getWorldQuaternion(new THREE.Quaternion());
   const wq=pq.clone().multiply(bone.quaternion);
@@ -1162,6 +1193,7 @@ function applySkeleton(p,T){
     const grip=G.clone().addScaledVector(dir,-.11), tL=hang.lerp(grip,clamp(p.two,0,1));
     ({E:eL,W:wL}=solveIK(shL,tL,poleL)); placeLimb(r.upperL,shL,eL); placeLimb(r.foreL,eL,wL); r.handL.position.copy(wL);
   }
+  if(real) setFingers(real);
   // ---- cloak: spring bones ----
   const vLocal=S.vel.clone().applyAxisAngle(UP,-(S.facing+p.spin*D2R));
   const spinV=dyn.spin.yd*D2R;
@@ -1556,7 +1588,7 @@ bind('bRotL',()=>rotateCam(-90)); bind('bRotR',()=>rotateCam(90)); bind('bUp',()
 bind('bBones',()=>toggle('bBones')); bind('bSlow',()=>toggle('bSlow'));
 document.getElementById('bAtk').addEventListener('pointerdown',e=>{ e.preventDefault(); press(); });
 window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
-  GRIP_CFG, GRIP_TUNE, IDLE, CARRY, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; }};  // edit GRIP_CFG in the console, call regrip(), to tune the grip live
+  GRIP_CFG, GRIP_TUNE, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; }};  // edit GRIP_CFG in the console, call regrip(), to tune the grip live
 loadNinja();
 </script>
 </body>
