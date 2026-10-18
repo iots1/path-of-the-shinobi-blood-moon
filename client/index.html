@@ -80,7 +80,8 @@
   <div class="bar">
     <p class="hint">
       <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or click ground to run, hold <kbd>Shift</kbd> to walk</span>
-      <span><kbd>J</kbd> / <kbd>Space</kbd> slash (press repeatedly for a 3-beat combo)</span>
+      <span><kbd>J</kbd> slash (press repeatedly for a 3-beat combo)</span>
+      <span><kbd>Space</kbd> dash (short warp)</span>
       <span><kbd>K</kbd> lunging thrust (attack 2)</span>
       <span><kbd>L</kbd> finisher: 一閃 single cut (the target falls after the blade stills)</span>
       <span><kbd>Q</kbd><kbd>E</kbd> rotate camera</span>
@@ -850,6 +851,38 @@ function press(){
 }
 function pressK(){ if(S.phase==='idle') startAttack(COMBO.length,ATTACK2); else if(S.act && S.act.t>=S.act.def.impactMin-80) S.queuedK=true; }   // combo index COMBO.length = "no chain"
 function pressL(){ if(S.phase==='idle') startAttack(COMBO.length,ISSEN); else if(S.act && S.act.t>=S.act.def.impactMin-80) S.queuedL=true; }
+/* ---------- blink (Space): short-range shunshin warp ---------- */
+// The ninja vanishes in a puff of ink, reappears BLINK.dist m ahead (the direction held, else where it faces) and lands in a low forward slide-stance.
+// Passes over ponds / dummies, but lands only on free ground (so a wall or the island's edge shortens it). Cancels an attack's recovery.
+const BLINK={ dist:4, hide:110, land:200, cd:450 };
+const BLINK_LAND=P({hx:-.26,hy:-.2,hz:.2, by:-20, el:25, hipY:-.2, lean:.42, spread:.32, step:.65, headYaw:0});
+function setNinjaVisible(v){ rig.root.visible=v; rig.katana.visible=v; for(const e of rig.eyes) e.visible=v; for(const b of (rig.real&&rig.real.backSwords)||[]) b.g.visible=v; }
+function standOk(x,z){ const pad=.3; if(!(walkable(x,z)&&walkable(x+pad,z)&&walkable(x-pad,z)&&walkable(x,z+pad)&&walkable(x,z-pad))) return false;
+  for(const c of colliders) if(Math.hypot(x-c.x,z-c.z)<c.r+.28) return false; return true; }
+function inkPuff(at){
+  for(let i=0;i<55;i++){ const a=rnd()*6.283, sp=.8+rnd()*3.2; spawn(V(at.x,.15+rnd()*1.3,at.z),V(Math.cos(a)*sp,.4+rnd()*1.6,Math.sin(a)*sp),rnd()<.7?[.08,.075,.07]:[.5,.48,.45],.5+rnd()*.5); }
+  if(stains.length<STAIN_MAX) stains.push({x:at.x,z:at.z,r:.35,life:1});
+}
+function blink(){
+  const a=S.act; if(S.blinkCd>0||S.phase==='blink') return;
+  if(S.phase!=='idle' && !(a && a.t>=kHit(a.def) && (!a.def.delayed||a.released))) return;   // only from idle or once an attack's strike is done
+  let ix=0,iz=0; if(keys.w||keys.arrowup) iz+=1; if(keys.s||keys.arrowdown) iz-=1; if(keys.d||keys.arrowright) ix+=1; if(keys.a||keys.arrowleft) ix-=1;
+  const {fwd,right}=camBasis(), d=V();
+  if(ix||iz) d.addScaledVector(fwd,iz).addScaledVector(right,ix); else d.set(Math.sin(S.facing),0,Math.cos(S.facing));
+  d.y=0; d.normalize();
+  let best=0; for(let r=BLINK.dist;r>=.8;r-=.1){ if(standOk(S.pos.x+d.x*r,S.pos.z+d.z*r)){ best=r; break; } }
+  if(!best) return;
+  const from=S.pos.clone(); S.pos.set(from.x+d.x*best,0,from.z+d.z*best);
+  S.act=null; S.phase='blink'; S.blink={t:0,shown:false}; S.queued=S.queuedK=S.queuedL=false; S.moveTo=null; S.vel.set(0,0,0); S.facing=Math.atan2(d.x,d.z);
+  setDyn({body:[5,.7,.1],hand:[5,.7,.3],blade:[5,.7,.3]}); setNinjaVisible(false);
+  inkPuff(from.clone());
+  // ink swish along the path: one vertical sheet (waist height) + one flat sheet near the floor — the vertical one is edge-on when the path points along the view direction
+  const st=newStroke(++S.trailId), sf=newStroke(++S.trailId); st.life=sf.life=460;
+  for(let i=0;i<14;i++){ const u=i/13, x=lerp(from.x,S.pos.x,u), z=lerp(from.z,S.pos.z,u), w=.3*Math.sin(Math.PI*u)+.05;
+    st.samples.push({b:V(x,.5,z),t:V(x,1.2,z),time:S.clock});
+    sf.samples.push({b:V(x-d.z*w,.06,z+d.x*w),t:V(x+d.z*w,.06,z-d.x*w),time:S.clock}); }
+  for(let r=.4;r<best;r+=.35) for(let k=0;k<2;k++) spawn(V(from.x+d.x*r,.2+rnd()*1.1,from.z+d.z*r),V((rnd()-.5)*1.2,.5+rnd()*1.2,(rnd()-.5)*1.2),[.08,.075,.07],.5);
+}
 function startAttack(i,def=COMBO[i]){
   S.combo=i; S.queuedK=false; S.queuedL=false; S.queued=false; S.phase='attack'; S.trailId++; S.attackId++; S.moveTo=null;
   // turn toward the nearest target if it's not too far (soft lock-on)
@@ -1208,6 +1241,7 @@ function updateCamera(T){
 function camBasis(){ const yaw=CAM.yaw.y*D2R; return {fwd:V(-Math.sin(yaw),0,-Math.cos(yaw)), right:V(Math.cos(yaw),0,-Math.sin(yaw))}; }
 
 /* ---------- simulation step ---------- */
+S.blinkCd=0; S.blink=null;
 let lastArm=null, chargeOn=false; const dimEl=document.getElementById('dim');
 function step(T){
   S.clock+=T*1000;
@@ -1238,7 +1272,13 @@ function step(T){
       else if(S.queuedK){ S.queuedK=false; S.queued=false; startAttack(COMBO.length,ATTACK2); }
       else if(S.queued){ S.queued=false; startAttack(0); } }
     S.target = S.act ? timeline(S.act) : mix(IDLE,CARRY,S.walkAmt);
+  } else if(S.phase==='blink'){ const b=S.blink; b.t+=T*1000;
+    if(!b.shown && b.t>=BLINK.hide){ b.shown=true; setNinjaVisible(true); inkPuff(S.pos); if(!reduceMotion) S.shake=Math.max(S.shake,.05); }
+    const rec=smoother(clamp((b.t-BLINK.hide-60)/(BLINK.land-60),0,1));   // hold the slide-stance, then ease back to idle/carry
+    S.target=mix(BLINK_LAND,mix(IDLE,CARRY,S.walkAmt),rec);
+    if(b.t>=BLINK.hide+BLINK.land){ S.phase='idle'; S.blink=null; S.blinkCd=BLINK.cd; setDyn(null); }
   } else S.target=mix(IDLE,CARRY,S.walkAmt);
+  if(S.blinkCd>0) S.blinkCd-=T*1000;
   for(const k of KEYS) S.st[k]=dyn[k].update(T,S.target[k]);
   const saveF=S.facing; S.facing=facingS.y;
   const arm=applySkeleton(S.st,T); lastArm=arm;
@@ -1283,7 +1323,8 @@ const ray=new THREE.Raycaster(), ground=new THREE.Plane(V(0,1,0),0);
 window.addEventListener('keydown',e=>{ const k=e.key.toLowerCase(); keys.shift=e.shiftKey;
   if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k)){ keys[k]=true; e.preventDefault(); }
   if(e.repeat) return;
-  if(k==='j'||k===' '){ e.preventDefault(); press(); }
+  if(k==='j'){ e.preventDefault(); press(); }
+  else if(k===' '){ e.preventDefault(); blink(); }
   else if(k==='k'){ e.preventDefault(); pressK(); }
   else if(k==='l'){ e.preventDefault(); pressL(); }
   else if(k==='q') rotateCam(-90); else if(k==='e') rotateCam(90);
@@ -1308,7 +1349,7 @@ const bind=(id,fn)=>document.getElementById(id).addEventListener('click',e=>{ fn
 bind('bRotL',()=>rotateCam(-90)); bind('bRotR',()=>rotateCam(90)); bind('bUp',()=>tiltCam(12)); bind('bDown',()=>tiltCam(-12));
 bind('bBones',()=>toggle('bBones')); bind('bSlow',()=>toggle('bSlow'));
 document.getElementById('bAtk').addEventListener('pointerdown',e=>{ e.preventDefault(); press(); });
-window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,pressK,pressL,CAM,rotateCam,tiltCam,rig,
+window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
   GRIP_CFG, GRIP_TUNE, IDLE, CARRY, COMBO, ATTACK2, ISSEN, targets, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; }};  // edit GRIP_CFG in the console, call regrip(), to tune the grip live
 loadNinja();
 </script>
