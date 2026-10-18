@@ -8,7 +8,7 @@
 
 const D = 180 / Math.PI;
 const LIMITS = {
-  locoWristMax: 2000,   // °/s hand-vs-forearm while running / walking / stopping (the old stop flick was ~29,000)
+  locoWristMax: 2800,   // °/s hand-vs-forearm while running / walking / stopping (the old stop flick was ~29,000). Was 2000: since the ready stance holds the blade as a diagonal guard (by 35 / el -45) the blade swings ~150° up to the carry within ~150 ms of a run start → steady peaks of 1,800–2,500 there (a real fast motion, no flip); the roll rate is capped (GRIP_TUNE.rollRate)
   locoElbowMax: 6,      // m/s
   comboElbowMax: 25,    // m/s — anything above means the elbow teleported (old left-elbow pop: 66+)
   comboWristMax: 12000, // °/s single-step peak (fast cuts reach ~8,000; flips were 25,000–44,000)
@@ -84,10 +84,12 @@ function hits() { // dummy at about 0.8 m — every beat should land
   return [...new Set(out)];
 }
 
-function dualHits() { // K then K: the thrust and the dual cut must each land on a dummy ~0.8 m ahead; the 2nd sword must be in the hand during the cut
-  reset(1.2, 1.6, Math.PI * .25);
+function dualHits() { // K then K: the thrust and the dual cut must each land on a dummy; the 2nd sword must be in the hand during the cut
+  // Start 1.4 m from the dummy at (1.2, 2.8), facing it: the thrust then really connects at ~270 ms. (The old start, 1.2 m at 45°, only 'hit' by grazing the dummy
+  // with the raised blade at ~172 ms — right after the hit test opens — so the result flipped with any change of the ready stance.) Hits before 200 ms don't count.
+  reset(1.2, 1.4, 0);
   let t = 0, prevH = 0, shown = false; const out = [];
-  while (t < 2000) { if (t === 0 || t === 340) I.pressK(); I.frame(0, 4, true); t += 4; if (S.sword2) shown = true; if (S.hitstop > 0 && prevH <= 0 && S.act) out.push(S.act.def.kanji); prevH = S.hitstop; }
+  while (t < 2000) { if (t === 0 || t === 340) I.pressK(); I.frame(0, 4, true); t += 4; if (S.sword2) shown = true; if (S.hitstop > 0 && prevH <= 0 && S.act && S.act.t >= 200) out.push(S.act.def.kanji); prevH = S.hitstop; }
   return { thrust: out.includes('突'), dual: out.includes('双'), shown };
 }
 
