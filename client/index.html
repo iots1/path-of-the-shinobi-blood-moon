@@ -692,7 +692,7 @@ function makeGrip(c){
   const eY=eY0.clone().multiplyScalar(Math.cos(f)).addScaledVector(eZ0,Math.sin(f)), eZ=eZ0.clone().multiplyScalar(Math.cos(f)).addScaledVector(eY0,-Math.sin(f));
   return { K:new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(eX,eY,eZ)), pt:new THREE.Vector3(...c.pt).multiplyScalar(.01) };
 }
-const _gq=new THREE.Quaternion(), _gv=new THREE.Vector3(), GRIP_TUNE={share:1, rollMax:80, bladeRollMax:90, handRollMax:90, tauRoll:.07, swivelBias:.15, swivelHold:.5, tauSwivel:.05, bodyK:12};   // bodyK: swivel cost per cm of arm inside the torso
+const _gq=new THREE.Quaternion(), _gv=new THREE.Vector3(), GRIP_TUNE={share:1, rollMax:80, bladeRollMax:90, handRollMax:90, tauRoll:.07, swivelBias:.15, swivelHold:.5, tauSwivel:.05, bodyK:12, elbowLift:6, liftFree:-10, swivelRate:1500};   // elbowLift/liftFree: cost per cm the elbow sits higher than 10 cm below the shoulder; swivelRate: max angular speed of the elbow about the shoulder from the swivel search (°/s)   // bodyK: swivel cost per cm of arm inside the torso
 // share = fraction of the hand's twist given to the forearm (clamped to ±rollMax° first: beyond that the sign flips and the forearm would snap)
 const wrapA=x=>Math.atan2(Math.sin(x),Math.cos(x));
 function smoothAngle(cur,target,T,tau){ return cur+wrapA(target-cur)*(1-Math.exp(-T/tau)); }
@@ -731,6 +731,9 @@ const BODY={inv:new THREE.Matrix4(), ax:.185, cz:.04, az:.19, y0:-.55, y1:.2}, _
 function bodyPen(p){ const q=_bp.copy(p).applyMatrix4(BODY.inv); if(q.y<BODY.y0||q.y>BODY.y1) return 0;
   const d=Math.hypot(q.x/BODY.ax,(q.z-BODY.cz)/BODY.az); return d<1 ? (1-d)*BODY.ax : 0; }   // ≈ metres inside
 function armPen(sh,E,W){ let s=0; for(const t of [.75]) s+=bodyPen(_gv.copy(sh).lerp(E,t)); s+=bodyPen(E); for(const t of [.33,.66]) s+=bodyPen(_gv.copy(E).lerp(W,t)); return s; }
+// Elbows hang under gravity: cost per cm the elbow sits above the shoulder line. The wrist-bend criterion alone happily put the right elbow above the shoulder
+// ("chicken wing") at the start of every cut, while the hand was still down at the hip.
+const liftCost=(sh,Ek)=>GRIP_TUNE.elbowLift*(1-(S.dualEff||0))*Math.max(0,(Ek.y-sh.y)*100-GRIP_TUNE.liftFree);   // off while drawing/sheathing (dual): reaching over the shoulder needs the elbow up
 function gripPass(grip, arm, sh, G, qB, pole, clampG, T){
   const qh=_gq.copy(qB).multiply(grip.K), off=grip.pt.clone().applyQuaternion(qh);
   const w=G.clone().sub(off); let Gp=G;
@@ -745,7 +748,7 @@ function gripPass(grip, arm, sh, G, qB, pole, clampG, T){
   // chosen angle is eased (tauSwivel) from there instead of applied instantly.
   const yh=new THREE.Vector3(0,1,0).applyQuaternion(qh);
   const bendOf=Ek=>Math.acos(clamp(ik.W.clone().sub(Ek).normalize().dot(yh),-1,1))*57.2958;
-  const Es=swivel(sh,ik,arm,T,(Ek,al)=>bendOf(Ek)+GRIP_TUNE.swivelBias*Math.abs(al));
+  const Es=swivel(sh,ik,arm,T,(Ek,al)=>bendOf(Ek)+GRIP_TUNE.swivelBias*Math.abs(al)+liftCost(sh,Ek));
   return {G:Gp, wRaw:w, E:Es, W:ik.W, bend:bendOf(Es), eRel:Es.clone().sub(sh)};
 }
 // Search the elbow's circle around the shoulder→wrist axis (±120° from the pole-based IK elbow) for the least cost(E, angle) + torso penetration
@@ -758,7 +761,13 @@ function swivel(sh,ik,arm,T,cost,hold=GRIP_TUNE.swivelHold){
   let best=1e9, bestA=0;
   for(let k=-24;k<=24;k++){ const al=k*5, Ek=at(al), c=cost(Ek,al)+hold*Math.abs(wrapA((al-prev)*D2R))*57.2958+GRIP_TUNE.bodyK*armPen(sh,Ek,ik.W)*100;
     if(c<best){ best=c; bestA=al; } }
-  return at(prev+wrapA((bestA-prev)*D2R)*57.2958*(arm.eRel?1-Math.exp(-T/GRIP_TUNE.tauSwivel):1));
+  // ease toward the best angle, but never faster than swivelRate °/s of elbow motion: when the argmin hops to the other branch the 8%/step ease alone still swung the
+  // elbow 13° in one 4 ms step (3,300°/s — an elbow flick); a real elbow can't, and the hand is still exactly on target (only the elbow's side lags)
+  let dA=wrapA((bestA-prev)*D2R)*57.2958*(arm.eRel?1-Math.exp(-T/GRIP_TUNE.tauSwivel):1);
+  if(arm.eRel){ // cap by the ELBOW's own angular speed about the shoulder (a swivel step moves it much further than its angle when the arm is near-straight)
+    const g0=at(prev).sub(sh), g1=at(prev+dA).sub(sh), a1=Math.acos(clamp(g0.dot(g1)/(g0.length()*g1.length()||1),-1,1))*57.2958, mx=GRIP_TUNE.swivelRate*T;
+    if(a1>mx) dA*=mx/a1; }
+  return at(prev+dA);
 }
 // Angle about the blade axis that turns the hand's finger axis toward the forearm direction f (so the wrist stays near neutral); null if f ∥ blade.
 function rollToward(grip, qB, dir, f){
@@ -789,8 +798,11 @@ const P=o=>Object.assign({},IDLE,o);   // (the attack poses used to set eye:1 �
    travel an arc in front of the body and the blade angle follows them, instead of the blade pivoting around a hand that already arrived.
    The wind-up is centred above the forehead (hx 0): at hx -.1 the left forearm had to cross the whole face to reach the hilt. */
 const COMBO=[
-  { kanji:'一', lunge:2.6, impactMin:260, chain:400, end:1000, reach:2.0, hit:2,
-    keys:[ [170, P({hx:0,   hy:.5, hz:.18, by:45, el:128, hipY:-.03, hipYaw:-.22, chestYaw:-.35, lean:-.05, headYaw:.15, two:1, spread:.2, glint:.4}),'out'],
+  // key 0 is only a waypoint: from the idle hang to the overhead wind-up the hand's straight path passes right beside the shoulder, folding the arm to ~37°
+  // (elbow direction swinging 2,000°/s); the hand now swings out in front first (arm ~100°), so the elbow opens up smoothly. `start:1` = the wind-up key.
+  { kanji:'一', lunge:2.6, impactMin:260, chain:400, end:1000, reach:2.0, hit:3, start:1,
+    keys:[ [85,  P({hx:-.12,hy:.12,hz:.32, by:38, el:35, hipY:-.02, hipYaw:-.1, chestYaw:-.18, lean:0, headYaw:.06, two:1, spread:.16, glint:.2}),'out'],
+           [170, P({hx:0,   hy:.5, hz:.18, by:45, el:128, hipY:-.03, hipYaw:-.22, chestYaw:-.35, lean:-.05, headYaw:.15, two:1, spread:.2, glint:.4}),'out'],
            [250, P({hx:-.03,hy:.22,hz:.34, by:35, el:60,  hipY:-.08, hipYaw:0, chestYaw:0, lean:.12, headYaw:0, two:1, spread:.24, glint:.8}),'in'],
            [300, P({hx:.04, hy:-.02,hz:.34, by:0,  el:-12, hipY:-.12, hipYaw:.1, chestYaw:.18, lean:.25, headYaw:-.1, two:1, spread:.26, glint:1}),'lin'],
            [450, P({hx:.02, hy:-.1, hz:.22, by:50, el:-50, hipY:-.13, hipYaw:.25, chestYaw:.45, lean:.3,  headYaw:-.1, two:1, spread:.26, glint:.6}),'out'] ],
@@ -833,7 +845,7 @@ const DRAW2={ hx2:-.251, hy2:.346, hz2:-.056, by2:106, el2:-51 };   // the left 
 // in front of the face above the shoulder line (out of the torso ellipse, reachable: ~.44 m from the left shoulder) — on the way in (draw and sheathe);
 // after sheathing the hand leaves up-left in front of the shoulder (last key) and drops to the hang beside the hip, never across the chest.
 const WAY2={ hx2:-.04, hy2:.46, hz2:.2, by2:106, el2:-51 };
-const DUAL={ kanji:'双', lunge:9, impactMin:440, chain:99999, end:1070, reach:2.2, hit:4, start:3, draw:210, sheathe:800,
+const DUAL={ kanji:'双', lunge:9, impactMin:440, chain:99999, end:1240, reach:2.2, hit:4, start:3, draw:210, sheathe:800,
   keys:[ [110, P({...WAY2, dual:1, hx:-.22,hy:-.1,hz:.2, by:-50, el:10, hipY:-.12, hipYaw:-.2, chestYaw:-.3, lean:.1, headYaw:.15, spread:.3, step:.3, glint:.4}),'out'],
          [210, P({...DRAW2, dual:1, hx:-.22,hy:-.1,hz:.2, by:-50, el:10, hipY:-.12, hipYaw:-.2, chestYaw:-.3, lean:.1, headYaw:.15, spread:.3, step:.3, glint:.4}),'out'],
          [270, P({dual:1, hx2:.04,hy2:.48,hz2:.2, by2:85, el2:30, hx:-.23,hy:-.06,hz:.17, by:-68, el:8, hipY:-.16, hipYaw:-.1, chestYaw:-.15, lean:.15, headYaw:.1, spread:.33, step:.32, glint:.5}),'out'],   // the drawn sword rises over the shoulder line before swinging out (a straight path cuts across the chest)
@@ -842,7 +854,8 @@ const DUAL={ kanji:'双', lunge:9, impactMin:440, chain:99999, end:1070, reach:2
          [570, P({dual:1, hx:-.1,hy:0,hz:.34, by:35, el:0, hx2:.1,hy2:.08,hz2:.34, by2:-35, el2:0, hipY:-.3, hipYaw:.05, chestYaw:.08, lean:.5, headYaw:-.05, spread:.3, step:1, glint:.5}),'out'],
          [670, P({...WAY2, dual:1, hx:-.2,hy:-.08,hz:.22, by:10, el:25, hipY:-.2, hipYaw:-.02, chestYaw:-.04, lean:.3, spread:.26, step:.6, glint:.3}),'io'],
          [770, P({...DRAW2, dual:1, hx:-.26,hy:-.22,hz:.12, by:-15, el:55, hipY:-.1, hipYaw:-.1, chestYaw:-.15, lean:.15, spread:.2, step:.2, glint:0}),'io'],
-         [870, P({hx2:.17,hy2:.34,hz2:.26, by2:60, el2:-20, dual:1, hx:-.26,hy:-.22,hz:.12, by:-15, el:55, hipY:-.05, hipYaw:-.05, chestYaw:-.08, lean:.1, spread:.18, step:.1, glint:0}),'io'] ],
+         [930, P({hx2:.17,hy2:.34,hz2:.26, by2:60, el2:-20, dual:1, hx:-.26,hy:-.22,hz:.12, by:-15, el:55, hipY:-.05, hipYaw:-.05, chestYaw:-.08, lean:.1, spread:.18, step:.1, glint:0}),'io'],
+         [1080, P({hx2:.21,hy2:-.18,hz2:.15, by2:-30, el2:-30, dual:1, hx:-.26,hy:-.22,hz:.12, by:-15, el:55, hipY:-.05, hipYaw:-.05, chestYaw:-.08, lean:.1, spread:.18, step:.1, glint:0}),'io'] ],
   dyn:{hand:[4.4,.55,.7], blade:[4.4,.5,.3], body:[3.6,.6,.1], two:[7,1,0]} };
 // finisher (L) — 一閃 Issen, one cut, then stillness. The blade is not drawn from a saya at the hip (the saya is on the back), so the "draw" is the charge:
 // sink into a deep lunge stance with the torso wound right and the blade held out behind the right hip while the stage dims and ink gathers (the long
@@ -1034,11 +1047,18 @@ function applySkeleton(p,T){
   // Keep the hilt out of the torso. With the blade pointing down/forward (beat-1 follow-through, beat-2 chamber, beat-3 wind-up) the pommel end —
   // where the left hand grips — sat 10–15 cm inside the chest, so the off-hand and forearm went through the body. Push G radially out of the
   // torso ellipse (inflated by a fist's radius) until the right grip, the left grip and the pommel are all outside.
-  for(let it=0;it<2;it++){ let best=null, bl=0;
-    for(const [sd,m] of [[0,.05],[-.11,.08],[-.17,.06]]){ const q=_bp.copy(G).addScaledVector(dir,sd).applyMatrix4(BODY.inv); if(q.y<BODY.y0||q.y>BODY.y1+.05) continue;
+  // The three samples are combined with a smooth max (p-norm, k=6) and faded in/out over the torso's height range: the old argmax + hard y cut-off made the
+  // push jump ~4 cm in one 4 ms step whenever the winning sample (or the y range) changed — the right wrist/elbow snapped at the start of K and beat 1.
+  const G0=G.clone();
+  for(let it=0;it<2;it++){ const acc=V(); let ns=0;
+    for(const [sd,m] of [[0,.05],[-.11,.08],[-.17,.06]]){ const q=_bp.copy(G).addScaledVector(dir,sd).applyMatrix4(BODY.inv);
+      const yf=(1-smooth(clamp((q.y-BODY.y1)/.05,0,1)))*smooth(clamp((q.y-BODY.y0+.05)/.05,0,1)); if(yf<=0) continue;
       const ax=BODY.ax+m, az=BODY.az+m, d=Math.hypot(q.x/ax,(q.z-BODY.cz)/az); if(d>=1) continue;   // m: the wrist sits ~8 cm behind the palm's grip point
-      const out=d>1e-3 ? V(q.x/d-q.x, 0, (q.z-BODY.cz)/d-(q.z-BODY.cz)) : V(0,0,az); if(out.length()>bl){ bl=out.length(); best=out; } }
-    if(!best) break; G.add(best.applyQuaternion(cq)); }
+      const out=(d>1e-3 ? V(q.x/d-q.x, 0, (q.z-BODY.cz)/d-(q.z-BODY.cz)) : V(0,0,az)).multiplyScalar(yf), l=out.length(); acc.addScaledVector(out,Math.pow(l,5)); ns+=Math.pow(l,6); }
+    if(ns<1e-14) break; G.add(acc.normalize().multiplyScalar(Math.pow(ns,1/6)).applyQuaternion(cq)); }
+  // ...and low-pass the push itself (chest-local, ~35 ms): when the pommel rises past the torso's top the 10+ cm push vanishes within a few frames, which
+  // snapped the right wrist 7 cm in 4 ms (17 m/s) at the start of beat 1
+  { const pl=G.clone().sub(G0).applyQuaternion(cq.clone().invert()); S.pushF=(S.pushF||pl.clone()).lerp(pl,1-Math.exp(-T/.035)); G.copy(G0).add(_gv.copy(S.pushF).applyQuaternion(cq)); }
   // Off-hand while it isn't on the hilt — never a dead hang (a straight, motionless arm reads as a broken one) and never thrown out sideways: an
   // earlier "balance" pose flung the arm out at the start of EVERY attack, before it had grabbed the hilt. Standing: elbow bent ~120°, fist in
   // front of the hip, elbow tucked back. Walking/running: a runner's pump (elbow ~80–95°), fist swinging from belly-front back to the hip, elbow
@@ -1110,7 +1130,7 @@ function applySkeleton(p,T){
     const ik=solveIK(shL,tL,poleH,aL.l1,aL.l2), prefL=ik.E.clone().sub(shL).normalize();
     // continuity (hold) only while it is on the hilt: with a free arm the pole IS the answer, and a sticky elbow kept whichever side it last
     // happened to be on — results depended on what the arm had done before (a flared elbow survived a whole idle second).
-    eL=swivel(shL,ik,aL,T,Ek=>Math.acos(clamp(Ek.clone().sub(shL).normalize().dot(prefL),-1,1))*57.2958*.4,GRIP_TUNE.swivelHold*Math.max(S.twoEff,dE)); wL=ik.W; aL.eRel=eL.clone().sub(shL);
+    eL=swivel(shL,ik,aL,T,Ek=>Math.acos(clamp(Ek.clone().sub(shL).normalize().dot(prefL),-1,1))*57.2958*.4+liftCost(shL,Ek),GRIP_TUNE.swivelHold*Math.max(S.twoEff,dE)); wL=ik.W; aL.eRel=eL.clone().sub(shL);
     aimArm(real.arm.L,shL,eL,wL); // hand orientation: from LAST frame's toward the target (the right-hilt grip qBL, then the own-sword grip qD past dE .5) in small steps — a slerp(qBL,qD,dE) flips
     // its path when the two are ~180° apart (36,000°/s one-step wrist spikes, depending on history); the lag shrinks to ~10 ms once the hand is fully dual
     let qHand=qBL;
