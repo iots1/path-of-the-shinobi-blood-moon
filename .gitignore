@@ -22,3 +22,6 @@ dist/
 # Claude Code motion-guard marker (set by .claude/hooks/motion_guard.py)
 .claude/.motion-dirty
 .claude/settings.local.json
+
+# Motion captures written by the "Capture 8" button (server POST /debug/save)
+out/
