@@ -486,10 +486,14 @@ for(const [d] of BONE_MAP) DRIVER_REST[d]={
 };
 function rootLocal(o){ rig.root.updateMatrixWorld(true); return rig.root.matrixWorld.clone().invert().multiply(o.matrixWorld); }
 
+// The glb's bones are Mixamo-named (`mixamorig:Hips`; three.js strips the colon). The rest of the code uses the short names of the
+// previous model (docs/BONES.md): Spine02 = lowest spine bone (Mixamo Spine), Spine01 = middle (Spine1), Spine = top (Spine2), neck, head_end.
+const BONE_RENAME={Spine:'Spine02',Spine1:'Spine01',Spine2:'Spine',Neck:'neck',HeadTop_End:'head_end'};
+function canonBone(n){ n=n.replace(/^mixamorig:?/,''); return BONE_RENAME[n]||n; }
 function loadNinja(){
   new GLTFLoader().load('assets/ninja.glb', gltf=>{
     const model=gltf.scene, bone={}; let skinned=null;
-    model.traverse(o=>{ if(o.isBone) bone[o.name]=o; if(o.isSkinnedMesh) skinned=o; });
+    model.traverse(o=>{ if(o.isBone) bone[canonBone(o.name)]=o; if(o.isSkinnedMesh) skinned=o; });
     rig.root.add(model);
     const posRL=n=>V().setFromMatrixPosition(rootLocal(bone[n]));
     // Game convention: the character's right hand is on -X. Flip the model if it was exported facing -Z.
@@ -526,7 +530,7 @@ function loadNinja(){
         upDir:fo.position.clone().normalize(), foDir:ha.position.clone().normalize(),
         foBind:fo.quaternion.clone(), q0:ha.quaternion.clone(),   // bind-local rotations: forearm (roll is rebuilt each frame) and hand-vs-forearm
         // in a T-pose the elbow naturally flexes toward the character's front (+Z)
-        bendLocal:V(0,0,1).applyQuaternion(real.bind[up.name].rl.clone().invert()) };
+        bendLocal:V(0,0,1).applyQuaternion(real.bind[`${S0}Arm`].rl.clone().invert()) };
     }
     real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)};
 
@@ -555,23 +559,21 @@ function loadNinja(){
     // but a Mesh parented directly to a Bone under this particular rig silently fails to render
     // (the nested 0.01 Armature scale seems to confuse frustum culling) — so instead the eyes are
     // kept as world-space objects, like the hands/katana, and placed from Head's matrix each frame.
-    // Head-bone-local (cm) centres of the eyes painted on the face plate in ninja.glb, in rig.eyes order (-x first).
-    // Computed in Blender (bone frame == glTF Head frame); re-measure if the face is ever remodelled.
-    // Also per-eye slant (rad, rotateZ in the head frame, outer end up): the head bone is rolled ~4° at rest, so the two differ.
-    real.eyeLocal=[new THREE.Vector3(-2.77,10.97,11.35), new THREE.Vector3(3.58,11.59,10.90)];
-    real.eyeRot=[-0.053,0.179];
+    // Eye glow positions: Head-bone-local metres, derived from root-local rest positions of the eyes on the face (measured with
+    // ray casts onto the mask opening). Per-eye slant `eyeRot` (rad, rotateZ in the head frame, outer end up).
+    const headInv=rootLocal(bone.Head).invert();
+    real.eyeLocal=[V(-.033,1.655,.108), V(.033,1.655,.108)].map(p=>p.applyMatrix4(headInv));
+    real.eyeRot=[0,0];
     for(const e of rig.eyes) scene.add(e);
-    // Back swords: the ones Meshy sculpted into the mesh were cut out in Blender (they were shredded into hundreds of strands
-    // and skinned to the legs); these code-built ones replace them. Spine01-local cm (bone frame == Blender's, see BLENDER notes):
-    // two points on each sword's axis (measured in Blender so the saya rests ~1 cm off the cloak in the bind pose); the tsuba /
-    // saya mouth sits `mouth` cm down from `top`, just above the right shoulder. Spine01-local -Z points out of the back.
-    // The outer one is the empty saya of the katana in hand.
-    const BACK_SWORDS=[{top:[-35.68,51.59,-6.9], bot:[52.78,-62.32,-33.15], mouth:29},
-                       {top:[-40.69,48.09,-11.16], bot:[46.81,-69.34,-34.52], mouth:29, empty:true}];
+    // Back swords (code-built; the model has none): two points on each sword's axis in Spine01-local METRES (Spine01 = Mixamo Spine1;
+    // the glb has no 0.01 armature scale any more), the tsuba / saya mouth sits `mouth` m down from `top`, just above the right shoulder.
+    // Spine01-local -Z points out of the back. The outer one is the empty saya of the katana in hand.
+    const BACK_SWORDS=[{top:[-.3568,.5159,-.069], bot:[.5278,-.6232,-.3315], mouth:.29},
+                       {top:[-.4069,.4809,-.1116], bot:[.4681,-.6934,-.3452], mouth:.29, empty:true}];
     real.backSwords=BACK_SWORDS.map(({top,bot,mouth,empty})=>{
       const T=new THREE.Vector3(...top), B=new THREE.Vector3(...bot), Y=T.clone().sub(B).normalize();
       const X=new THREE.Vector3().crossVectors(Y,new THREE.Vector3(0,0,-1)).normalize(), Z=new THREE.Vector3().crossVectors(X,Y);
-      const M=new THREE.Matrix4().makeBasis(X,Y,Z).scale(new THREE.Vector3(100,100,100)).setPosition(T.clone().addScaledVector(Y,-mouth));
+      const M=new THREE.Matrix4().makeBasis(X,Y,Z).setPosition(T.clone().addScaledVector(Y,-mouth));
       const g=rig.backSword({empty}); scene.add(g); return {g,M};
     });
     rig.back.visible=false; rig.cloakRoot.visible=false; rig.hood.visible=false; rig.mask.visible=false;
@@ -580,7 +582,7 @@ function loadNinja(){
     for(const s of ['R','L']) for(const p of ['upper','fore','hand']) rig[p+s].visible=false;
     rig.real=real;
     console.log('[GLTF] ninja.glb attached', {flipped:model.rotation.y!==0, armR:[real.arm.R.l1,real.arm.R.l2], hips:real.hipsPos.toArray()});
-    loadLocoClips(real);
+    loadLocoClips(real, gltf.animations);
   }, undefined, err=>console.error('[GLTF] failed to load assets/ninja.glb — keeping the procedural character', err));
 }
 
@@ -597,7 +599,7 @@ const CADENCE_BOOST=1.2;  // >1 = quicker steps than the stride strictly allows 
 const LOCO_BONES=['LeftUpLeg','LeftLeg','LeftFoot','LeftToeBase','RightUpLeg','RightLeg','RightFoot','RightToeBase'];
 function calibrateClip(real, clip){
   const tracks=new Map();
-  for(const tr of clip.tracks){ const [n,prop]=tr.name.split('.');
+  for(const tr of clip.tracks){ const [raw,prop]=tr.name.split('.'), n=canonBone(raw);
     if(prop==='quaternion' && LOCO_BONES.includes(n) && real.bone[n]) tracks.set(real.bone[n], tr.createInterpolant()); }
   // sample one cycle with the hips at bind: how fast a planted toe moves backward (= ground speed at
   // rate 1) and when the left foot is furthest forward
@@ -614,12 +616,11 @@ function calibrateClip(real, clip){
   const speed=n ? (dz/n)/(dur/N) : 2;
   return {tracks, dur, speed, stride:speed*dur, uFwd:s.reduce((m,o)=>o.fz>m.fz?o:m).t/dur};
 }
-function loadLocoClips(real){
-  const ld=f=>new Promise((ok,no)=>new GLTFLoader().load(f, g=>ok(g.animations[0]), undefined, no));
-  Promise.all([ld('assets/anim/walk.glb'), ld('assets/anim/run.glb')]).then(([w,r])=>{
-    real.loco={walk:calibrateClip(real,w), run:calibrateClip(real,r), u:0, w:0, b:0};
-    const L=real.loco; console.log('[GLTF] loco clips ready', {walk:[+L.walk.speed.toFixed(2),+L.walk.dur.toFixed(2)], run:[+L.run.speed.toFixed(2),+L.run.dur.toFixed(2)]});
-  }).catch(err=>console.warn('[GLTF] no locomotion clips — procedural legs only', err));
+function loadLocoClips(real, clips){ // the Walking/Running clips come inside ninja.glb itself (same skeleton, so no retargeting)
+  const w=clips.find(c=>c.name==='Walking'), r=clips.find(c=>c.name==='Running');
+  if(!w || !r){ console.warn('[GLTF] no Walking/Running clips in ninja.glb — procedural legs only'); return; }
+  real.loco={walk:calibrateClip(real,w), run:calibrateClip(real,r), u:0, w:0, b:0};
+  const L=real.loco; console.log('[GLTF] loco clips ready', {walk:[+L.walk.speed.toFixed(2),+L.walk.dur.toFixed(2)], run:[+L.run.speed.toFixed(2),+L.run.dur.toFixed(2)]});
 }
 const _qw=new THREE.Quaternion();
 function locoPose(L, bone, out){ // walk/run pose for one bone at the shared phase, blended by L.b
