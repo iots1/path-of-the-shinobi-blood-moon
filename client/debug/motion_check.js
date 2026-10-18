@@ -1,7 +1,7 @@
 // Motion check — run in the game page after any change to poses / COMBO / IK / grip / locomotion.
 //   const m = await import('/debug/motion_check.js?' + Date.now());
 //   await m.run()                       → PASS/FAIL report (numbers per 4 ms step)
-//   m.sheet({mode:'combo', yawOff:20})  → slow-mo contact sheet overlay (screenshot it), modes: combo | run | walk
+//   m.sheet({mode:'combo', yawOff:20})  → slow-mo contact sheet overlay (screenshot it), modes: combo | issen (the L finisher) | run | walk
 //   m.hideSheet()
 // It calls __iso.stop() (the loop stays frozen) and moves the character around — reload the page afterwards.
 // Thresholds are the values measured after the 2026-10 arm/grip/carry fixes (see CLAUDE.md), with headroom.
@@ -43,14 +43,14 @@ const wp = n => R.bone[n].getWorldPosition(new V());
 const torsoPen = p => { const q = rig.chest.worldToLocal(p.clone()); if (q.y < -.55 || q.y > .2) return 0; const d = Math.hypot(q.x / .15, (q.z - .04) / .16); return d < 1 ? (1 - d) * .15 : 0; };
 
 // Steps the sim 4 ms at a time. presses = attack presses (ms); runMs = hold 'a' until then (0 = no run).
-function simulate({ presses = [], until, runMs = 0, shift = false, twoWin = [0, 0], legCheck = false }) {
+function simulate({ presses = [], until, runMs = 0, shift = false, twoWin = [0, 0], legCheck = false, fn }) {
   reset();
   const prev = {}, H = { R: [], L: [] }, E = { R: [], L: [] }, worst = [];
   let t = 0, pi = 0, minTwo = 1, bladeLeg = 9, nan = false, torso = 0, torsoAt = '', flare = 0, flareAt = '', angStand = 0, angMove = 0;
   if (runMs) key('a', true, shift);
   while (t < until) {
     if (runMs && t === runMs) key('a', false, shift);
-    if (pi < presses.length && t >= presses[pi]) { I.press(); pi++; }
+    if (pi < presses.length && t >= presses[pi]) { (fn || I.press)(); pi++; }
     I.frame(0, 4, true); t += 4;
     if (t > twoWin[0] && t < twoWin[1]) minTwo = Math.min(minTwo, S.twoEff);
     const root = rig.root.position;
@@ -83,6 +83,15 @@ function hits() { // dummy at about 0.8 m — every beat should land
   return [...new Set(out)];
 }
 
+function finisherHit() { // L: the cut is made at ~0.6 s but nothing may react before the release (~1.28 s), then the dummy must go
+  reset(1.2, 1.6, Math.PI * .25);
+  const tg = I.targets.filter(x => x.type === 'dummy'), n = () => tg.reduce((a, x) => a + x.hits, 0), n0 = n();
+  document.getElementById('kanji').classList.remove('show');   // the timer that clears it runs in real time, not sim time
+  let t = 0, early = 0, kan = 0; I.pressL();
+  while (t < 2000) { I.frame(0, 4, true); t += 4; if (t === 1100) early = n() - n0; if (t === 1100) kan = +document.getElementById('kanji').classList.contains('show'); }
+  return { early, late: n() - n0, kanjiEarly: kan };
+}
+
 export async function run() {
   await ready();
   const lines = [], fail = [];
@@ -110,6 +119,16 @@ export async function run() {
     check(`${name} NaN`, !r.nan, r.nan ? 'NaN in a bone' : 'none');
     if (r.worst.length) lines.push('      spikes: ' + r.worst.join(' | '));
   }
+  { const o = { presses: [0], until: 2400, twoWin: [500, 760], fn: I.pressL }, r = simulate(o), e = Math.max(r.elbowR.max, r.elbowL.max), wm = Math.max(r.wristR.max, r.wristL.max), wp95 = Math.max(r.wristR.p95, r.wristL.p95), name = 'finisher L';
+    check(`${name} elbow jumps`, e <= LIMITS.comboElbowMax, `max ${e.toFixed(1)} m/s (limit ${LIMITS.comboElbowMax})`);
+    check(`${name} wrist peak`, wm <= LIMITS.comboWristMax, `max ${f(wm)}°/s (limit ${LIMITS.comboWristMax})`);
+    check(`${name} wrist p95`, wp95 <= LIMITS.comboWristP95, `${f(wp95)}°/s (limit ${LIMITS.comboWristP95})`);
+    check(`${name} two-hand grip`, r.minTwo >= LIMITS.minTwo, `min ${r.minTwo.toFixed(2)} through the charge end + cut (limit ${LIMITS.minTwo})`);
+    check(`${name} free-arm flare`, r.flare <= LIMITS.freeFlareMax, `max ${(r.flare * 100).toFixed(0)} cm outboard of the shoulder ${r.flareAt} (limit ${LIMITS.freeFlareMax * 100} cm)`);
+    check(`${name} arms inside torso`, r.torso <= LIMITS.comboTorsoMax, `deepest ${(r.torso * 100).toFixed(1)} cm ${r.torsoAt} (limit ${LIMITS.comboTorsoMax * 100} cm)`);
+    check(`${name} NaN`, !r.nan, r.nan ? 'NaN in a bone' : 'none');
+    if (r.worst.length) lines.push('      spikes: ' + r.worst.join(' | ')); }
+  { const r = finisherHit(); check('finisher L delayed hit', r.early === 0 && r.late > 0 && !r.kanjiEarly, `dummy hits before the release ${r.early}, after ${r.late}, kanji early ${r.kanjiEarly}`); }
   const h = hits();
   check('hits on the dummy', [0, 1, 2].every(c => h.includes(c)), `beats hit: ${h.map(c => c + 1).join(',') || 'none'}`);
   lines.unshift(fail.length ? `MOTION CHECK: ${fail.length} FAIL` : 'MOTION CHECK: all PASS');
@@ -122,12 +141,15 @@ export async function sheet({ mode = 'combo', times, cols = 6, yawOff = 20, pitc
   await ready();
   const sc0 = rig.root.parent; let k = rig.katana; while (k.parent && k.parent !== sc0) k = k.parent;
   const keep = new Set([rig.root, k]); for (const e of rig.eyes) { let p = e; while (p.parent && p.parent !== sc0) p = p.parent; keep.add(p); }
+  for (const s of rig.real?.backSwords || []) keep.add(s.g);   // back sword + empty saya (world-space props placed from Spine01)
   for (const c of sc0.children) { if (keep.has(c) || c.isLight || c.isCamera || (c.isMesh && c.renderOrder === 5) || (c.type === 'Object3D' && !c.children.length)) continue; c.visible = false; }
-  const plan = { combo: { presses: [0, 420, 860], runMs: 0, times: [100, 170, 250, 300, 340, 450, 520, 600, 660, 760, 1000, 1120, 1250, 1350, 1500, 1800] },
+  const plan = { issen: { presses: [0], fn: 'pressL', runMs: 0, times: [0, 250, 450, 540, 580, 610, 640, 700, 900, 1150, 1260, 1320, 1450, 1800] },
+                 combo: { presses: [0, 420, 860], runMs: 0, times: [100, 170, 250, 300, 340, 450, 520, 600, 660, 760, 1000, 1120, 1250, 1350, 1500, 1800] },
                  run:   { presses: [], runMs: 1200, times: [700, 760, 820, 880, 940, 1000, 1220, 1260, 1300, 1360, 1440, 1700] },
                  walk:  { presses: [], runMs: 1600, shift: true, times: [900, 1000, 1100, 1200, 1300, 1400, 1640, 1700, 1800, 1900, 2100, 2400] } }[mode];
   times = times || plan.times;
-  if (mode === 'combo') I.COMBO.forEach(c => { c._lunge ??= c.lunge; c.lunge = 0; });   // keep the character in frame
+  if (mode === 'combo') I.COMBO.forEach(c => { c._lunge ??= c.lunge; c.lunge = 0; });
+  if (mode === 'issen') { I.ISSEN._lunge ??= I.ISSEN.lunge; I.ISSEN.lunge = 0; }   // keep the character in frame
   reset();
   const cv = document.querySelector('canvas'), W = cv.width, H = cv.height, cw = Math.round(W * width), ch = Math.round(H * .8), cx = Math.round(W * .5 - cw / 2);
   let out = document.getElementById('motionSheet');
@@ -139,7 +161,7 @@ export async function sheet({ mode = 'combo', times, cols = 6, yawOff = 20, pitc
   let t = 0, i = 0, pi = 0;
   while (i < times.length) {
     if (plan.runMs && t === plan.runMs) key('a', false, plan.shift);
-    if (pi < plan.presses.length && t >= plan.presses[pi]) { I.press(); pi++; }
+    if (pi < plan.presses.length && t >= plan.presses[pi]) { (plan.fn ? I[plan.fn] : I.press)(); pi++; }
     if (t >= times[i]) {
       const saved = [I.CAM.yaw.y, I.CAM.yawT, I.CAM.focus.clone()];
       I.CAM.yaw.y = I.CAM.yawT = rig.root.rotation.y * D + yawOff; I.CAM.pitch.y = I.CAM.pitchT = pitch; I.CAM.zoom.y = I.CAM.zoomT = zoom; I.CAM.focus.set(S.pos.x, fy, S.pos.z); I.frame(0, 0);
@@ -153,6 +175,7 @@ export async function sheet({ mode = 'combo', times, cols = 6, yawOff = 20, pitc
   }
   key('a', false, plan.shift);
   if (mode === 'combo') I.COMBO.forEach(c => { c.lunge = c._lunge; });
+  if (mode === 'issen') I.ISSEN.lunge = I.ISSEN._lunge;
   return `sheet ${mode}: ${times.length} frames, yawOff ${yawOff} — take a screenshot`;
 }
 export function hideSheet() { const o = document.getElementById('motionSheet'); if (o) o.style.display = 'none'; }

@@ -47,6 +47,9 @@
   }
   .kanji.show { opacity: .9; transform: none; transition: opacity .06s, transform .12s cubic-bezier(.2,1.6,.4,1); }
   .kanji.final { color: var(--seal); }
+  #dim { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .25s ease;
+    background: radial-gradient(ellipse at 50% 55%, rgba(24,21,19,0) 28%, rgba(24,21,19,.62) 100%); }
+  #dim.on { opacity: 1; transition: opacity .5s ease; }
   .bar {
     display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; justify-content: space-between;
     padding: 4px 16px 12px; width: 100%;
@@ -70,6 +73,7 @@
   <div class="stage-wrap">
     <div id="stage" aria-label="Isometric sword dojo">
       <div id="paper"></div>
+      <div id="dim" aria-hidden="true"></div>
       <div class="kanji" id="kanji" aria-hidden="true"></div>
     </div>
   </div>
@@ -77,6 +81,8 @@
     <p class="hint">
       <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or click ground to run, hold <kbd>Shift</kbd> to walk</span>
       <span><kbd>J</kbd> / <kbd>Space</kbd> slash (press repeatedly for a 3-beat combo)</span>
+      <span><kbd>K</kbd> lunging thrust (attack 2)</span>
+      <span><kbd>L</kbd> finisher: 一閃 single cut (the target falls after the blade stills)</span>
       <span><kbd>Q</kbd><kbd>E</kbd> rotate camera</span>
       <span><kbd>R</kbd><kbd>F</kbd> high/low angle</span>
       <span>Scroll wheel to zoom, click-drag (or right-click drag) to free rotate</span>
@@ -521,7 +527,10 @@ function loadNinja(){
     // the albedo (dark tones only, the white rope barely moves) + a stronger normal map.
     const bodyGrad=new THREE.DataTexture(new Uint8Array([118,118,118,255, 190,190,190,255, 255,255,255,255]),3,1,THREE.RGBAFormat);
     bodyGrad.minFilter=bodyGrad.magFilter=THREE.NearestFilter; bodyGrad.generateMipmaps=false; bodyGrad.needsUpdate=true;
-    skinned.material=new THREE.MeshToonMaterial({color:0xffffff, map:skinned.material.map, normalMap:skinned.material.normalMap, gradientMap:bodyGrad});
+    // DoubleSide: Meshy's cloak is a double layer with ~half its faces wound inward. With FrontSide, wherever an outward
+    // face is missing the outline hull's back faces show through as black blobs; three flips the normal on back faces,
+    // so both layers light correctly from any angle.
+    skinned.material=new THREE.MeshToonMaterial({color:0xffffff, map:skinned.material.map, normalMap:skinned.material.normalMap, gradientMap:bodyGrad, side:THREE.DoubleSide});
     skinned.material.normalScale.set(2.2,2.2);
     // the trousers/boots albedo is ~0, so gamma alone leaves them black: add a small floor (0.07) so their folds read
     skinned.material.onBeforeCompile=s=>{ s.fragmentShader=s.fragmentShader.replace('#include <map_fragment>','#include <map_fragment>\n diffuseColor.rgb=vec3(0.07)+0.93*pow(diffuseColor.rgb,vec3(0.42));'); };
@@ -548,8 +557,8 @@ function loadNinja(){
     // two points on each sword's axis (measured in Blender so the saya rests ~1 cm off the cloak in the bind pose); the tsuba /
     // saya mouth sits `mouth` cm down from `top`, just above the right shoulder. Spine01-local -Z points out of the back.
     // The outer one is the empty saya of the katana in hand.
-    const BACK_SWORDS=[{top:[-35.68,51.59,-9.28], bot:[52.78,-62.32,-33.14], mouth:29},
-                       {top:[-40.69,48.09,-13.47], bot:[46.81,-69.34,-34.36], mouth:29, empty:true}];
+    const BACK_SWORDS=[{top:[-35.68,51.59,-6.9], bot:[52.78,-62.32,-33.15], mouth:29},
+                       {top:[-40.69,48.09,-11.16], bot:[46.81,-69.34,-34.52], mouth:29, empty:true}];
     real.backSwords=BACK_SWORDS.map(({top,bot,mouth,empty})=>{
       const T=new THREE.Vector3(...top), B=new THREE.Vector3(...bot), Y=T.clone().sub(B).normalize();
       const X=new THREE.Vector3().crossVectors(Y,new THREE.Vector3(0,0,-1)).normalize(), Z=new THREE.Vector3().crossVectors(X,Y);
@@ -755,11 +764,11 @@ function rollToward(grip, qB, dir, f){
 /* ---------- 4) ANIM: poses ----------
    hx,hy,hz = right hand (chest-local coordinates)   by,el = blade angle: yaw plane and elevation (el>90 = past the head, behind)
    hipY crouch, hipYaw/chestYaw twist, lean tilt, headYaw head, spin body rotation (degrees), spread leg stance
-   two = left hand gripping the hilt (0..1), eye eye glow, glint blade shine                     */
+   step = lunge stance: left foot forward / right leg back (0..1), two = left hand gripping the hilt (0..1), eye eye glow, glint blade shine                     */
 // Idle blade direction was by -42/el -48 (hanging along the forearm, 25° apart): the hammer grip then needed a ~90° wrist hinge + ~45° twist ("twisted arm"), and the
 // forearm-twist workaround flipped ~175° when running started (elbow snap). Scanned (by, el, palm angle psi) analytically for the least hinge+twist: by 30 (blade across
 // the body toward the left), el -30, psi 315° → hinge ≈35°, twist ≈22°, so no forearm twist is needed.
-const IDLE={hx:-.3,hy:-.36,hz:.14, by:30, el:-30, hipY:0, hipYaw:0, chestYaw:0, lean:.05, headYaw:0, spin:0, spread:.12, two:0, eye:0, glint:0};
+const IDLE={hx:-.3,hy:-.36,hz:.14, by:30, el:-30, hipY:0, hipYaw:0, chestYaw:0, lean:.05, headYaw:0, spin:0, spread:.12, step:0, two:0, eye:0, glint:0};
 // Running/walking carry (blended in by walkAmt while not attacking): blade upright beside the right hip, tip above the shoulder. The idle blade
 // (low, across the front) sat right where the swinging legs go, so running made the legs pass through it. Verify changes with
 // client/debug/motion_check.js (blade↔leg clearance, wrist/elbow speeds, grip, hits).
@@ -778,12 +787,15 @@ const COMBO=[
            [300, P({hx:.04, hy:-.02,hz:.34, by:0,  el:-12, hipY:-.12, hipYaw:.1, chestYaw:.18, lean:.25, headYaw:-.1, two:1, spread:.26, glint:1}),'lin'],
            [450, P({hx:.02, hy:-.1, hz:.22, by:50, el:-50, hipY:-.13, hipYaw:.25, chestYaw:.45, lean:.3,  headYaw:-.1, two:1, spread:.26, glint:.6}),'out'] ],
     dyn:{hand:[3.6,.55,.7], blade:[3.3,.5,.4], two:[7,1,0]} },
+  // 二 — the rising cut. Keys are authored so the hands actually travel (low-left → forward with the arms extended → up beside the right shoulder); the old
+  // keys dwelt ~150 ms near the belly (key 0 ≈ the end of beat 1), then flicked the blade from level to vertical in ~40 ms around hands that had barely
+  // moved (arms bent, hz ≤ .3). Strike key G ≈ .36 m from the right shoulder, mid key ≈ .44 m; hand dynamics 5 Hz so the pose isn't ~100 ms late.
   { kanji:'二', lunge:2.2, impactMin:180, chain:320, end:950, reach:2.0, hit:2,
-    keys:[ [90,  P({hx:.03, hy:-.17,hz:.24, by:55, el:-48, hipY:-.14, hipYaw:.3, chestYaw:.5, lean:.25, headYaw:-.15, two:1, spread:.26, glint:.6}),'out'],
-           [170, P({hx:-.02,hy:.02, hz:.34, by:20, el:15,  hipY:-.1, hipYaw:.05, chestYaw:.1, lean:.15, two:1, spread:.24, glint:.8}),'in'],
-           [220, P({hx:-.12,hy:.26, hz:.3,  by:-30,el:65,  hipY:-.03, hipYaw:-.2, chestYaw:-.3, lean:0, headYaw:.1, two:1, spread:.22, glint:1}),'lin'],
-           [380, P({hx:-.14,hy:.4,  hz:.16, by:-40,el:115, hipY:0, hipYaw:-.28, chestYaw:-.45, lean:-.08, headYaw:.15, two:1, spread:.2, glint:.6}),'out'] ],
-    dyn:{hand:[4.0,.5,.8], blade:[3.6,.45,.4], two:[7,1,0]} },
+    keys:[ [70,  P({hx:.06, hy:-.2, hz:.26, by:58, el:-52, hipY:-.14, hipYaw:.3, chestYaw:.5, lean:.25, headYaw:-.15, two:1, spread:.26, glint:.6}),'out'],
+           [150, P({hx:0,   hy:-.02,hz:.37, by:25, el:-8,  hipY:-.1, hipYaw:.05, chestYaw:.1, lean:.18, two:1, spread:.24, glint:.8}),'lin'],
+           [210, P({hx:-.1, hy:.2,  hz:.37, by:-10,el:42,  hipY:-.03,hipYaw:-.2, chestYaw:-.3, lean:.05, headYaw:.1, two:1, spread:.22, glint:1}),'lin'],
+           [360, P({hx:-.08,hy:.36, hz:.25, by:-30,el:100, hipY:0,   hipYaw:-.28,chestYaw:-.45,lean:-.08,headYaw:.15, two:1, spread:.2, glint:.6}),'out'] ],
+    dyn:{hand:[5.0,.55,.8], blade:[4.4,.5,.4], two:[7,1,0]} },
   // 三 — a lunging horizontal cut (yokogiri), right → left, two-handed: torso wound to the right with the blade held out behind the right hip, then a
   // fast forward step while the torso unwinds ~90° and the blade sweeps ~210° around the front, the body leaning well forward (no spin, no deep crouch).
   // Hands stay in front of the chest at belly height, so the off-hand never has to cross the body.
@@ -794,6 +806,27 @@ const COMBO=[
            [640, P({hx:.09, hy:-.06,hz:.26, by:78,  el:-8,hipY:-.10, hipYaw:.32, chestYaw:.46, lean:.36, headYaw:-.2, spread:.34, two:1, glint:.5}),'out'] ],
     dyn:{hand:[4.2,.55,.7], blade:[4.2,.5,.3], body:[3.6,.6,.1], two:[7,1,0]} },
 ];
+// attack2 (K) — 突き, a lunging thrust: sink into a deep crouch pulling the hilt back to the right hip (blade level, pointing at the target), then a fast
+// step forward with the body folding well forward over the front knee while both hands drive the point straight out; hold the extension, recover.
+// Not part of the J combo chain (it sits outside COMBO, so `chain` never leads into it). G stays ~0.4 m from the right shoulder.
+const ATTACK2={ kanji:'突', lunge:10, impactMin:140, chain:99999, end:760, reach:2.2, hit:1,
+  keys:[ [170, P({hx:.03, hy:.1,  hz:.24, by:35, el:30, hipY:-.2,  hipYaw:-.3, chestYaw:-.42, lean:.18, headYaw:.2,  spread:.36, step:.3, two:1, glint:.5}),'out'],
+         [260, P({hx:-.06,hy:-.02,hz:.37, by:0, el:10, hipY:-.3, hipYaw:.16, chestYaw:.28,  lean:.52, headYaw:-.1, spread:.3, step:1, two:1, glint:1}),'in'],
+         [400, P({hx:-.06,hy:-.03,hz:.38, by:0, el:10, hipY:-.3, hipYaw:.18, chestYaw:.3,   lean:.55, headYaw:-.1, spread:.3, step:1, two:1, glint:.6}),'out'] ],
+  dyn:{hand:[4.2,.55,.7], blade:[4.2,.5,.3], body:[3.6,.6,.1], two:[7,1,0]} };
+// finisher (L) — 一閃 Issen, one cut, then stillness. The blade is not drawn from a saya at the hip (the saya is on the back), so the "draw" is the charge:
+// sink into a deep lunge stance with the torso wound right and the blade held out behind the right hip while the stage dims and ink gathers (the long
+// first key), then one very fast step-and-sweep (right → left, ~2 m), then hold — the cut only *lands* when the blade is flicked clean (血振り, `release`):
+// targets the sweep crossed are marked at the cut and fall/burst at the release (`delayed`). The stroke lingers `trailLife` so the single ink line hangs
+// in the air through the stillness. Hit test stops right after the strike (`hitEnd`) so the flick can't cut anything.
+const ISSEN={ kanji:'斬', lunge:12, impactMin:640, chain:99999, end:1800, final:true, delayed:true, charge:true, release:1280, hitEnd:760,
+  trailLife:1500, trailTail:260, reach:2.4, hit:2,
+  keys:[ [520, P({hx:-.17,hy:-.06,hz:.29, by:-78, el:-4, hipY:-.2,  hipYaw:-.4,  chestYaw:-.52, lean:.16, headYaw:.25, spread:.34, step:.4, two:1, glint:.5}),'io'],
+         [575, P({hx:-.02,hy:-.04,hz:.36, by:4,   el:2,  hipY:-.28, hipYaw:-.02, chestYaw:-.02, lean:.4,  headYaw:0,   spread:.34, step:.8, two:1, glint:1}),'lin'],
+         [640, P({hx:.10, hy:-.05,hz:.30, by:70,  el:6,  hipY:-.3,  hipYaw:.32,  chestYaw:.46,  lean:.5,  headYaw:-.2, spread:.36, step:1,  two:1, glint:1}),'out'],
+         [980, P({hx:.10, hy:-.06,hz:.30, by:72,  el:6,  hipY:-.3,  hipYaw:.34,  chestYaw:.48,  lean:.46, headYaw:-.2, spread:.36, step:1,  two:1, glint:.4}),'out'],
+         [1300,P({hx:-.2, hy:-.1, hz:.22, by:-50, el:-45,hipY:-.14, hipYaw:.1,   chestYaw:.16,  lean:.1,  headYaw:-.05,spread:.3,  step:.3, two:0, glint:.6}),'io'] ],
+  dyn:{hand:[5,.55,.7], blade:[5,.5,.3], body:[3.8,.6,.1], two:[7,1,0]} };
 // keys[0] = wind-up, keys[hit] = the strike (default 1; lunge + trail run k0→hit), last key = follow-through (hit test runs k0→last+40)
 const kHit=d=>d.keys[d.hit??1][0], kLast=d=>d.keys[d.keys.length-1][0];
 const KEYS=Object.keys(IDLE);
@@ -815,13 +848,15 @@ function press(){
   if(S.combo<COMBO.length-1 && a.t>=a.def.chain){ startAttack(S.combo+1); return; }
   if(a.t>=a.def.impactMin-80) S.queued=true;
 }
-function startAttack(i){
-  S.combo=i; S.queued=false; S.phase='attack'; S.trailId++; S.attackId++; S.moveTo=null;
+function pressK(){ if(S.phase==='idle') startAttack(COMBO.length,ATTACK2); else if(S.act && S.act.t>=S.act.def.impactMin-80) S.queuedK=true; }   // combo index COMBO.length = "no chain"
+function pressL(){ if(S.phase==='idle') startAttack(COMBO.length,ISSEN); else if(S.act && S.act.t>=S.act.def.impactMin-80) S.queuedL=true; }
+function startAttack(i,def=COMBO[i]){
+  S.combo=i; S.queuedK=false; S.queuedL=false; S.queued=false; S.phase='attack'; S.trailId++; S.attackId++; S.moveTo=null;
   // turn toward the nearest target if it's not too far (soft lock-on)
   let best=null, bd=2.8; for(const t of targets){ if(t.type==='bamboo'&&!t.alive) continue; const d=Math.hypot(t.x-S.pos.x,t.z-S.pos.z); if(d<bd){bd=d;best=t;} }
   if(best){ const want=Math.atan2(best.x-S.pos.x,best.z-S.pos.z); let d=want-facingS.y; d=Math.atan2(Math.sin(d),Math.cos(d)); if(Math.abs(d)<1.6) S.facing=facingS.y+d; }
-  S.act={def:COMBO[i], t:0, from:{...S.target}, maxSp:0, decel:false, impacted:false};
-  setDyn(COMBO[i].dyn);
+  S.act={def, t:0, from:{...S.target}, maxSp:0, decel:false, impacted:false};
+  setDyn(def.dyn);
 }
 function mix(a,b,u){ const o={}; for(const k of KEYS) o[k]=lerp(a[k],b[k],u); return o; }
 function timeline(a){
@@ -867,14 +902,18 @@ function applySkeleton(p,T){
     // pushes back; the swing knee folds after toe-off, and the stance knee flexes ~17° at
     // mid-stance (θ=π) to absorb the landing instead of staying locked straight.
     const th0=ph+phase, s0=Math.sin(th0), sw=(s0>0?.66:.42)*s0*w;
-    const kneeB=(Math.max(0,Math.sin(th0+1.3))*.95+Math.max(0,-Math.cos(th0))*.3)*w+crouch*.9;
+    const stp=p.step||0, cr=s==='R'?crouch*(1-.8*stp):crouch;   // the trailing leg of a lunge doesn't fold with the crouch
+    const kneeB=(Math.max(0,Math.sin(th0+1.3))*.95+Math.max(0,-Math.cos(th0))*.3)*w+cr*.9;
     // Toe-in: the model's bind pose turns the toes out ~25°, which reads as a waddle when running.
     // Most of the inward turn goes on the ankle — twisting the thigh that far also swings the
     // knee-bend plane, so every bent knee flicks the shin outward (a bow-legged gallop). The thigh
     // only gets a slight knee-in twist, and the stance narrows while moving so feet land near the midline.
     const spread=p.spread*(1-.7*w);
-    const th=r['thigh'+s]; th.rotation.set(-sw-crouch*.5, -sign*(.08+.06*w), sign*spread);
-    r['knee'+s].rotation.x=kneeB; r['ankle'+s].rotation.set(-(-sw-crouch*.5)-kneeB, -sign*(.12+.16*w), -sign*spread);
+    // lunge stance (`step`, attack2): the left leg reaches forward with a deeply bent knee, the right leg trails behind (nearly straight, slight bend);
+    // the ankle keeps each foot flat, and the ground snap below drops the hips onto whichever foot is lowest.
+    const thX=-sw-cr*.5+(s==='L'?-stp*.95:stp*.8), kB=kneeB+(s==='L'?stp*1.0:stp*.1);
+    const th=r['thigh'+s]; th.rotation.set(thX, -sign*(.08+.06*w), sign*spread);
+    r['knee'+s].rotation.x=kB; r['ankle'+s].rotation.set(-thX-kB, -sign*(.12+.16*w), -sign*spread);
   }
   const fl=Math.min(Math.abs(dyn.spin.yd)*.00025,.22); r.skirt.scale.set(1+fl+p.spread*.5,1,1+fl);
   r.root.updateMatrixWorld(true);
@@ -1099,9 +1138,20 @@ function updatePieces(T){
 }
 // hit test: distance from the blade line segment (base→tip) to the target's axis
 function segDist2D(ax,az,bx,bz,px,pz){ const dx=bx-ax,dz=bz-az, l=dx*dx+dz*dz||1e-6; const u=clamp(((px-ax)*dx+(pz-az)*dz)/l,0,1); return [Math.hypot(ax+dx*u-px, az+dz*u-pz),u]; }
+// what a landed cut does to a target (immediately, or at the release for a `delayed` finisher)
+function applyHit(t,y,dir,def){
+  const fin=!!def.final;
+  if(t.type==='bamboo') cutBamboo(t,clamp(y,.25,t.h-.3),dir.clone());
+  else { const away=V(t.x-S.pos.x,0,t.z-S.pos.z).normalize();
+    t.tx.yd+=away.z*90*(fin?2.4:1); t.tz.yd+=-away.x*90*(fin?2.4:1); t.hits++;
+    for(let i=0;i<12;i++) spawn(V(t.x,y,t.z),V((rnd()-.5)*3,1+rnd()*2.5,(rnd()-.5)*3),[.62,.58,.5],1.3); }
+  inkBurst(V(t.x,y,t.z),dir,fin?16:10,fin);
+  S.hitstop=Math.max(S.hitstop,fin?120:55); S.shake=Math.max(S.shake,reduceMotion?0:(fin?.30:.09));
+  if(fin) finisherImpact(V(t.x,y,t.z),dir);
+}
 function hitTest(arm){
-  if(!S.act) return; const a=S.act, k0=a.def.keys[0][0], k2=kLast(a.def);
-  if(a.t<k0 || a.t>k2+40) return;
+  if(!S.act) return; const a=S.act, k0=a.def.keys[0][0], kEnd=a.def.hitEnd??kLast(a.def)+40;
+  if(a.t<k0 || a.t>kEnd) return;
   const b=S.wristPrev||arm.base;
   for(const t of targets){
     if(t.lastHit===S.attackId) continue; if(t.type==='bamboo' && !t.alive) continue;
@@ -1110,13 +1160,9 @@ function hitTest(arm){
     if(d<t.r+.06 && u>(a.def.final?.04:.25) && y>.15 && y<t.h){   // the finisher is a wide sweep: it must also cut targets pressed right up against the hands
       t.lastHit=S.attackId;
       const away=V(t.x-S.pos.x,0,t.z-S.pos.z).normalize();
-      const mv=S.edge.clone().setY(0).normalize();
-      if(t.type==='bamboo') cutBamboo(t,clamp(y,.25,t.h-.3),mv.lengthSq()>0?mv:away);
-      else { t.tx.yd+=away.z*90*(a.def.final?2.4:1); t.tz.yd+=-away.x*90*(a.def.final?2.4:1); t.hits++;
-        for(let i=0;i<12;i++) spawn(V(t.x,y,t.z),V((rnd()-.5)*3,1+rnd()*2.5,(rnd()-.5)*3),[.62,.58,.5],1.3); }
-      inkBurst(V(t.x,y,t.z),mv.lengthSq()?mv:away,a.def.final?16:10,a.def.final);
-      S.hitstop=Math.max(S.hitstop,a.def.final?120:55); S.shake=Math.max(S.shake,reduceMotion?0:(a.def.final?.30:.09));
-      if(a.def.final) finisherImpact(V(t.x,y,t.z), mv.lengthSq()?mv:away);
+      const mv=S.edge.clone().setY(0).normalize(), dir=mv.lengthSq()?mv:away;
+      if(a.def.delayed) (a.marked||(a.marked=[])).push({t,y,dir});   // the cut is made, but nothing reacts until the release
+      else applyHit(t,y,dir,a.def);
     }
   }
 }
@@ -1149,7 +1195,7 @@ const CAM={ yaw:new SOD(1.6,1,0,45), pitch:new SOD(1.6,1,0,35.26), zoom:new SOD(
 function rotateCam(d){ CAM.yawT+=d; } function tiltCam(d){ CAM.pitchT=clamp(CAM.pitchT+d,12,82); }
 function updateCamera(T){
   S.punch=(S.punch||0)*Math.exp(-T*5);   // finisher camera punch-in (fraction of zoom), decays in ~0.4 s
-  const yaw=CAM.yaw.update(T,CAM.yawT)*D2R, pitch=CAM.pitch.update(T,CAM.pitchT)*D2R, zoom=CAM.zoom.update(T,CAM.zoomT)*(1-S.punch);
+  const yaw=CAM.yaw.update(T,CAM.yawT)*D2R, pitch=CAM.pitch.update(T,CAM.pitchT)*D2R, zoom=CAM.zoom.update(T,CAM.zoomT)*(1-S.punch-.06*(S.charge||0));
   CAM.focus.lerp(V(S.pos.x,.85,S.pos.z),1-Math.exp(-T*5));
   const off=V(Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch)).multiplyScalar(40);
   camera.position.copy(CAM.focus).add(off);
@@ -1162,7 +1208,7 @@ function updateCamera(T){
 function camBasis(){ const yaw=CAM.yaw.y*D2R; return {fwd:V(-Math.sin(yaw),0,-Math.cos(yaw)), right:V(Math.cos(yaw),0,-Math.sin(yaw))}; }
 
 /* ---------- simulation step ---------- */
-let lastArm=null;
+let lastArm=null, chargeOn=false; const dimEl=document.getElementById('dim');
 function step(T){
   S.clock+=T*1000;
   // ---- movement ----
@@ -1188,7 +1234,9 @@ function step(T){
     if(S.queued && a.t>=a.def.chain && S.combo<COMBO.length-1) startAttack(S.combo+1);
     else if(a.t>=a.def.end){ S.act=null; S.phase='idle'; S.combo=-1; setDyn(null);
       if(Math.abs(dyn.spin.y)>180){ const off=360*Math.round(dyn.spin.y/360); dyn.spin.shift(-off); S.facing+=off*D2R; facingS.shift(off*D2R); }
-      if(S.queued){ S.queued=false; startAttack(0); } }
+      if(S.queuedL){ S.queuedL=false; S.queuedK=false; S.queued=false; startAttack(COMBO.length,ISSEN); }
+      else if(S.queuedK){ S.queuedK=false; S.queued=false; startAttack(COMBO.length,ATTACK2); }
+      else if(S.queued){ S.queued=false; startAttack(0); } }
     S.target = S.act ? timeline(S.act) : mix(IDLE,CARRY,S.walkAmt);
   } else S.target=mix(IDLE,CARRY,S.walkAmt);
   for(const k of KEYS) S.st[k]=dyn[k].update(T,S.target[k]);
@@ -1198,10 +1246,16 @@ function step(T){
   // ---- trail ----
   const tsp=S.prevTip?arm.tip.distanceTo(S.prevTip)/T:0; S.prevTip=arm.tip.clone();
   if(S.act){ const a=S.act, k0=a.def.keys[0][0], k1=kHit(a.def);
-    if(a.t>k0+15 && a.t<k1+(a.def.final?260:170) && tsp>5.5){ let s=strokesList.find(x=>x.id===S.trailId)||newStroke(S.trailId); if(a.def.final) s.life=700; s.samples.push({b:arm.base,t:arm.tip,time:S.clock}); if(s.samples.length>TRAIL_MAX) s.samples.shift(); }
-    if(a.t>k0){ a.maxSp=Math.max(a.maxSp,tsp); if(!a.impacted && ((a.maxSp>8 && tsp<a.maxSp*.45 && a.t>a.def.impactMin) || a.t>a.def.impactMin+220)){ a.impacted=true; showKanji(a.def); if(!S.shake) S.shake=reduceMotion?0:(a.def.final?.14:.05); if(a.def.final && !reduceMotion) S.punch=Math.max(S.punch||0,.05); } }
+    if(a.t>k0+15 && a.t<k1+(a.def.trailTail??(a.def.final?260:170)) && tsp>5.5){ let s=strokesList.find(x=>x.id===S.trailId)||newStroke(S.trailId); const tl=a.def.trailLife??(a.def.final?700:0); if(tl) s.life=tl; s.samples.push({b:arm.base,t:arm.tip,time:S.clock}); if(s.samples.length>TRAIL_MAX) s.samples.shift(); }
+    if(a.t>k0){ a.maxSp=Math.max(a.maxSp,tsp); if(!a.impacted && ((a.maxSp>8 && tsp<a.maxSp*.45 && a.t>a.def.impactMin) || a.t>a.def.impactMin+220)){ a.impacted=true; if(!a.def.delayed){ showKanji(a.def); if(!S.shake) S.shake=reduceMotion?0:(a.def.final?.14:.05); if(a.def.final && !reduceMotion) S.punch=Math.max(S.punch||0,.05); } } }
     hitTest(arm);
+    if(a.def.delayed && !a.released && a.t>=a.def.release){ a.released=true; for(const m of a.marked||[]) applyHit(m.t,m.y,m.dir,a.def); showKanji(a.def); }
+    // charge: grey ink motes rise off the floor ring toward the blade while the stage dims
+    if(a.def.charge && a.t<a.def.keys[0][0] && rnd()<.14){ const r=.6+rnd()*.5, ang=rnd()*6.283, c=S.pos;
+      spawn(V(c.x+Math.cos(ang)*r,.03,c.z+Math.sin(ang)*r),V(-Math.cos(ang)*1.2,2.4+rnd()*1.6,-Math.sin(ang)*1.2),[.21,.2,.19],.7); }
   }
+  { const ch=!!(S.act && S.act.def.charge && S.act.t<kHit(S.act.def)-60); if(ch!==chargeOn){ chargeOn=ch; dimEl.classList.toggle('on',ch); }
+    S.charge=lerp(S.charge||0, ch&&!reduceMotion?1:0, 1-Math.exp(-T*(ch?3:8))); }
   // ---- world ----
   for(const t of targets) if(t.type==='dummy'){ t.pivot.rotation.x=t.tx.update(T,0)*D2R; t.pivot.rotation.z=t.tz.update(T,0)*D2R; }
   updatePieces(T); updateParticles(T);
@@ -1229,7 +1283,9 @@ const ray=new THREE.Raycaster(), ground=new THREE.Plane(V(0,1,0),0);
 window.addEventListener('keydown',e=>{ const k=e.key.toLowerCase(); keys.shift=e.shiftKey;
   if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k)){ keys[k]=true; e.preventDefault(); }
   if(e.repeat) return;
-  if(k==='j'||k===' '||k==='k'){ e.preventDefault(); press(); }
+  if(k==='j'||k===' '){ e.preventDefault(); press(); }
+  else if(k==='k'){ e.preventDefault(); pressK(); }
+  else if(k==='l'){ e.preventDefault(); pressL(); }
   else if(k==='q') rotateCam(-90); else if(k==='e') rotateCam(90);
   else if(k==='r') tiltCam(12); else if(k==='f') tiltCam(-12);
   else if(k==='b') toggle('bBones'); else if(k==='t') toggle('bSlow'); });
@@ -1252,8 +1308,8 @@ const bind=(id,fn)=>document.getElementById(id).addEventListener('click',e=>{ fn
 bind('bRotL',()=>rotateCam(-90)); bind('bRotR',()=>rotateCam(90)); bind('bUp',()=>tiltCam(12)); bind('bDown',()=>tiltCam(-12));
 bind('bBones',()=>toggle('bBones')); bind('bSlow',()=>toggle('bSlow'));
 document.getElementById('bAtk').addEventListener('pointerdown',e=>{ e.preventDefault(); press(); });
-window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,CAM,rotateCam,tiltCam,rig,
-  GRIP_CFG, GRIP_TUNE, IDLE, CARRY, COMBO, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; }};  // edit GRIP_CFG in the console, call regrip(), to tune the grip live
+window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,pressK,pressL,CAM,rotateCam,tiltCam,rig,
+  GRIP_CFG, GRIP_TUNE, IDLE, CARRY, COMBO, ATTACK2, ISSEN, targets, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; }};  // edit GRIP_CFG in the console, call regrip(), to tune the grip live
 loadNinja();
 </script>
 </body>
