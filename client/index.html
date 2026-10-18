@@ -490,6 +490,7 @@ function rootLocal(o){ rig.root.updateMatrixWorld(true); return rig.root.matrixW
 // previous model (docs/BONES.md): Spine02 = lowest spine bone (Mixamo Spine), Spine01 = middle (Spine1), Spine = top (Spine2), neck, head_end.
 const BONE_RENAME={Spine:'Spine02',Spine1:'Spine01',Spine2:'Spine',Neck:'neck',HeadTop_End:'head_end'};
 function canonBone(n){ n=n.replace(/^mixamorig:?/,''); return BONE_RENAME[n]||n; }
+const ARM_REF=.456;
 function loadNinja(){
   new GLTFLoader().load('assets/ninja.glb', gltf=>{
     const model=gltf.scene, bone={}; let skinned=null;
@@ -532,6 +533,10 @@ function loadNinja(){
         // in a T-pose the elbow naturally flexes toward the character's front (+Z)
         bendLocal:V(0,0,1).applyQuaternion(real.bind[`${S0}Arm`].rl.clone().invert()) };
     }
+    // The hand/blade keys were authored for an arm that reaches 0.456 m (shoulder→wrist); this rig's arms reach less, so targets are pulled toward the
+    // shoulder by this factor (otherwise every target is out of reach: locked straight arms, G reach-clamped, the blade pivoting on the hand).
+    real.armK=Math.min(1,(real.arm.R.l1+real.arm.R.l2+real.arm.L.l1+real.arm.L.l2)/2/ARM_REF);
+    real.armKSword=1;   // sword-hand keys keep their authored reach for now (see armK)
     real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)};
     real.fingers=prepFingers(real);
 
@@ -1066,7 +1071,10 @@ function applySkeleton(p,T){
   const shL=real ? real.arm.L.up.getWorldPosition(V()) : chest.localToWorld(V(.2,.1,0));
   // the sword arm swings forward when the opposite (left) leg swings forward — same contralateral timing as the off-hand below, but only
   // a few cm: it carries the blade upright (CARRY), and a big swing both waved the blade around and made the grip re-twist the wrist every step
-  const tgt=chest.localToWorld(V(p.hx,p.hy+Math.sin(t*1.8+.5)*.006,p.hz+Math.sin(ph)*.04*w));
+  const armK=real?real.armK:1, armKs=real?real.armKSword:1;
+  const shMid=chest.worldToLocal(shR.clone().add(shL).multiplyScalar(.5));
+  const toReach=(v,k=armK)=>v.sub(shMid).multiplyScalar(k).add(shMid);   // pose target (chest-local) → this arm's reach, pulled toward the mid-shoulder point (both hands must still reach one hilt)
+  const tgt=chest.localToWorld(toReach(V(p.hx,p.hy+Math.sin(t*1.8+.5)*.006,p.hz+Math.sin(ph)*.04*w),armKs));
   const cq=chest.getWorldQuaternion(new THREE.Quaternion());
   const poleR=V(-1,-.5,-.6).applyQuaternion(cq);
   const by=p.by*D2R, el=p.el*D2R;
@@ -1113,7 +1121,7 @@ function applySkeleton(p,T){
   const run=L?L.b:0, u=(-Math.sin(ph)+1)/2;   // u: 0 = fist back at the hip … 1 = fist forward
   const stand=V(.15,-.16,.22), walkP=V(.20,lerp(-.19,-.12,u),lerp(.05,.24,u)), runP=V(.20,lerp(-.15,.02,u),lerp(-.01,.31,u));
   const freeL=stand.lerp(walkP.lerp(runP,run),w);
-  const hang=chest.localToWorld(freeL);
+  const hang=chest.localToWorld(toReach(freeL));
   const poleFree=V(.55,-.2,-1).lerp(V(.15,-.1,-1),w).normalize().applyQuaternion(cq);
   let eR,wR,eL,wL, sw2=null;
   S.rho=S.rho||{R:0,L:0};
@@ -1165,7 +1173,7 @@ function applySkeleton(p,T){
       const fall2=V(Math.sin(b2)*Math.sin(e2),-Math.cos(e2),Math.cos(b2)*Math.sin(e2)).applyQuaternion(cq);
       const X2=fall2.addScaledVector(dir2,-fall2.dot(dir2)).normalize(), Z2=V().crossVectors(X2,dir2).normalize();
       const qD0=new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X2,dir2,Z2));
-      const G2=chest.localToWorld(V(p.hx2,p.hy2,p.hz2));
+      const G2=chest.localToWorld(toReach(V(p.hx2,p.hy2,p.hz2),armKs));
       S.rho.D=S.rho.D||0;
       const d1=gripPass(gL,aL,shL,G2,qD0,poleD,true,T), roD=rollToward(gL,qD0,dir2,d1.W.clone().sub(d1.E));
       S.rho.D=smoothAngle(S.rho.D, roD===null?S.rho.D:clampRoll(roD,S.rho.D,GRIP_TUNE.bladeRollMax*D2R), T, GRIP_TUNE.tauRoll, GRIP_TUNE.rollRate*D2R);
