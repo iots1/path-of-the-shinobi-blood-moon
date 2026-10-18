@@ -457,6 +457,8 @@ const rig={};
     g.add(inked(new THREE.CylinderGeometry(.0158,.012,.03,M).scale(1,1,.77).translate(cx(1),y1-.005,0),METAL,.004));     // kojiri
     return g;
   };
+  // second katana for the left hand (K, K: dual-wield cut) — shares geometry/materials with the first; hidden until drawn from the back saya
+  rig.katana2=kat.clone(true); rig.katana2.visible=false; scene.add(rig.katana2);
   OL_SCALE=1;
 })();
 
@@ -773,7 +775,8 @@ function rollToward(grip, qB, dir, f){
 // Idle blade direction was by -42/el -48 (hanging along the forearm, 25° apart): the hammer grip then needed a ~90° wrist hinge + ~45° twist ("twisted arm"), and the
 // forearm-twist workaround flipped ~175° when running started (elbow snap). Scanned (by, el, palm angle psi) analytically for the least hinge+twist: by 30 (blade across
 // the body toward the left), el -30, psi 315° → hinge ≈35°, twist ≈22°, so no forearm twist is needed.
-const IDLE={hx:-.3,hy:-.36,hz:.14, by:30, el:-30, hipY:0, hipYaw:0, chestYaw:0, lean:.05, headYaw:0, spin:0, spread:.12, step:0, two:0, eye:0, glint:0};
+const IDLE={hx:-.3,hy:-.36,hz:.14, by:30, el:-30, hipY:0, hipYaw:0, chestYaw:0, lean:.05, headYaw:0, spin:0, spread:.12, step:0, two:0, eye:0, glint:0,
+  dual:0, hx2:.3, hy2:-.36, hz2:.14, by2:-30, el2:-30};   // dual = the left hand holds its OWN sword (hx2…el2: its grip point / blade direction, mirrored from the right's)
 // Running/walking carry (blended in by walkAmt while not attacking): blade upright beside the right hip, tip above the shoulder. The idle blade
 // (low, across the front) sat right where the swinging legs go, so running made the legs pass through it. Verify changes with
 // client/debug/motion_check.js (blade↔leg clearance, wrist/elbow speeds, grip, hits).
@@ -814,11 +817,33 @@ const COMBO=[
 // attack2 (K) — 突き, a lunging thrust: sink into a deep crouch pulling the hilt back to the right hip (blade level, pointing at the target), then a fast
 // step forward with the body folding well forward over the front knee while both hands drive the point straight out; hold the extension, recover.
 // Not part of the J combo chain (it sits outside COMBO, so `chain` never leads into it). G stays ~0.4 m from the right shoulder.
-const ATTACK2={ kanji:'突', lunge:10, impactMin:140, chain:99999, end:760, reach:2.2, hit:1,
+const ATTACK2={ kanji:'突', lunge:10, impactMin:140, chain:99999, chainK:400, end:760, reach:2.2, hit:1,
   keys:[ [170, P({hx:.03, hy:.1,  hz:.24, by:35, el:30, hipY:-.2,  hipYaw:-.3, chestYaw:-.42, lean:.18, headYaw:.2,  spread:.36, step:.3, two:1, glint:.5}),'out'],
          [260, P({hx:-.06,hy:-.02,hz:.37, by:0, el:10, hipY:-.3, hipYaw:.16, chestYaw:.28,  lean:.52, headYaw:-.1, spread:.3, step:1, two:1, glint:1}),'in'],
          [400, P({hx:-.06,hy:-.03,hz:.38, by:0, el:10, hipY:-.3, hipYaw:.18, chestYaw:.3,   lean:.55, headYaw:-.1, spread:.3, step:1, two:1, glint:.6}),'out'] ],
   dyn:{hand:[4.2,.55,.7], blade:[4.2,.5,.3], body:[3.6,.6,.1], two:[7,1,0]} };
+// dual wield (K, K) — 双 sō, a scissor cut with two swords. The second K (during the thrust's hold, or within DUAL_WINDOW after it) makes the LEFT hand reach
+// over to the back-saya hilt and draw the second sword (`draw`: the saya sword is swapped for the one in the hand at that moment — the draw pose below is
+// the hilt's own position, measured from the back sword, so the swap is seamless), wind both blades out wide, then a lunge (same stance/step as the thrust)
+// while both blades sweep inward and cross in front, hold, and the left hand returns to the hilt and slides the sword back into the saya (`sheathe`).
+// `start` = the wind-up key (lunge/trail/hit test begin there; key 0 is only the draw).
+const DUAL_WINDOW=420;
+const DRAW2={ hx2:-.251, hy2:.346, hz2:-.056, by2:106, el2:-51 };   // the left hand on the back-saya hilt (chest-local) — blade lying along the saya
+// The hilt is behind the right shoulder: a straight line from the front (or the hip) to it cuts through the chest, so the left hand travels via WAY2 — raised
+// in front of the face above the shoulder line (out of the torso ellipse, reachable: ~.44 m from the left shoulder) — on the way in (draw and sheathe);
+// after sheathing the hand leaves up-left in front of the shoulder (last key) and drops to the hang beside the hip, never across the chest.
+const WAY2={ hx2:-.04, hy2:.46, hz2:.2, by2:106, el2:-51 };
+const DUAL={ kanji:'双', lunge:9, impactMin:440, chain:99999, end:1070, reach:2.2, hit:4, start:3, draw:210, sheathe:800,
+  keys:[ [110, P({...WAY2, dual:1, hx:-.22,hy:-.1,hz:.2, by:-50, el:10, hipY:-.12, hipYaw:-.2, chestYaw:-.3, lean:.1, headYaw:.15, spread:.3, step:.3, glint:.4}),'out'],
+         [210, P({...DRAW2, dual:1, hx:-.22,hy:-.1,hz:.2, by:-50, el:10, hipY:-.12, hipYaw:-.2, chestYaw:-.3, lean:.1, headYaw:.15, spread:.3, step:.3, glint:.4}),'out'],
+         [270, P({dual:1, hx2:.04,hy2:.48,hz2:.2, by2:85, el2:30, hx:-.23,hy:-.06,hz:.17, by:-68, el:8, hipY:-.16, hipYaw:-.1, chestYaw:-.15, lean:.15, headYaw:.1, spread:.33, step:.32, glint:.5}),'out'],   // the drawn sword rises over the shoulder line before swinging out (a straight path cuts across the chest)
+         [340, P({dual:1, hx:-.24,hy:-.02,hz:.14, by:-85, el:6, hx2:.24,hy2:-.02,hz2:.14, by2:85, el2:6, hipY:-.2, hipYaw:0, chestYaw:0, lean:.2, spread:.36, step:.35, glint:.6}),'out'],
+         [440, P({dual:1, hx:-.1,hy:0,hz:.36, by:20, el:2, hx2:.1,hy2:.08,hz2:.36, by2:-20, el2:2, hipY:-.3, hipYaw:.05, chestYaw:.08, lean:.5, headYaw:-.05, spread:.3, step:1, glint:1}),'in'],
+         [570, P({dual:1, hx:-.1,hy:0,hz:.34, by:35, el:0, hx2:.1,hy2:.08,hz2:.34, by2:-35, el2:0, hipY:-.3, hipYaw:.05, chestYaw:.08, lean:.5, headYaw:-.05, spread:.3, step:1, glint:.5}),'out'],
+         [670, P({...WAY2, dual:1, hx:-.2,hy:-.08,hz:.22, by:10, el:25, hipY:-.2, hipYaw:-.02, chestYaw:-.04, lean:.3, spread:.26, step:.6, glint:.3}),'io'],
+         [770, P({...DRAW2, dual:1, hx:-.26,hy:-.22,hz:.12, by:-15, el:55, hipY:-.1, hipYaw:-.1, chestYaw:-.15, lean:.15, spread:.2, step:.2, glint:0}),'io'],
+         [870, P({hx2:.17,hy2:.34,hz2:.26, by2:60, el2:-20, dual:1, hx:-.26,hy:-.22,hz:.12, by:-15, el:55, hipY:-.05, hipYaw:-.05, chestYaw:-.08, lean:.1, spread:.18, step:.1, glint:0}),'io'] ],
+  dyn:{hand:[4.4,.55,.7], blade:[4.4,.5,.3], body:[3.6,.6,.1], two:[7,1,0]} };
 // finisher (L) — 一閃 Issen, one cut, then stillness. The blade is not drawn from a saya at the hip (the saya is on the back), so the "draw" is the charge:
 // sink into a deep lunge stance with the torso wound right and the blade held out behind the right hip while the stage dims and ink gathers (the long
 // first key), then one very fast step-and-sweep (right → left, ~2 m), then hold — the cut only *lands* when the blade is flicked clean (血振り, `release`):
@@ -833,10 +858,10 @@ const ISSEN={ kanji:'斬', lunge:12, impactMin:640, chain:99999, end:1800, final
          [1300,P({hx:-.2, hy:-.1, hz:.22, by:-50, el:-45,hipY:-.14, hipYaw:.1,   chestYaw:.16,  lean:.1,  headYaw:-.05,spread:.3,  step:.3, two:0, glint:.6}),'io'] ],
   dyn:{hand:[5,.55,.7], blade:[5,.5,.3], body:[3.8,.6,.1], two:[7,1,0]} };
 // keys[0] = wind-up, keys[hit] = the strike (default 1; lunge + trail run k0→hit), last key = follow-through (hit test runs k0→last+40)
-const kHit=d=>d.keys[d.hit??1][0], kLast=d=>d.keys[d.keys.length-1][0];
+const kHit=d=>d.keys[d.hit??1][0], kLast=d=>d.keys[d.keys.length-1][0], kStart=d=>d.keys[d.start??0][0];   // kStart = the wind-up (lunge/trail/hit test begin)
 const KEYS=Object.keys(IDLE);
 const EASE={ out:t=>1-Math.pow(1-t,3), in:t=>t*t, lin:t=>t, snap:t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2, io:smoother };
-const GROUP=k=>(k==='hx'||k==='hy'||k==='hz')?'hand':(k==='by'||k==='el')?'blade':k==='spin'?'spin':(k==='eye'||k==='glint')?'fx':k==='two'?'two':'body';
+const GROUP=k0=>{ const k=k0.replace(/2$/,''); return (k==='hx'||k==='hy'||k==='hz')?'hand':(k==='by'||k==='el')?'blade':k==='spin'?'spin':(k==='eye'||k==='glint')?'fx':(k==='two'||k==='dual')?'two':'body'; };
 const DYN={hand:[2.4,.7,.5], blade:[2.0,.6,.2], spin:[2,.7,0], fx:[4,1,0], two:[3,.8,0], body:[2.3,.6,.15]};
 const dyn={}; for(const k of KEYS) dyn[k]=new SOD(...DYN[GROUP(k)],IDLE[k]);
 function setDyn(o){ for(const k of KEYS){ const g=GROUP(k); dyn[k].set(...((o&&o[g])||DYN[g])); } }
@@ -853,14 +878,24 @@ function press(){
   if(S.combo<COMBO.length-1 && a.t>=a.def.chain){ startAttack(S.combo+1); return; }
   if(a.t>=a.def.impactMin-80) S.queued=true;
 }
-function pressK(){ if(S.phase==='idle') startAttack(COMBO.length,ATTACK2); else if(S.act && S.act.t>=S.act.def.impactMin-80) S.queuedK=true; }   // combo index COMBO.length = "no chain"
+// K: thrust; a second K in or right after the thrust = dual-wield cut (draws the back sword into the left hand). combo index COMBO.length = "no chain"
+function pressK(){
+  const a=S.act, la=S.lastAct;
+  if(S.phase==='idle') startAttack(COMBO.length, la && la.def===ATTACK2 && S.clock-la.at<DUAL_WINDOW ? DUAL : ATTACK2);
+  else if(a){ if(a.def===ATTACK2 && a.t>=a.def.chainK) startAttack(COMBO.length,DUAL);
+    else if(a.def===ATTACK2) S.queuedK='dual';                      // started when the thrust reaches chainK
+    else if(a.t>=a.def.impactMin-80) S.queuedK=true; } }
 function pressL(){ if(S.phase==='idle') startAttack(COMBO.length,ISSEN); else if(S.act && S.act.t>=S.act.def.impactMin-80) S.queuedL=true; }
 /* ---------- blink (Space): short-range shunshin warp ---------- */
 // The ninja vanishes in a puff of ink, reappears BLINK.dist m ahead (the direction held, else where it faces) and lands in a low forward slide-stance.
 // Passes over ponds / dummies, but lands only on free ground (so a wall or the island's edge shortens it). Cancels an attack's recovery.
 const BLINK={ dist:4, hide:110, land:200, cd:450 };
 const BLINK_LAND=P({hx:-.26,hy:-.2,hz:.2, by:-20, el:25, hipY:-.2, lean:.42, spread:.32, step:.65, headYaw:0});
-function setNinjaVisible(v){ rig.root.visible=v; rig.katana.visible=v; for(const e of rig.eyes) e.visible=v; for(const b of (rig.real&&rig.real.backSwords)||[]) b.g.visible=v; }
+// S.sword2: the second sword is in the left hand (drawn from the back saya) — the sheathed back sword (backSwords[0], the full one) is hidden meanwhile
+function setNinjaVisible(v){ rig.root.visible=v; rig.katana.visible=v; rig.katana2.visible=v&&S.sword2; for(const e of rig.eyes) e.visible=v;
+  ((rig.real&&rig.real.backSwords)||[]).forEach((b,i)=>{ b.g.visible=v&&!(i===0&&S.sword2); }); }
+function setSword2(on){ if(on===S.sword2||!rig.real) return; S.sword2=on; setNinjaVisible(rig.root.visible);
+  if(!reduceMotion) for(let i=0;i<10;i++) spawn(rig.katana2.position.clone().add(V((rnd()-.5)*.3,(rnd()-.5)*.3,(rnd()-.5)*.3)),V((rnd()-.5)*2,.5+rnd()*1.5,(rnd()-.5)*2),[.55,.53,.5],.35); }
 function standOk(x,z){ const pad=.3; if(!(walkable(x,z)&&walkable(x+pad,z)&&walkable(x-pad,z)&&walkable(x,z+pad)&&walkable(x,z-pad))) return false;
   for(const c of colliders) if(Math.hypot(x-c.x,z-c.z)<c.r+.28) return false; return true; }
 function inkPuff(at){
@@ -1013,7 +1048,7 @@ function applySkeleton(p,T){
   const freeL=stand.lerp(walkP.lerp(runP,run),w);
   const hang=chest.localToWorld(freeL);
   const poleFree=V(.3,-.25,-1).lerp(V(.15,-.1,-1),w).normalize().applyQuaternion(cq);
-  let eR,wR,eL,wL;
+  let eR,wR,eL,wL, sw2=null;
   S.rho=S.rho||{R:0,L:0};
   if(real){
     const gR=real.grip.R, gL=real.grip.L, qB0=r.katana.quaternion.clone();
@@ -1053,12 +1088,38 @@ function applySkeleton(p,T){
     const tL=hang.lerp(q2.wRaw, S.twoEff);
     // while reaching for / holding the hilt, aim the hang IK's pole at last frame's elbow so the two elbows being blended can't sit on opposite sides
     const aL=real.arm.L, poleH=poleFree.clone().lerp(q2.E.clone().sub(shL).normalize(),S.twoEff);   // preferred elbow side: free-arm pole → the grip solve's elbow
+    // Dual wield (`dual`, K K): the left hand holds its OWN sword — blade pose hx2/hy2/hz2 + by2/el2 (the left mirror of the right's), solved like the right
+    // arm (one-handed grip, reach clamp, blade roll for a neutral wrist) and blended in over ~150 ms like `two` (which the dual keys keep at 0).
+    const dT=p.dual>.5?1:0; S.dualEff=(S.dualEff??dT)+(dT-(S.dualEff??dT))*(1-Math.exp(-T/.05));
+    let dq=null, qD=null; const dE=S.dualEff;
+    if(dE>.002){
+      const b2=p.by2*D2R, e2=p.el2*D2R, poleD=V(.5,.6,.6).applyQuaternion(cq);   // elbow up and forward: reaching across to the saya hilt behind the right shoulder with the elbow down/back puts the arm through the chest
+      const dir2=V(Math.sin(b2)*Math.cos(e2),Math.sin(e2),Math.cos(b2)*Math.cos(e2)).applyQuaternion(cq).normalize();
+      const fall2=V(Math.sin(b2)*Math.sin(e2),-Math.cos(e2),Math.cos(b2)*Math.sin(e2)).applyQuaternion(cq);
+      const X2=fall2.addScaledVector(dir2,-fall2.dot(dir2)).normalize(), Z2=V().crossVectors(X2,dir2).normalize();
+      const qD0=new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X2,dir2,Z2));
+      const G2=chest.localToWorld(V(p.hx2,p.hy2,p.hz2));
+      S.rho.D=S.rho.D||0;
+      const d1=gripPass(gL,aL,shL,G2,qD0,poleD,true,T), roD=rollToward(gL,qD0,dir2,d1.W.clone().sub(d1.E));
+      S.rho.D=smoothAngle(S.rho.D, roD===null?S.rho.D:clampRoll(roD,S.rho.D,GRIP_TUNE.bladeRollMax*D2R), T, GRIP_TUNE.tauRoll);
+      qD=new THREE.Quaternion().setFromAxisAngle(dir2,S.rho.D).multiply(qD0);
+      dq=gripPass(gL,aL,shL,G2,qD,poleD,true,T);
+      tL.lerp(dq.wRaw,dE); poleH.lerp(poleD.clone().normalize(),dE);   // the FIXED dual pole, not dq.E: that one follows last frame's elbow, so a bad branch kept itself alive (elbow stuck inside the chest)
+    }
     // one IK for the blended wrist target, elbow found on its circle (lerping the hang elbow and the grip elbow cut through the chest mid-grab)
     const ik=solveIK(shL,tL,poleH,aL.l1,aL.l2), prefL=ik.E.clone().sub(shL).normalize();
     // continuity (hold) only while it is on the hilt: with a free arm the pole IS the answer, and a sticky elbow kept whichever side it last
     // happened to be on — results depended on what the arm had done before (a flared elbow survived a whole idle second).
-    eL=swivel(shL,ik,aL,T,Ek=>Math.acos(clamp(Ek.clone().sub(shL).normalize().dot(prefL),-1,1))*57.2958*.4,GRIP_TUNE.swivelHold*S.twoEff); wL=ik.W; aL.eRel=eL.clone().sub(shL);
-    aimArm(real.arm.L,shL,eL,wL); aimHand(real.arm.L,qBL,S.twoEff,gL,T);
+    eL=swivel(shL,ik,aL,T,Ek=>Math.acos(clamp(Ek.clone().sub(shL).normalize().dot(prefL),-1,1))*57.2958*.4,GRIP_TUNE.swivelHold*Math.max(S.twoEff,dE)); wL=ik.W; aL.eRel=eL.clone().sub(shL);
+    aimArm(real.arm.L,shL,eL,wL); // hand orientation: from LAST frame's toward the target (the right-hilt grip qBL, then the own-sword grip qD past dE .5) in small steps — a slerp(qBL,qD,dE) flips
+    // its path when the two are ~180° apart (36,000°/s one-step wrist spikes, depending on history); the lag shrinks to ~10 ms once the hand is fully dual
+    let qHand=qBL;
+    if(dq){ S.qHandL=(S.qHandL||qBL.clone()).slerp(dE>.5?qD:qBL, 1-Math.exp(-T/lerp(.045,.01,smooth(clamp((dE-.7)/.3,0,1))))); qHand=S.qHandL; } else S.qHandL=null;
+    aimHand(real.arm.L,qHand,Math.min(1,S.twoEff+dE),gL,T);   // sum, not max: while the grip hands over (twoEff↓, dE↑) max() dipped under .5 and the fist spun toward the bind pose (10,000°/s one-step spike)
+    // the second sword is glued to the left fist the same way (blade = hand * K⁻¹)
+    if(S.sword2){ const qH=aL.ha.getWorldQuaternion(new THREE.Quaternion()), qB2=qH.clone().multiply(_q.copy(gL.K).invert());
+      r.katana2.quaternion.copy(qB2); r.katana2.position.copy(aL.ha.getWorldPosition(V())).add(gL.pt.clone().applyQuaternion(qH));
+      const d2=V(0,1,0).applyQuaternion(qB2); sw2={G:r.katana2.position.clone(),dir:d2}; }
   } else {
     r.katana.position.copy(G);
     ({E:eR,W:wR}=solveIK(shR,tgt,poleR)); placeLimb(r.upperR,shR,eR); placeLimb(r.foreR,eR,wR); r.handR.position.copy(wR);
@@ -1080,7 +1141,8 @@ function applySkeleton(p,T){
   }
   r.eyeMat.opacity=clamp(p.eye,0,1); r.glint.opacity=clamp(p.glint,0,1)*.7;
   // wR = the sword grip point G (hit test / trail / debug use it as the blade root); wristR = the real IK wrist
-  return {shR,eR,wR:G,wristR:wR,shL,eL,wL,dir, base:G.clone().addScaledVector(dir,.3), tip:G.clone().addScaledVector(dir,.82)};
+  return {shR,eR,wR:G,wristR:wR,shL,eL,wL,dir, base:G.clone().addScaledVector(dir,.3), tip:G.clone().addScaledVector(dir,.82),
+    wR2:sw2&&sw2.G, base2:sw2&&sw2.G.clone().addScaledVector(sw2.dir,.3), tip2:sw2&&sw2.G.clone().addScaledVector(sw2.dir,.82)};   // *2 = the left hand's sword (dual wield), else null
 }
 
 /* ---------- 5) COMBAT FX ---------- */
@@ -1208,14 +1270,15 @@ function applyHit(t,y,dir,def){
   if(fin) finisherImpact(V(t.x,y,t.z),dir);
 }
 function hitTest(arm){
-  if(!S.act) return; const a=S.act, k0=a.def.keys[0][0], kEnd=a.def.hitEnd??kLast(a.def)+40;
+  if(!S.act) return; const a=S.act, k0=kStart(a.def), kEnd=a.def.hitEnd??kLast(a.def)+40;
   if(a.t<k0 || a.t>kEnd) return;
-  const b=S.wristPrev||arm.base;
+  const blades=[[arm.wR,arm.tip]]; if(arm.wR2) blades.push([arm.wR2,arm.tip2]);   // dual wield: both swords cut
   for(const t of targets){
     if(t.lastHit===S.attackId) continue; if(t.type==='bamboo' && !t.alive) continue;
-    const [d,u]=segDist2D(arm.wR.x,arm.wR.z,arm.tip.x,arm.tip.z,t.x,t.z);
-    const y=lerp(arm.wR.y,arm.tip.y,u);
-    if(d<t.r+.06 && u>(a.def.final?.04:.25) && y>.15 && y<t.h){   // the finisher is a wide sweep: it must also cut targets pressed right up against the hands
+    let hy=null;
+    for(const [w0,w1] of blades){ const [d,u]=segDist2D(w0.x,w0.z,w1.x,w1.z,t.x,t.z), y=lerp(w0.y,w1.y,u);
+      if(d<t.r+.06 && u>(a.def.final?.04:.25) && y>.15 && y<t.h){ hy=y; break; } }   // the finisher is a wide sweep: it must also cut targets pressed right up against the hands
+    if(hy!==null){ const y=hy;
       t.lastHit=S.attackId;
       const away=V(t.x-S.pos.x,0,t.z-S.pos.z).normalize();
       const mv=S.edge.clone().setY(0).normalize(), dir=mv.lengthSq()?mv:away;
@@ -1266,7 +1329,7 @@ function updateCamera(T){
 function camBasis(){ const yaw=CAM.yaw.y*D2R; return {fwd:V(-Math.sin(yaw),0,-Math.cos(yaw)), right:V(Math.cos(yaw),0,-Math.sin(yaw))}; }
 
 /* ---------- simulation step ---------- */
-S.blinkCd=0; S.blink=null;
+S.blinkCd=0; S.blink=null; S.sword2=false; S.lastAct=null;
 let lastArm=null, chargeOn=false; const dimEl=document.getElementById('dim');
 function step(T){
   S.clock+=T*1000;
@@ -1277,7 +1340,7 @@ function step(T){
   else if(S.moveTo){ const d=V(S.moveTo.x-S.pos.x,0,S.moveTo.z-S.pos.z); if(d.length()<.12) S.moveTo=null; else want.copy(d.normalize()); }
   const canMove=S.phase==='idle';
   const tv=want.multiplyScalar(canMove?(keys.shift?WALK_SPEED:RUN_SPEED):0);
-  if(S.act && S.act.def.lunge){ const a=S.act, k0=a.def.keys[0][0], k1=kHit(a.def); if(a.t>k0-40 && a.t<k1) tv.add(V(Math.sin(S.facing),0,Math.cos(S.facing)).multiplyScalar(a.def.lunge)); }
+  if(S.act && S.act.def.lunge){ const a=S.act, k0=kStart(a.def), k1=kHit(a.def); if(a.t>k0-40 && a.t<k1) tv.add(V(Math.sin(S.facing),0,Math.cos(S.facing)).multiplyScalar(a.def.lunge)); }
   S.vel.lerp(tv,1-Math.exp(-T*(tv.lengthSq()?12:9)));
   const np=S.pos.clone().addScaledVector(S.vel,T);
   for(const c of colliders){ const dx=np.x-c.x, dz=np.z-c.z, d=Math.hypot(dx,dz), m=c.r+.28; if(d<m&&d>1e-4){ np.x=c.x+dx/d*m; np.z=c.z+dz/d*m; } }
@@ -1291,11 +1354,13 @@ function step(T){
   // ---- attack timeline ----
   if(S.act){ const a=S.act; a.t+=T*1000;
     if(S.queued && a.t>=a.def.chain && S.combo<COMBO.length-1) startAttack(S.combo+1);
-    else if(a.t>=a.def.end){ S.act=null; S.phase='idle'; S.combo=-1; setDyn(null);
+    else if(S.queuedK==='dual' && a.def.chainK && a.t>=a.def.chainK) startAttack(COMBO.length,DUAL);
+    else if(a.t>=a.def.end){ S.lastAct={def:a.def,at:S.clock}; S.act=null; S.phase='idle'; S.combo=-1; setDyn(null);
       if(Math.abs(dyn.spin.y)>180){ const off=360*Math.round(dyn.spin.y/360); dyn.spin.shift(-off); S.facing+=off*D2R; facingS.shift(off*D2R); }
       if(S.queuedL){ S.queuedL=false; S.queuedK=false; S.queued=false; startAttack(COMBO.length,ISSEN); }
-      else if(S.queuedK){ S.queuedK=false; S.queued=false; startAttack(COMBO.length,ATTACK2); }
+      else if(S.queuedK){ S.queuedK=false; S.queued=false; startAttack(COMBO.length,ATTACK2); }   // ('dual' is always started at chainK, before the end)
       else if(S.queued){ S.queued=false; startAttack(0); } }
+    if(S.act && S.act.def.draw!=null){ const a=S.act; if(a.t>=a.def.draw && a.t<a.def.sheathe) setSword2(true); else if(a.t>=a.def.sheathe) setSword2(false); }
     S.target = S.act ? timeline(S.act) : mix(IDLE,CARRY,S.walkAmt);
   } else if(S.phase==='blink'){ const b=S.blink; b.t+=T*1000;
     if(!b.shown && b.t>=BLINK.hide){ b.shown=true; setNinjaVisible(true); inkPuff(S.pos); if(!reduceMotion) S.shake=Math.max(S.shake,.05); }
@@ -1304,15 +1369,19 @@ function step(T){
     if(b.t>=BLINK.hide+BLINK.land){ S.phase='idle'; S.blink=null; S.blinkCd=BLINK.cd; setDyn(null); }
   } else S.target=mix(IDLE,CARRY,S.walkAmt);
   if(S.blinkCd>0) S.blinkCd-=T*1000;
+  if(S.sword2 && !(S.act && S.act.def.draw!=null)) setSword2(false);
   for(const k of KEYS) S.st[k]=dyn[k].update(T,S.target[k]);
   const saveF=S.facing; S.facing=facingS.y;
   const arm=applySkeleton(S.st,T); lastArm=arm;
   S.facing=saveF;
   // ---- trail ----
   const tsp=S.prevTip?arm.tip.distanceTo(S.prevTip)/T:0; S.prevTip=arm.tip.clone();
-  if(S.act){ const a=S.act, k0=a.def.keys[0][0], k1=kHit(a.def);
+  const prev2=S.prevTip2; S.prevTip2=arm.tip2?arm.tip2.clone():null;
+  if(S.act){ const a=S.act, k0=kStart(a.def), k1=kHit(a.def);
     if(a.t>k0+15 && a.t<k1+(a.def.trailTail??(a.def.final?260:170)) && tsp>5.5){ let s=strokesList.find(x=>x.id===S.trailId)||newStroke(S.trailId); const tl=a.def.trailLife??(a.def.final?700:0); if(tl) s.life=tl; s.samples.push({b:arm.base,t:arm.tip,time:S.clock}); if(s.samples.length>TRAIL_MAX) s.samples.shift(); }
     if(a.t>k0){ a.maxSp=Math.max(a.maxSp,tsp); if(!a.impacted && ((a.maxSp>8 && tsp<a.maxSp*.45 && a.t>a.def.impactMin) || a.t>a.def.impactMin+220)){ a.impacted=true; if(!a.def.delayed){ showKanji(a.def); if(!S.shake) S.shake=reduceMotion?0:(a.def.final?.14:.05); if(a.def.final && !reduceMotion) S.punch=Math.max(S.punch||0,.05); } } }
+    if(arm.tip2){ const tsp2=prev2?arm.tip2.distanceTo(prev2)/T:0, id2=S.trailId+.5;   // the left sword's own ink stroke
+      if(a.t>k0+15 && a.t<k1+170 && tsp2>5.5){ const s=strokesList.find(x=>x.id===id2)||newStroke(id2); s.samples.push({b:arm.base2,t:arm.tip2,time:S.clock}); if(s.samples.length>TRAIL_MAX) s.samples.shift(); } }
     hitTest(arm);
     if(a.def.delayed && !a.released && a.t>=a.def.release){ a.released=true; for(const m of a.marked||[]){ applyHit(m.t,m.y,m.dir,a.def);
         for(let i=0;i<3;i++){ const top=V(m.t.x+(rnd()-.5)*.9,4.2+rnd()*.8,m.t.z+(rnd()-.5)*.9); bolt(top,V(m.t.x+(rnd()-.5)*.25,m.y,m.t.z+(rnd()-.5)*.25),.05,.3,420); } }
@@ -1386,7 +1455,7 @@ bind('bRotL',()=>rotateCam(-90)); bind('bRotR',()=>rotateCam(90)); bind('bUp',()
 bind('bBones',()=>toggle('bBones')); bind('bSlow',()=>toggle('bSlow'));
 document.getElementById('bAtk').addEventListener('pointerdown',e=>{ e.preventDefault(); press(); });
 window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
-  GRIP_CFG, GRIP_TUNE, IDLE, CARRY, COMBO, ATTACK2, ISSEN, targets, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; }};  // edit GRIP_CFG in the console, call regrip(), to tune the grip live
+  GRIP_CFG, GRIP_TUNE, IDLE, CARRY, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; }};  // edit GRIP_CFG in the console, call regrip(), to tune the grip live
 loadNinja();
 </script>
 </body>
