@@ -2,8 +2,8 @@
 
 Every model Meshy produced for this project, kept so nothing has to be regenerated (or paid for) again.
 Meshy API task links expire after a few days, and tasks made through the API/MCP never show up in the
-Meshy web app — this folder is the only lasting copy. The live in-game files are `assets/ninja.glb`
-and `assets/anim/*.glb`.
+Meshy web app — this folder is the only lasting copy. The live in-game file is `assets/ninja.glb` (the 2026-10-18 "new ninja"; it carries its own Walking/Running clips).
+The previous hooded model (+ its `anim/` clips, the client code and the uncommitted diff of that day) is in `backup-hood-v2-2026-10-18/`.
 
 | File | What it is | Meshy task | Credits |
 |---|---|---|---|
@@ -15,3 +15,11 @@ and `assets/anim/*.glb`.
 
 Not kept: a `retexture` attempt (task `01a14b15-556d-741b-84ae-77088912492b`, 10 credits) that tried to add
 eyes through a text prompt — it changed unrelated parts of the outfit and still had no eyes.
+
+## 2026-10-18 swap to the new ninja
+| File | What it is |
+|---|---|
+| `../ninja.glb` | `Meshy_AI_Ninja_Remeshed_for_Ri_All_Animations.glb` from `blender-ninja/new_ninja_original/`: cloaked, hooded, face-masked ninja, remeshed (10,260 tris), Mixamo rig (66 bones with fingers), 1.75 m, metres, 2 animation clips `Running` 0.67 s + `Walking` 1.04 s. **In use.** |
+| `backup-hood-v2-2026-10-18/` | The previous `ninja.glb`, `anim/walk.glb` + `run.glb`, the `client/index.html` and `client/debug/motion_check.js` of that day, plus `uncommitted-changes.patch` (working-tree diff vs HEAD). Everything needed to go back. |
+
+Still only in `blender-ninja/new_ninja_original/` (outside the repo): the unrigged sources of the new ninja — `…_1018162359_texture.glb` (remeshed + textured, what got rigged), `…_1018162236_image-to-3d-texture.glb` (756k-tri textured original) and `…_1018162326_generate.glb` (untextured companion). Meshy task IDs/credits for them are not recorded here.

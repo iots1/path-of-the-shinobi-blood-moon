@@ -1,3 +1,7 @@
+> **Outdated since 2026-10-18.** This file documents the PREVIOUS model (24 bones, no prefix, 0.01 Armature scale). The live `assets/ninja.glb` is now a Mixamo-rigged model
+> (66 bones: `mixamorig:Hips`, `Spine`/`Spine1`/`Spine2`, `Neck`, `Head`, `HeadTop_End`, `headfront`, shoulders/arms/hands + 5 fingers × 4 joints per hand, legs with
+> `ToeBase`/`Toe_End`; metres, no scale). The code maps them onto the names below with `canonBone()` — see "Current model" in `CLAUDE.md`. The table below stays valid as the *code-side* names.
+
 # Bones — `assets/ninja.glb`
 
 Generated from `python3 tools/inspect_glb.py assets/ninja.glb` on 2026-10-18.
