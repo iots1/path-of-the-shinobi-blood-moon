@@ -1,0 +1,291 @@
+diff --git a/client/debug/motion_check.js b/client/debug/motion_check.js
+index 532f28b..b778cbc 100644
+--- a/client/debug/motion_check.js
++++ b/client/debug/motion_check.js
+@@ -8,7 +8,7 @@
+ 
+ const D = 180 / Math.PI;
+ const LIMITS = {
+-  locoWristMax: 2000,   // °/s hand-vs-forearm while running / walking / stopping (the old stop flick was ~29,000)
++  locoWristMax: 2800,   // °/s hand-vs-forearm while running / walking / stopping (the old stop flick was ~29,000). Was 2000: since the ready stance holds the blade as a diagonal guard (by 35 / el -45) the blade swings ~150° up to the carry within ~150 ms of a run start → steady peaks of 1,800–2,500 there (a real fast motion, no flip); the roll rate is capped (GRIP_TUNE.rollRate)
+   locoElbowMax: 6,      // m/s
+   comboElbowMax: 25,    // m/s — anything above means the elbow teleported (old left-elbow pop: 66+)
+   comboWristMax: 12000, // °/s single-step peak (fast cuts reach ~8,000; flips were 25,000–44,000)
+@@ -84,10 +84,12 @@ function hits() { // dummy at about 0.8 m — every beat should land
+   return [...new Set(out)];
+ }
+ 
+-function dualHits() { // K then K: the thrust and the dual cut must each land on a dummy ~0.8 m ahead; the 2nd sword must be in the hand during the cut
+-  reset(1.2, 1.6, Math.PI * .25);
++function dualHits() { // K then K: the thrust and the dual cut must each land on a dummy; the 2nd sword must be in the hand during the cut
++  // Start 1.4 m from the dummy at (1.2, 2.8), facing it: the thrust then really connects at ~270 ms. (The old start, 1.2 m at 45°, only 'hit' by grazing the dummy
++  // with the raised blade at ~172 ms — right after the hit test opens — so the result flipped with any change of the ready stance.) Hits before 200 ms don't count.
++  reset(1.2, 1.4, 0);
+   let t = 0, prevH = 0, shown = false; const out = [];
+-  while (t < 2000) { if (t === 0 || t === 340) I.pressK(); I.frame(0, 4, true); t += 4; if (S.sword2) shown = true; if (S.hitstop > 0 && prevH <= 0 && S.act) out.push(S.act.def.kanji); prevH = S.hitstop; }
++  while (t < 2000) { if (t === 0 || t === 340) I.pressK(); I.frame(0, 4, true); t += 4; if (S.sword2) shown = true; if (S.hitstop > 0 && prevH <= 0 && S.act && S.act.t >= 200) out.push(S.act.def.kanji); prevH = S.hitstop; }
+   return { thrust: out.includes('突'), dual: out.includes('双'), shown };
+ }
+ 
+diff --git a/client/index.html b/client/index.html
+index 6b3336d..ea2c8a4 100644
+--- a/client/index.html
++++ b/client/index.html
+@@ -88,6 +88,7 @@
+       <span><kbd>Space</kbd> dash (short warp)</span>
+       <span><kbd>K</kbd> lunging thrust (attack 2)</span>
+       <span><kbd>L</kbd> finisher: 一閃 single cut (the target falls after the blade stills)</span>
++      <span><kbd>C</kbd> arm "Capture 8": the next attack is saved as an 8-frame sheet + skeleton JSON</span>
+       <span><kbd>Q</kbd><kbd>E</kbd> rotate camera</span>
+       <span><kbd>R</kbd><kbd>F</kbd> high/low angle</span>
+       <span>Scroll wheel to zoom, click-drag (or right-click drag) to free rotate</span>
+@@ -100,6 +101,7 @@
+       <span class="sep"></span>
+       <button id="bBones" aria-pressed="false" title="Show skeleton (B)">Skeleton</button>
+       <button id="bSlow" aria-pressed="false" title="Slow-mo (T)">Slow-mo</button>
++      <button id="bCap" title="Capture the next attack as 8 frames + skeleton JSON (C)">Capture 8</button>
+       <button id="bAtk" class="primary" title="Slash (J)">Slash</button>
+     </div>
+   </div>
+@@ -692,10 +694,12 @@ function makeGrip(c){
+   const eY=eY0.clone().multiplyScalar(Math.cos(f)).addScaledVector(eZ0,Math.sin(f)), eZ=eZ0.clone().multiplyScalar(Math.cos(f)).addScaledVector(eY0,-Math.sin(f));
+   return { K:new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(eX,eY,eZ)), pt:new THREE.Vector3(...c.pt).multiplyScalar(.01) };
+ }
+-const _gq=new THREE.Quaternion(), _gv=new THREE.Vector3(), GRIP_TUNE={share:1, rollMax:80, bladeRollMax:90, handRollMax:90, tauRoll:.07, swivelBias:.15, swivelHold:.5, tauSwivel:.05, bodyK:12, elbowLift:6, liftFree:-10, swivelRate:1500};   // elbowLift/liftFree: cost per cm the elbow sits higher than 10 cm below the shoulder; swivelRate: max angular speed of the elbow about the shoulder from the swivel search (°/s)   // bodyK: swivel cost per cm of arm inside the torso
++const _gq=new THREE.Quaternion(), _gv=new THREE.Vector3(), GRIP_TUNE={share:1, rollMax:80, bladeRollMax:90, handRollMax:90, tauRoll:.07, swivelBias:.15, swivelHold:.5, tauSwivel:.05, bodyK:12, elbowLift:6, liftFree:-10, swivelRate:1500, rollRate:600};   // elbowLift/liftFree: cost per cm the elbow sits higher than 10 cm below the shoulder; swivelRate: max angular speed of the elbow about the shoulder from the swivel search (°/s)   // bodyK: swivel cost per cm of arm inside the torso
+ // share = fraction of the hand's twist given to the forearm (clamped to ±rollMax° first: beyond that the sign flips and the forearm would snap)
+ const wrapA=x=>Math.atan2(Math.sin(x),Math.cos(x));
+-function smoothAngle(cur,target,T,tau){ return cur+wrapA(target-cur)*(1-Math.exp(-T/tau)); }
++// maxRate (rad/s): cap on the step — when the wanted blade roll jumps (e.g. it leaves its ±90° clamp as the blade swings from the ready guard to the carry) the exponential
++// ease alone still turned the fist ~18° in 12 ms (2,000°/s wrist flick when a run starts).
++function smoothAngle(cur,target,T,tau,maxRate=Infinity){ const d=wrapA(target-cur)*(1-Math.exp(-T/tau)), m=maxRate*T; return cur+(d>m?m:d<-m?-m:d); }
+ // Clamp a wanted twist/roll to ±lim, but once it is past the limit stay on the side we're already on: when the wanted angle wraps through ±180°
+ // a plain clamp jumps from -lim to +lim and the smoothing then spins the wrist/blade the long way round (measured 2,500–29,000°/s flicks).
+ function clampRoll(want,cur,lim){ const t=clamp(want,-lim,lim); return Math.abs(want)>lim && Math.abs(cur)>lim*.5 && Math.sign(cur)!==Math.sign(want) ? Math.sign(cur)*lim : t; }
+@@ -781,17 +785,19 @@ function rollToward(grip, qB, dir, f){
+    hx,hy,hz = right hand (chest-local coordinates)   by,el = blade angle: yaw plane and elevation (el>90 = past the head, behind)
+    hipY crouch, hipYaw/chestYaw twist, lean tilt, headYaw head, spin body rotation (degrees), spread leg stance
+    step = lunge stance: left foot forward / right leg back (0..1), two = left hand gripping the hilt (0..1), eye eye glow, glint blade shine                     */
+-// Standing ready stance (2026-10): the old idle target (-.3,-.36,.14) was 0.55 m from the shoulder (arm reach 0.456), so the sword arm stood fully extended (163°, a locked
+-// straight arm, blade hanging straight down) and every attack started by unlocking it. Now the hand rests in front of the hip, elbow ~110°, blade pointing forward-down.
++// Standing ready stance (2026-10): feet level and symmetric (step 0, a light knee bend: hipY -.03), the sword hand rests near the body (not glued to it) with the
++// elbow bent ~110° and the blade pointing forward-down; the left hand hangs/rests at the side (`stand` in applySkeleton). The old idle target (-.3,-.36,.14) was
++// 0.55 m from the shoulder (arm reach 0.456): a straight locked arm, blade hanging straight down. The attacks start from here: crouch, step out, left hand slides
++// onto the hilt, cut down with both hands (see COMBO beat 1).
+ // Idle blade direction was by -42/el -48 (hanging along the forearm, 25° apart): the hammer grip then needed a ~90° wrist hinge + ~45° twist ("twisted arm"), and the
+ // forearm-twist workaround flipped ~175° when running started (elbow snap). Scanned (by, el, palm angle psi) analytically for the least hinge+twist: by 30 (blade across
+ // the body toward the left), el -30, psi 315° → hinge ≈35°, twist ≈22°, so no forearm twist is needed.
+-const IDLE={hx:-.27,hy:-.22,hz:.22, by:25, el:-40, hipY:0, hipYaw:0, chestYaw:0, lean:.05, headYaw:0, spin:0, spread:.12, step:0, two:0, eye:0, glint:0,
++const IDLE={hx:-.24,hy:-.28,hz:.14, by:70, el:-38, hipY:-.03, hipYaw:0, chestYaw:0, lean:.06, headYaw:0, spin:0, spread:.16, step:0, two:0, eye:0, glint:0,
+   dual:0, hx2:.3, hy2:-.36, hz2:.14, by2:-30, el2:-30};   // dual = the left hand holds its OWN sword (hx2…el2: its grip point / blade direction, mirrored from the right's)
+ // Running/walking carry (blended in by walkAmt while not attacking): blade upright beside the right hip, tip above the shoulder. The idle blade
+ // (low, across the front) sat right where the swinging legs go, so running made the legs pass through it. Verify changes with
+ // client/debug/motion_check.js (blade↔leg clearance, wrist/elbow speeds, grip, hits).
+-const CARRY={...IDLE, hx:-.26, hy:-.26, hz:.12, by:-15, el:55};
++const CARRY={...IDLE, hx:-.26, hy:-.26, hz:.12, by:-15, el:55, hipY:0, lean:.05, spread:.12, step:0};   // upright, feet together for running/walking (the Meshy leg clips take over)
+ const P=o=>Object.assign({},IDLE,o);   // (the attack poses used to set eye:1 — a white eye glow during slashes; removed on request. `eye` still drives rig.eyeMat if a pose sets it)
+ /* The strikes are authored for the real model's reach (arm 0.456 m; shoulders at chest-local (∓.19,.17,.02)): every two-handed key keeps G within
+    ~0.45 m of the right shoulder and the off-hand within reach of the left. The old keys pushed the hands 0.55–0.6 m out (authored for the procedural
+@@ -802,17 +808,22 @@ const P=o=>Object.assign({},IDLE,o);   // (the attack poses used to set eye:1 
+ const COMBO=[
+   // key 0 is only a waypoint: from the idle hang to the overhead wind-up the hand's straight path passes right beside the shoulder, folding the arm to ~37°
+   // (elbow direction swinging 2,000°/s); the hand now swings out in front first (arm ~100°), so the elbow opens up smoothly. `start:1` = the wind-up key.
+-  { kanji:'一', lunge:2.6, impactMin:260, chain:400, end:1000, reach:2.0, hit:3, start:1,
+-    keys:[ [85,  P({hx:-.12,hy:.12,hz:.32, by:38, el:35, hipY:-.02, hipYaw:-.1, chestYaw:-.18, lean:0, headYaw:.06, two:1, spread:.16, glint:.2}),'out'],
+-           [170, P({hx:0,   hy:.5, hz:.18, by:45, el:128, hipY:-.03, hipYaw:-.22, chestYaw:-.35, lean:-.05, headYaw:.15, two:1, spread:.2, glint:.4}),'out'],
+-           [250, P({hx:-.03,hy:.22,hz:.34, by:35, el:60,  hipY:-.08, hipYaw:0, chestYaw:0, lean:.12, headYaw:0, two:1, spread:.24, glint:.8}),'in'],
+-           [300, P({hx:.04, hy:-.02,hz:.34, by:0,  el:-12, hipY:-.12, hipYaw:.1, chestYaw:.18, lean:.25, headYaw:-.1, two:1, spread:.26, glint:1}),'lin'],
+-           [450, P({hx:.02, hy:-.1, hz:.22, by:50, el:-50, hipY:-.13, hipYaw:.25, chestYaw:.45, lean:.3,  headYaw:-.1, two:1, spread:.26, glint:.6}),'out'] ],
+-    dyn:{hand:[3.6,.55,.7], blade:[3.3,.5,.4], two:[7,1,0]} },
++  // Re-authored from the 5-frame reference sheet + the intended sequence: from the level, symmetric ready stance the body first SINKS (key 0: hips low, the sword
++  // brought in front of the belly so the left hand can slide onto the hilt), then the RIGHT foot steps out (`step` < 0 = right leg leads) while both hands rise —
++  // wind-up: spine back 15–30° (`lean -.22`), hips/chest wound −.3/−.5 rad, sword above the right shoulder, weight loaded on the back leg; mid: the torso unwinds
++  // through square while the hands extend; impact (`step -1`): deep lunge, right knee bent heavily, left leg stretched behind, spine 15–30° forward, torso twisted
++  // to the left, arms extended down-left; follow-through holds the lunge. `start:1` = the wind-up key (lunge / trail / hit test begin there).
++  { kanji:'一', lunge:2.6, impactMin:270, chain:410, end:1010, reach:2.0, hit:3, start:1,
++    keys:[ [100, P({hx:0,hy:0,hz:.3, by:10, el:15, hipY:-.16, hipYaw:-.05, chestYaw:-.1, lean:.12, headYaw:0, two:1, spread:.26, step:-.2, glint:.2}),'out'],
++           [190, P({hx:-.02,hy:.5, hz:.16, by:45, el:128, hipY:-.12, hipYaw:-.3, chestYaw:-.5, lean:-.22, headYaw:.2, two:1, spread:.3, step:-.5, glint:.4}),'out'],
++           [260, P({hx:-.03,hy:.22,hz:.34, by:35, el:60,  hipY:-.16, hipYaw:0, chestYaw:.04, lean:.12, headYaw:0, two:1, spread:.3, step:-.8, glint:.8}),'in'],
++           [310, P({hx:.05, hy:-.06,hz:.34, by:10, el:-22, hipY:-.24, hipYaw:.15, chestYaw:.3, lean:.38, headYaw:-.12, two:1, spread:.3, step:-1, glint:1}),'lin'],
++           [455, P({hx:.02, hy:-.14,hz:.22, by:55, el:-55, hipY:-.26, hipYaw:.3, chestYaw:.5, lean:.42, headYaw:-.12, two:1, spread:.3, step:-1, glint:.6}),'out'] ],
++    dyn:{hand:[4.6,.55,.7], blade:[3.3,.5,.4], body:[3.6,.6,.1], two:[7,1,0]} },   // hand 4.6 Hz: the sword hand has to cross from the right hip to the belly centre before the left hand may grip (crossL rule) — at 3.6 Hz the first J after a reload sometimes never gripped in the wind-up
+   // 二 — the rising cut. Keys are authored so the hands actually travel (low-left → forward with the arms extended → up beside the right shoulder); the old
+   // keys dwelt ~150 ms near the belly (key 0 ≈ the end of beat 1), then flicked the blade from level to vertical in ~40 ms around hands that had barely
+   // moved (arms bent, hz ≤ .3). Strike key G ≈ .36 m from the right shoulder, mid key ≈ .44 m; hand dynamics 5 Hz so the pose isn't ~100 ms late.
+-  { kanji:'二', lunge:2.2, impactMin:180, chain:320, end:950, reach:2.0, hit:2,
++  { kanji:'二', lunge:2.2, impactMin:180, chain:320, end:950, reach:2.0, hit:2, hitPad:.12,   // hitPad: extra hit radius (m) — the dummy's collider stops the body at a fixed distance, where this rising cut only just grazes it
+     keys:[ [70,  P({hx:.06, hy:-.2, hz:.26, by:58, el:-52, hipY:-.14, hipYaw:.3, chestYaw:.5, lean:.25, headYaw:-.15, two:1, spread:.26, glint:.6}),'out'],
+            [150, P({hx:0,   hy:-.02,hz:.37, by:25, el:-8,  hipY:-.1, hipYaw:.05, chestYaw:.1, lean:.18, two:1, spread:.24, glint:.8}),'lin'],
+            [210, P({hx:-.1, hy:.2,  hz:.37, by:-10,el:42,  hipY:-.03,hipYaw:-.2, chestYaw:-.3, lean:.05, headYaw:.1, two:1, spread:.22, glint:1}),'lin'],
+@@ -944,6 +955,7 @@ function startAttack(i,def=COMBO[i]){
+   if(best){ const want=Math.atan2(best.x-S.pos.x,best.z-S.pos.z); let d=want-facingS.y; d=Math.atan2(Math.sin(d),Math.cos(d)); if(Math.abs(d)<1.6) S.facing=facingS.y+d; }
+   S.act={def, t:0, from:{...S.target}, maxSp:0, decel:false, impacted:false};
+   setDyn(def.dyn);
++  if(CAP.armed) capBegin();
+ }
+ function mix(a,b,u){ const o={}; for(const k of KEYS) o[k]=lerp(a[k],b[k],u); return o; }
+ function timeline(a){
+@@ -989,16 +1001,17 @@ function applySkeleton(p,T){
+     // pushes back; the swing knee folds after toe-off, and the stance knee flexes ~17° at
+     // mid-stance (θ=π) to absorb the landing instead of staying locked straight.
+     const th0=ph+phase, s0=Math.sin(th0), sw=(s0>0?.66:.42)*s0*w;
+-    const stp=p.step||0, cr=s==='R'?crouch*(1-.8*stp):crouch;   // the trailing leg of a lunge doesn't fold with the crouch
++    const stp=p.step||0, stA=Math.abs(stp), lead=(s==='L')===(stp>=0);   // step > 0: left leg leads; step < 0: right leg leads (|step| = how far)
++    const cr=lead?crouch:crouch*(1-.8*stA);   // the trailing leg of a lunge doesn't fold with the crouch
+     const kneeB=(Math.max(0,Math.sin(th0+1.3))*.95+Math.max(0,-Math.cos(th0))*.3)*w+cr*.9;
+     // Toe-in: the model's bind pose turns the toes out ~25°, which reads as a waddle when running.
+     // Most of the inward turn goes on the ankle — twisting the thigh that far also swings the
+     // knee-bend plane, so every bent knee flicks the shin outward (a bow-legged gallop). The thigh
+     // only gets a slight knee-in twist, and the stance narrows while moving so feet land near the midline.
+     const spread=p.spread*(1-.7*w);
+-    // lunge stance (`step`, attack2): the left leg reaches forward with a deeply bent knee, the right leg trails behind (nearly straight, slight bend);
++    // lunge stance (`step`, attack2; negative = mirrored, right leg leads): the leading leg reaches forward with a deeply bent knee, the right leg trails behind (nearly straight, slight bend);
+     // the ankle keeps each foot flat, and the ground snap below drops the hips onto whichever foot is lowest.
+-    const thX=-sw-cr*.5+(s==='L'?-stp*.95:stp*.8), kB=kneeB+(s==='L'?stp*1.0:stp*.1);
++    const thX=-sw-cr*.5+(lead?-stA*.95:stA*.8), kB=kneeB+(lead?stA*1.0:stA*.1);
+     const th=r['thigh'+s]; th.rotation.set(thX, -sign*(.08+.06*w), sign*spread);
+     r['knee'+s].rotation.x=kB; r['ankle'+s].rotation.set(-thX-kB, -sign*(.12+.16*w), -sign*spread);
+   }
+@@ -1066,17 +1079,17 @@ function applySkeleton(p,T){
+   // front of the hip, elbow tucked back. Walking/running: a runner's pump (elbow ~80–95°), fist swinging from belly-front back to the hip, elbow
+   // always behind the body, contralateral to the legs. All targets are chest-local; the elbow side comes from `poleFree`.
+   const run=L?L.b:0, u=(-Math.sin(ph)+1)/2;   // u: 0 = fist back at the hip … 1 = fist forward
+-  const stand=V(.21,-.20,.15), walkP=V(.20,lerp(-.19,-.12,u),lerp(.05,.24,u)), runP=V(.20,lerp(-.15,.02,u),lerp(-.01,.31,u));
++  const stand=V(.15,-.16,.22), walkP=V(.20,lerp(-.19,-.12,u),lerp(.05,.24,u)), runP=V(.20,lerp(-.15,.02,u),lerp(-.01,.31,u));
+   const freeL=stand.lerp(walkP.lerp(runP,run),w);
+   const hang=chest.localToWorld(freeL);
+-  const poleFree=V(.3,-.25,-1).lerp(V(.15,-.1,-1),w).normalize().applyQuaternion(cq);
++  const poleFree=V(.55,-.2,-1).lerp(V(.15,-.1,-1),w).normalize().applyQuaternion(cq);
+   let eR,wR,eL,wL, sw2=null;
+   S.rho=S.rho||{R:0,L:0};
+   if(real){
+     const gR=real.grip.R, gL=real.grip.L, qB0=r.katana.quaternion.clone();
+     const aR=real.arm.R;
+     const p1=gripPass(gR,aR,shR,G,qB0,poleR,true,T), roR=rollToward(gR,qB0,dir,p1.W.clone().sub(p1.E));
+-    S.rho.R=smoothAngle(S.rho.R, roR===null?S.rho.R:clampRoll(roR,S.rho.R,GRIP_TUNE.bladeRollMax*D2R), T, GRIP_TUNE.tauRoll);
++    S.rho.R=smoothAngle(S.rho.R, roR===null?S.rho.R:clampRoll(roR,S.rho.R,GRIP_TUNE.bladeRollMax*D2R), T, GRIP_TUNE.tauRoll, GRIP_TUNE.rollRate*D2R);
+     const qBR=new THREE.Quaternion().setFromAxisAngle(dir,S.rho.R).multiply(qB0);
+     const p2=gripPass(gR,aR,shR,G,qBR,poleR,true,T); aR.eRel=p2.eRel;
+     G.copy(p2.G); eR=p2.E; wR=p2.W;
+@@ -1091,7 +1104,7 @@ function applySkeleton(p,T){
+     // a wrist bend past ~140° (extreme swings) it lets go (re-grips below 115°) instead of folding the wrist back.
+     const gripAt=sd=>G.clone().addScaledVector(dir,sd);
+     const q1=gripPass(gL,real.arm.L,shL,gripAt(-.11),qBR,poleL,false,T), roL=rollToward(gL,qBR,dir,q1.W.clone().sub(q1.E));
+-    S.rho.L=smoothAngle(S.rho.L, roL===null?S.rho.L:clampRoll(roL,S.rho.L,GRIP_TUNE.handRollMax*D2R), T, GRIP_TUNE.tauRoll);
++    S.rho.L=smoothAngle(S.rho.L, roL===null?S.rho.L:clampRoll(roL,S.rho.L,GRIP_TUNE.handRollMax*D2R), T, GRIP_TUNE.tauRoll);   // (no rate cap on the off-hand's roll: capped it re-gripped the hilt up to ~400 ms late in the next attack)
+     const qBL=new THREE.Quaternion().setFromAxisAngle(dir,S.rho.L).multiply(qBR);
+     let q2=null, bestC=1e9, bestSd=-.11;
+     for(const sd of [-.11,-.08,-.14,-.06,-.17]){ const q=gripPass(gL,real.arm.L,shL,gripAt(sd),qBL,poleL,false,T), c=q.bend+Math.abs(sd+.11)*250; if(c<bestC){ bestC=c; q2=q; bestSd=sd; } }
+@@ -1123,7 +1136,7 @@ function applySkeleton(p,T){
+       const G2=chest.localToWorld(V(p.hx2,p.hy2,p.hz2));
+       S.rho.D=S.rho.D||0;
+       const d1=gripPass(gL,aL,shL,G2,qD0,poleD,true,T), roD=rollToward(gL,qD0,dir2,d1.W.clone().sub(d1.E));
+-      S.rho.D=smoothAngle(S.rho.D, roD===null?S.rho.D:clampRoll(roD,S.rho.D,GRIP_TUNE.bladeRollMax*D2R), T, GRIP_TUNE.tauRoll);
++      S.rho.D=smoothAngle(S.rho.D, roD===null?S.rho.D:clampRoll(roD,S.rho.D,GRIP_TUNE.bladeRollMax*D2R), T, GRIP_TUNE.tauRoll, GRIP_TUNE.rollRate*D2R);
+       qD=new THREE.Quaternion().setFromAxisAngle(dir2,S.rho.D).multiply(qD0);
+       dq=gripPass(gL,aL,shL,G2,qD,poleD,true,T);
+       tL.lerp(dq.wRaw,dE); poleH.lerp(poleD.clone().normalize(),dE);   // the FIXED dual pole, not dq.E: that one follows last frame's elbow, so a bad branch kept itself alive (elbow stuck inside the chest)
+@@ -1299,7 +1312,7 @@ function hitTest(arm){
+     if(t.lastHit===S.attackId) continue; if(t.type==='bamboo' && !t.alive) continue;
+     let hy=null;
+     for(const [w0,w1] of blades){ const [d,u]=segDist2D(w0.x,w0.z,w1.x,w1.z,t.x,t.z), y=lerp(w0.y,w1.y,u);
+-      if(d<t.r+.06 && u>(a.def.final?.04:.25) && y>.15 && y<t.h){ hy=y; break; } }   // the finisher is a wide sweep: it must also cut targets pressed right up against the hands
++      if(d<t.r+(a.def.hitPad??.06) && u>(a.def.final?.04:.25) && y>.15 && y<t.h){ hy=y; break; } }   // the finisher is a wide sweep: it must also cut targets pressed right up against the hands
+     if(hy!==null){ const y=hy;
+       t.lastHit=S.attackId;
+       const away=V(t.x-S.pos.x,0,t.z-S.pos.z).normalize();
+@@ -1428,6 +1441,69 @@ function step(T){
+   updatePieces(T); updateParticles(T);
+ }
+ 
++/* ---------- motion capture: 8-frame contact sheet + skeleton JSON of the next attack ----------
++   Button "Capture 8" (or C) arms it; the next attack (J/K/L/K K) is recorded. Frames are spaced evenly over the
++   attack's duration, each rendered from a camera locked to the character (3/4 front view), then a PNG sheet and a
++   JSON with every real bone's pose per frame are downloaded — hand both to whoever analyses the motion. */
++const CAP={ armed:false, rec:null, n:8, cols:4, yawOff:20, pitch:10, zoom:1.3, fy:.88, width:.42 };
++const capBtn=document.getElementById('bCap');
++function capLabel(){ capBtn.textContent=CAP.rec?`● Recording ${CAP.rec.shots.length}/${CAP.n}`:CAP.armed?'Armed — press J/K/L':'Capture 8'; capBtn.setAttribute('aria-pressed',CAP.armed||!!CAP.rec); }
++function capToggle(){ if(CAP.rec) return; CAP.armed=!CAP.armed; capLabel(); }
++function capBegin(){
++  CAP.armed=false; const def=S.act.def, end=def.end;
++  CAP.rec={ id:S.attackId, def, times:Array.from({length:CAP.n},(_,i)=>Math.round(end*(.03+.9*i/(CAP.n-1)))), shots:[], frames:[], canvas:null };
++  capLabel();
++}
++const r4=v=>Math.round(v*1e4)/1e4;
++function capBones(){
++  const real=rig.real, inv=rig.root.matrixWorld.clone().invert(), out={}, p=V(), q=new THREE.Quaternion();
++  rig.root.updateMatrixWorld(true);
++  for(const n in real.bone){ const b=real.bone[n]; b.getWorldPosition(p); p.applyMatrix4(inv);
++    out[n]={ pos:[r4(p.x),r4(p.y),r4(p.z)], q:[r4(b.quaternion.x),r4(b.quaternion.y),r4(b.quaternion.z),r4(b.quaternion.w)], bindDeg:r4(b.quaternion.angleTo(real.bind[n].q)/D2R) }; }
++  return out;
++}
++function capPoint(w){ const v=w.clone().applyMatrix4(rig.root.matrixWorld.clone().invert()); return [r4(v.x),r4(v.y),r4(v.z)]; }
++function capShot(){
++  const R=CAP.rec, i=R.shots.length, a=S.act, cv=renderer.domElement, c=CAM;
++  const sv={yaw:[c.yaw.y,c.yawT],pitch:[c.pitch.y,c.pitchT],zoom:[c.zoom.y,c.zoomT],focus:c.focus.clone(),punch:S.punch,shake:S.shake,charge:S.charge};
++  c.yaw.y=c.yawT=rig.root.rotation.y/D2R+CAP.yawOff; c.pitch.y=c.pitchT=CAP.pitch; c.zoom.y=c.zoomT=CAP.zoom; c.focus.set(S.pos.x,CAP.fy,S.pos.z);
++  S.punch=0; S.shake=0; S.charge=0; updateCamera(.001);
++  // hide the world (dummies, bamboo, floor…) so only the character, its swords and the ink trail are in the picture
++  const sc0=rig.root.parent, up=o=>{ while(o.parent&&o.parent!==sc0) o=o.parent; return o; }, keep=new Set([rig.root,up(rig.katana),rig.katana2&&up(rig.katana2)]);
++  for(const e of rig.eyes) keep.add(up(e)); for(const b of rig.real?.backSwords||[]) keep.add(b.g);
++  const hidden=sc0.children.filter(o=>o.visible&&!keep.has(o)&&!o.isLight&&!o.isCamera&&!(o.isMesh&&o.renderOrder===5)&&!(o.type==='Object3D'&&!o.children.length)); for(const o of hidden) o.visible=false;
++  renderer.render(scene,camera); for(const o of hidden) o.visible=true;
++  const W=cv.width, H=cv.height, cw=Math.round(W*CAP.width), ch=H, cx=Math.round(W/2-cw/2), sc=Math.min(2400/(CAP.cols*cw),1), rows=Math.ceil(CAP.n/CAP.cols);
++  if(!R.canvas){ R.canvas=document.createElement('canvas'); R.canvas.width=Math.round(CAP.cols*cw*sc); R.canvas.height=Math.round(rows*ch*sc); const g=R.canvas.getContext('2d'); g.fillStyle='#fff'; g.fillRect(0,0,R.canvas.width,R.canvas.height); }
++  const g=R.canvas.getContext('2d'), x=(i%CAP.cols)*cw*sc, y=Math.floor(i/CAP.cols)*ch*sc;
++  g.drawImage(cv,cx,0,cw,ch,x,y,cw*sc,ch*sc); g.strokeStyle='#999'; g.strokeRect(x,y,cw*sc,ch*sc);
++  g.font='bold 22px sans-serif'; const label=`#${i+1}  ${Math.round(a.t)}ms  [${R.def.kanji||''}]`; g.fillStyle='rgba(255,255,255,.85)'; g.fillRect(x+2,y+2,g.measureText(label).width+10,28); g.fillStyle='#c00'; g.fillText(label,x+6,y+24);
++  const A=lastArm;
++  R.frames.push({ index:i+1, t:r4(a.t), clock:r4(S.clock), pose:Object.fromEntries(KEYS.map(k=>[k,r4(S.st[k])])), twoEff:r4(S.twoEff||0), gripOn:!!S.gripOn, walkAmt:r4(S.walkAmt), pos:[r4(S.pos.x),r4(S.pos.z)], facing:r4(S.facing),
++    sword:A?{ gripG:capPoint(A.wR), wrist:capPoint(A.wristR), base:capPoint(A.base), tip:capPoint(A.tip), shoulderR:capPoint(A.shR), elbowR:capPoint(A.eR), shoulderL:capPoint(A.shL), elbowL:capPoint(A.eL), wristL:capPoint(A.wL) }:null,
++    bones:capBones() });
++  R.shots.push(a.t);
++  c.yaw.y=sv.yaw[0]; c.yawT=sv.yaw[1]; c.pitch.y=sv.pitch[0]; c.pitchT=sv.pitch[1]; c.zoom.y=sv.zoom[0]; c.zoomT=sv.zoom[1]; c.focus.copy(sv.focus); S.punch=sv.punch; S.shake=sv.shake; S.charge=sv.charge;
++  updateCamera(.001); renderer.render(scene,camera); capLabel();
++}
++// Saved into <project>/out/ through the dev server (POST /debug/save); falls back to a normal browser download if that fails.
++async function capSave(blob,name){ try{ const r=await fetch('/debug/save?name='+encodeURIComponent(name),{method:'POST',body:blob}); if(r.ok){ console.log('capture saved → out/'+name); return; } }catch(e){} capDownload(blob,name); }
++function capDownload(blob,name){ const u=URL.createObjectURL(blob), l=document.createElement('a'); l.href=u; l.download=name; document.body.appendChild(l); l.click(); l.remove(); setTimeout(()=>URL.revokeObjectURL(u),4000); }
++function capFinish(){
++  const R=CAP.rec; CAP.rec=null; capLabel(); if(!R||!R.frames.length) return;
++  const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19), name=`slash-${{'一':'beat1','二':'beat2','三':'beat3','突':'thrust','斬':'issen','双':'dual'}[R.def.kanji]||'atk'}-${stamp}`;   // ASCII only: the server whitelists file names
++  const meta={ readme:'Per-frame skeleton dump of one attack from Path of the Shinobi. Units: meters, in the character-local frame (+Z = forward, right hand on -X, Y up). bones[name].pos = bone world position relative to the character root; q = local quaternion [x,y,z,w]; bindDeg = how far the bone has rotated away from its bind pose. pose = the smoothed pose parameters driving the procedural rig (hx/hy/hz = hand target in chest-local, by/el = blade direction, ...). sword.* = IK solver outputs (gripG = blade root, tip = blade tip). Bone names are NOT Mixamo (see docs/BONES.md). The PNG sheet shows the same frames left→right, top→bottom from a 3/4 front camera.',
++    attack:{ kanji:R.def.kanji, end:R.def.end, hitKeyIndex:R.def.hit, keyTimesMs:(R.def.keys||[]).map(k=>k[0]) }, plannedTimesMs:R.times, truncated:R.frames.length<CAP.n, camera:{yawOffsetDeg:CAP.yawOff,pitchDeg:CAP.pitch,zoom:CAP.zoom}, frames:R.frames };
++  R.canvas.toBlob(b=>capSave(b,name+'.png'),'image/png');
++  capSave(new Blob([JSON.stringify(meta)],{type:'application/json'}),name+'.json');
++}
++function capTick(){
++  const R=CAP.rec; if(!R) return;
++  if(!S.act || S.attackId!==R.id){ capFinish(); return; }   // attack ended early / the combo chained on: save what we have
++  if(S.act.t>=R.times[R.shots.length]){ capShot(); if(R.shots.length>=CAP.n) capFinish(); }
++}
++capBtn.addEventListener('click',e=>{ capToggle(); e.currentTarget.blur(); });
++
+ /* ---------- loop ---------- */
+ let acc=0, last=performance.now();
+ function frame(now, manualMs, noRender){
+@@ -1438,6 +1514,7 @@ function frame(now, manualMs, noRender){
+   updateStrokes();
+   if(boneLines.visible && lastArm) drawBones(lastArm);
+   if(!noRender) renderer.render(scene,camera);
++  capTick();
+ }
+ let rafOn=true; function raf(t){ if(!rafOn) return; frame(t); requestAnimationFrame(raf); }
+ function resize(){ const w=stageEl.clientWidth, h=stageEl.clientHeight; renderer.setSize(w,h); }
+@@ -1456,6 +1533,7 @@ window.addEventListener('keydown',e=>{ const k=e.key.toLowerCase(); keys.shift=e
+   else if(k==='l'){ e.preventDefault(); pressL(); }
+   else if(k==='q') rotateCam(-90); else if(k==='e') rotateCam(90);
+   else if(k==='r') tiltCam(12); else if(k==='f') tiltCam(-12);
++  else if(k==='c') capToggle();
+   else if(k==='b') toggle('bBones'); else if(k==='t') toggle('bSlow'); });
+ window.addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; keys.shift=e.shiftKey; });
+ window.addEventListener('blur',()=>{ for(const k in keys) keys[k]=false; });
+@@ -1469,7 +1547,7 @@ cv.addEventListener('pointerup',e=>{ if(drag && !drag.moved && drag.isClick){
+     const r=cv.getBoundingClientRect(); ray.setFromCamera({x:(e.clientX-r.left)/r.width*2-1,y:-(e.clientY-r.top)/r.height*2+1},camera);
+     const p=ray.ray.intersectPlane(ground,V()); if(p && walkable(p.x,p.z)) S.moveTo=p; }
+   drag=null; });
+-cv.addEventListener('wheel',e=>{ e.preventDefault(); CAM.zoomT=clamp(CAM.zoomT*Math.pow(1.0015,e.deltaY),2.2,9); },{passive:false});
++cv.addEventListener('wheel',e=>{ e.preventDefault(); CAM.zoomT=clamp(CAM.zoomT*Math.pow(1.0015,e.deltaY),1.2,9); },{passive:false});
+ function toggle(id){ const b=document.getElementById(id), on=b.getAttribute('aria-pressed')!=='true'; b.setAttribute('aria-pressed',on);
+   if(id==='bBones'){ boneLines.visible=joints.visible=on; } if(id==='bSlow') S.speed=on?.25:1; }
+ const bind=(id,fn)=>document.getElementById(id).addEventListener('click',e=>{ fn(); e.currentTarget.blur(); });
