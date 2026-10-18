@@ -1,7 +1,7 @@
 // Motion check — run in the game page after any change to poses / COMBO / IK / grip / locomotion.
 //   const m = await import('/debug/motion_check.js?' + Date.now());
 //   await m.run()                       → PASS/FAIL report (numbers per 4 ms step)
-//   m.sheet({mode:'combo', yawOff:20})  → slow-mo contact sheet overlay (screenshot it), modes: combo | issen (the L finisher) | thrust (K) | dual (K K) | run | walk
+//   m.sheet({mode:'combo', yawOff:20})  → slow-mo contact sheet overlay (screenshot it), modes: combo | issen (the L finisher) | thrust (K) | dual (K K) | idle | run | walk
 //   m.hideSheet()
 // It calls __iso.stop() (the loop stays frozen) and moves the character around — reload the page afterwards.
 // Thresholds are the values measured after the 2026-10 arm/grip/carry fixes (see CLAUDE.md), with headroom.
@@ -162,6 +162,7 @@ export async function sheet({ mode = 'combo', times, cols = 6, yawOff = 20, pitc
   for (const c of sc0.children) { if (keep.has(c) || c.isLight || c.isCamera || (c.isMesh && c.renderOrder === 5) || (c.type === 'Object3D' && !c.children.length)) continue; c.visible = false; }
   const plan = { issen: { presses: [0], fn: 'pressL', runMs: 0, times: [0, 250, 450, 540, 580, 610, 640, 700, 900, 1150, 1260, 1320, 1450, 1800] },
                  combo: { presses: [0, 420, 860], runMs: 0, times: [100, 170, 250, 300, 340, 450, 520, 600, 660, 760, 1000, 1120, 1250, 1350, 1500, 1800] },
+                 idle:  { presses: [], runMs: 0, times: [900, 1000, 1100, 1200, 1300, 1400] },
                  thrust:{ presses: [0], fn: 'pressK', runMs: 0, times: [60, 120, 170, 220, 260, 300, 360, 420, 520, 640, 760, 900] },
                  dual:  { presses: [0, 340], fn: 'pressK', runMs: 0, times: [330, 400, 460, 520, 560, 620, 680, 760, 850, 980, 1100, 1180, 1260, 1340, 1420, 1520, 1700, 1900] },
                  run:   { presses: [], runMs: 1200, times: [700, 760, 820, 880, 940, 1000, 1220, 1260, 1300, 1360, 1440, 1700] },

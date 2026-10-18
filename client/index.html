@@ -781,10 +781,12 @@ function rollToward(grip, qB, dir, f){
    hx,hy,hz = right hand (chest-local coordinates)   by,el = blade angle: yaw plane and elevation (el>90 = past the head, behind)
    hipY crouch, hipYaw/chestYaw twist, lean tilt, headYaw head, spin body rotation (degrees), spread leg stance
    step = lunge stance: left foot forward / right leg back (0..1), two = left hand gripping the hilt (0..1), eye eye glow, glint blade shine                     */
+// Standing ready stance (2026-10): the old idle target (-.3,-.36,.14) was 0.55 m from the shoulder (arm reach 0.456), so the sword arm stood fully extended (163°, a locked
+// straight arm, blade hanging straight down) and every attack started by unlocking it. Now the hand rests in front of the hip, elbow ~110°, blade pointing forward-down.
 // Idle blade direction was by -42/el -48 (hanging along the forearm, 25° apart): the hammer grip then needed a ~90° wrist hinge + ~45° twist ("twisted arm"), and the
 // forearm-twist workaround flipped ~175° when running started (elbow snap). Scanned (by, el, palm angle psi) analytically for the least hinge+twist: by 30 (blade across
 // the body toward the left), el -30, psi 315° → hinge ≈35°, twist ≈22°, so no forearm twist is needed.
-const IDLE={hx:-.3,hy:-.36,hz:.14, by:30, el:-30, hipY:0, hipYaw:0, chestYaw:0, lean:.05, headYaw:0, spin:0, spread:.12, step:0, two:0, eye:0, glint:0,
+const IDLE={hx:-.27,hy:-.22,hz:.22, by:25, el:-40, hipY:0, hipYaw:0, chestYaw:0, lean:.05, headYaw:0, spin:0, spread:.12, step:0, two:0, eye:0, glint:0,
   dual:0, hx2:.3, hy2:-.36, hz2:.14, by2:-30, el2:-30};   // dual = the left hand holds its OWN sword (hx2…el2: its grip point / blade direction, mirrored from the right's)
 // Running/walking carry (blended in by walkAmt while not attacking): blade upright beside the right hip, tip above the shoulder. The idle blade
 // (low, across the front) sat right where the swinging legs go, so running made the legs pass through it. Verify changes with
