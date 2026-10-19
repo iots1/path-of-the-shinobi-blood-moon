@@ -2,8 +2,8 @@
 
 Every model Meshy produced for this project, kept so nothing has to be regenerated (or paid for) again.
 Meshy API task links expire after a few days, and tasks made through the API/MCP never show up in the
-Meshy web app — this folder is the only lasting copy. The live in-game file is `assets/ninja.glb` (the 2026-10-18 "new ninja"; it carries its own Walking/Running clips).
-The previous hooded model (+ its `anim/` clips, the client code and the uncommitted diff of that day) is in `backup-hood-v2-2026-10-18/`.
+Meshy web app — this folder is the only lasting copy. The live in-game file is `assets/ninja.glb` (the 2026-10-19 "no-hood ninja"; it carries its own Walking/Running clips).
+The previous hooded/masked model (2026-10-18) + that day's client code is in `backup-hood-v2-2026-10-19/`. The hooded model before that (2026-10-18 swap) + its `anim/` clips, client code and uncommitted diff of that day is in `backup-hood-v2-2026-10-18/`.
 
 | File | What it is | Meshy task | Credits |
 |---|---|---|---|
@@ -23,3 +23,11 @@ eyes through a text prompt — it changed unrelated parts of the outfit and stil
 | `backup-hood-v2-2026-10-18/` | The previous `ninja.glb`, `anim/walk.glb` + `run.glb`, the `client/index.html` and `client/debug/motion_check.js` of that day, plus `uncommitted-changes.patch` (working-tree diff vs HEAD). Everything needed to go back. |
 
 Still only in `blender-ninja/new_ninja_original/` (outside the repo): the unrigged sources of the new ninja — `…_1018162359_texture.glb` (remeshed + textured, what got rigged), `…_1018162236_image-to-3d-texture.glb` (756k-tri textured original) and `…_1018162326_generate.glb` (untextured companion). Meshy task IDs/credits for them are not recorded here.
+
+## 2026-10-19 swap to the no-hood ninja
+| File | What it is |
+|---|---|
+| `../ninja.glb` | `Meshy_AI_Unmasked_Male_Ninja_T_All_Animations.glb` from `blender-ninja/new_ninja_no_hood/`: unmasked (visible face, no hood/cloak), Mixamo rig (28 bones, no fingers), 18,887 tris, 1.75 m, metres, no Armature scale, 2 animation clips `Running` 0.63 s + `Walking` 1.03 s. **In use.** |
+| `backup-hood-v2-2026-10-19/` | The previous (2026-10-18) `ninja.glb`, `client/index.html` and `client/debug/motion_check.js` as they were right before this swap. Everything needed to go back. |
+
+Still only in `blender-ninja/new_ninja_no_hood/` (outside the repo): the unrigged sources — `…_1019103506_generate.glb` (750k-tri untextured generate), `…_1019103458_image-to-3d-texture.glb` (750k-tri textured original) and `…_1019104746_image-to-3d-texture.glb` (18,887-tri remeshed + textured, what got rigged). Meshy task IDs/credits not recorded here.

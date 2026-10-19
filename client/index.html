@@ -607,7 +607,11 @@ function loadNinja(){
     // DoubleSide: Meshy's cloak is a double layer with ~half its faces wound inward. With FrontSide, wherever an outward
     // face is missing the outline hull's back faces show through as black blobs; three flips the normal on back faces,
     // so both layers light correctly from any angle.
-    const bodyMap=await embeddedImageTexture(buf, 0);   // decoded ourselves — see the comment above embeddedImageTexture
+    // base-colour image index varies per export (the previous model happened to have it at 0; this one has the
+    // normal map at 0 and base-colour at 1) — read it from the material definition instead of hardcoding it.
+    const baseColorTexIdx=gltf.parser.json.materials[0].pbrMetallicRoughness.baseColorTexture.index;
+    const baseColorImgIdx=gltf.parser.json.textures[baseColorTexIdx].source;
+    const bodyMap=await embeddedImageTexture(buf, baseColorImgIdx);   // decoded ourselves — see the comment above embeddedImageTexture
     skinned.material=new THREE.MeshToonMaterial({color:0xffffff, map:bodyMap, normalMap:skinned.material.normalMap, gradientMap:bodyGrad, side:THREE.DoubleSide});
     skinned.material.normalScale.set(2.2,2.2);
     // the trousers/boots albedo is ~0, so gamma alone leaves them black: add a small floor (0.07) so their folds read
@@ -789,7 +793,15 @@ function aimArm(a, S0, E, W){
    GRIP_CFG: palmSign = sign of the hand-local X axis that points out of the palm; P = blade-space direction the palm faces (which side of
    the hilt the hand wraps from; hands face each other across it); phi = diagonal tilt (deg); pt = grip point in hand-local cm. */
 const GRIP_CFG={
-  R:{palmSign:-1, P:[.7071,0,-.7071], phi:30, pt:[-3.6,7.8,-0.4]},
+  // R.phi raised 30→75 (2026-10-19, no-hood rig): with phi:30 (carried over unchanged from the previous model's hand
+  // mesh) the idle stance's physical wrist bend was ~50° (forearm→hilt made a visible kink) no matter which idle blade
+  // angle (by/el) was tried — the two could only be traded off against each other (low bend needed a blade angle that
+  // pointed the tip noticeably backward instead of hanging down/forward). Scanned phi too (not just by/el): phi:75 lets
+  // by:35/el:-55 reach bend≈9° while still hanging down-forward (vert ≈34° off straight down, blade not pushed backward).
+  // Global for the right hand (every pose's `qBR` uses the same GRIP_CFG.R.K) — re-verified with `m.run()`/`m.sheet()`
+  // across idle, the 3-beat combo, K/K K/L: two-hand grip unaffected (same pre-existing beat-flicker FAILs as before,
+  // finisher L's grip metric actually improved 0.67→0.90), no new torso/flare/elbow/wrist regressions.
+  R:{palmSign:-1, P:[.7071,0,-.7071], phi:75, pt:[-3.6,7.8,-0.4]},
   L:{palmSign: 1, P:[.7071,0,-.7071], phi:30, pt:[ 3.6,7.8,-0.4]} };
 // The hands are now modelled loose fists in ninja.glb (wrapped around a 1.75 cm-radius hilt tunnel; palm surface at x≈∓2.6, hilt axis 1 cm outside it:
 // pt = that axis' point in hand-local cm, direction (0, sin phi, cos phi)). P = which way the palm faces in blade space (see the twisted-arm note in CLAUDE.md).
@@ -918,7 +930,13 @@ function rollToward(grip, qB, dir, f){
 // Idle blade direction was by -42/el -48 (hanging along the forearm, 25° apart): the hammer grip then needed a ~90° wrist hinge + ~45° twist ("twisted arm"), and the
 // forearm-twist workaround flipped ~175° when running started (elbow snap). Scanned (by, el, palm angle psi) analytically for the least hinge+twist: by 30 (blade across
 // the body toward the left), el -30, psi 315° → hinge ≈35°, twist ≈22°, so no forearm twist is needed.
-const IDLE={hx:-.25,hy:-.33,hz:.12, by:60, el:-38, hipY:-.01, hipYaw:0, chestYaw:0, lean:.03, headYaw:0, spin:0, spread:.10, step:0, two:0, eye:0, glint:0,
+// by 60/el -38 (used on the previous hooded model) put the blade ~51° off vertical — on the no-hood rig (2026-10-19) that read as the sword jutting out to the
+// side instead of hanging down (per the reference `art/reference/new_ninja_katana/ninja_katana_2_front.jpeg`, where the blade hangs close to the leg, mostly
+// vertical with a slight forward lean). First tried by 40/el -60 (~29° off vertical) — fixed the silhouette but the physical wrist bend rose to ~50° (a visible
+// kink between forearm and hilt, flagged against the side-view reference in `art/reference/new_ninja_katana/...` showing a straight forearm→hilt line): for
+// this hand mesh, lower bend and a vertical/forward-leaning blade pulled in opposite directions for ANY by/el at the old GRIP_CFG.R.phi (30). Raising phi to 75
+// (see GRIP_CFG) moved the low-bend zone to where by 35/el -55 gives both: ~34° off vertical (close alongside the leg, slight forward lean) and ~9° wrist bend.
+const IDLE={hx:-.25,hy:-.33,hz:.12, by:35, el:-55, hipY:-.01, hipYaw:0, chestYaw:0, lean:.03, headYaw:0, spin:0, spread:.10, step:0, two:0, eye:0, glint:0,
   dual:0, hx2:.3, hy2:-.36, hz2:.14, by2:-30, el2:-30};   // dual = the left hand holds its OWN sword (hx2…el2: its grip point / blade direction, mirrored from the right's)
 // Running/walking carry (blended in by walkAmt while not attacking): blade upright beside the right hip, tip above the shoulder. The idle blade
 // (low, across the front) sat right where the swinging legs go, so running made the legs pass through it. Verify changes with
@@ -1188,7 +1206,13 @@ function applySkeleton(p,T){
   const toReach=(v,k=armK)=>v.sub(shMid).multiplyScalar(k).add(shMid);   // pose target (chest-local) → this arm's reach, pulled toward the mid-shoulder point (both hands must still reach one hilt)
   const tgt=chest.localToWorld(toReach(V(p.hx,p.hy+Math.sin(t*1.8+.5)*.006,p.hz+Math.sin(ph)*.04*w),armKs));
   const cq=chest.getWorldQuaternion(new THREE.Quaternion());
-  const poleR=V(-1,-.5,-.6).applyQuaternion(cq);
+  // poleR biases which side the elbow swivel search starts from (see gripPass/swivel): (-1,-.5,-.6) (pre-2026-10-19) left the sword-hand elbow
+  // ~10 cm outboard of the shoulder at idle on this rig (per a front-view reference comparison, `art/reference/ninja-no-hood/...`, showing the
+  // elbow tucked in close to the torso) — swivelBias/swivelHold couldn't pull it in further because that outboard position IS where physical wrist
+  // bend is minimized (see the GRIP_CFG.R.phi note above), so it's effectively a 3rd axis of the same by/el/phi trade-off, not a search-continuity bug.
+  // (-.5,-.95,-.35) trades a bit of that bend back (idle: ~9°→~16°) for about a 27% smaller elbow flare (~10cm→~7cm) — picked by scanning
+  // pole/by/el/phi together and re-measuring both the physical wrist-bend angle and chest-local elbow-vs-shoulder offset at each candidate.
+  const poleR=V(-.5,-.95,-.35).applyQuaternion(cq);
   const by=p.by*D2R, el=p.el*D2R;
   const dir=V(Math.sin(by)*Math.cos(el),Math.sin(el),Math.cos(by)*Math.cos(el)).applyQuaternion(cq).normalize();
   // blade edge faces the direction the sword is moving
