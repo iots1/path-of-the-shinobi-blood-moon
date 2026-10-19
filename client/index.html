@@ -806,6 +806,27 @@ function armPen(sh,E,W){ let s=0; for(const t of [.75]) s+=bodyPen(_gv.copy(sh).
 // Elbows hang under gravity: cost per cm the elbow sits above the shoulder line. The wrist-bend criterion alone happily put the right elbow above the shoulder
 // ("chicken wing") at the start of every cut, while the hand was still down at the hip.
 const liftCost=(sh,Ek)=>GRIP_TUNE.elbowLift*(1-(S.dualEff||0))*Math.max(0,(Ek.y-sh.y)*100-GRIP_TUNE.liftFree);   // off while drawing/sheathing (dual): reaching over the shoulder needs the elbow up
+// The sword-hand's elbow-swivel search (unlike the off-hand's, which already scales its hold by twoEff/dE) always uses full GRIP_TUNE.swivelHold, with
+// no mechanism that ever relaxes it — so once an attack ends, the elbow can be left on a stable but non-canonical branch (bendOf+swivelBias+liftCost
+// has more than one local minimum close in cost) and never drift back to the one a fresh page load picks, even after 10+ idle seconds (measured
+// 2026-10-19: read as the right arm "drooping" only after an attack).
+// First tried: forcing arm.eRel to null right at the idle handoff, mimicking a fresh load — wrong, null eRel also DISABLES swivel()'s rate cap (for
+// the same reason a true fresh load's first frame has nothing to ease from); mid-game that's a visible snap. Measured: wrist peak jumped to
+// 25,000+°/s, versus the 12,000 limit. Reverted.
+// Second tried: keep eRel, but ramp swivel()'s `hold` DOWN to ~0 for a brief window, reasoning "less history-bias lets the argmin re-pick freely".
+// Wrong reasoning, found by reading swivel(): on an actual fresh load arm.eRel is falsy so prev=0, and hold's bias term degenerates to
+// hold*|al-0| = hold*|al| — i.e. a fresh load's search is ALREADY pulled toward angle 0 (the pole-based "natural" branch) by the FULL hold
+// (0.5), on top of the permanent, history-independent GRIP_TUNE.swivelBias*|al| term (0.15). That combined ~0.65 pull toward 0 is what makes a
+// fresh load consistently land on the natural branch. Lowering hold to 0 post-combo does the opposite of what's needed: it REMOVES that pull
+// instead of restoring it, leaving only the weak 0.15 swivelBias term — not enough to climb out of whatever basin the attack left the elbow in
+// (measured: wristPos/eRel/rho after 2.5 s of settled idle were still numerically identical to the stale, un-fixed state).
+// Actual fix: keep hold at its normal full value, but bias the search toward angle 0 (the natural branch) explicitly, instead of toward the
+// stale `prev` derived from the leftover arm.eRel — reproducing a fresh load's bias target without touching its easing. The dA computation
+// (tauSwivel ease + swivelRate cap) still runs off the REAL arm.eRel, so the elbow still eases/rate-caps smoothly into place; only which angle
+// it eases toward changes. No window/timer needed: as soon as the elbow settles on the natural branch, the normal eRel-biased search is a
+// self-consistent fixed point there and just stays.
+const IDLE_RELAX_MS=500;
+const swivelBiasNow=()=>(S.idleRelax>0)?0:null;
 function gripPass(grip, arm, sh, G, qB, pole, clampG, T){
   const qh=_gq.copy(qB).multiply(grip.K), off=grip.pt.clone().applyQuaternion(qh);
   const w=G.clone().sub(off); let Gp=G;
@@ -820,18 +841,19 @@ function gripPass(grip, arm, sh, G, qB, pole, clampG, T){
   // chosen angle is eased (tauSwivel) from there instead of applied instantly.
   const yh=new THREE.Vector3(0,1,0).applyQuaternion(qh);
   const bendOf=Ek=>Math.acos(clamp(ik.W.clone().sub(Ek).normalize().dot(yh),-1,1))*57.2958;
-  const Es=swivel(sh,ik,arm,T,(Ek,al)=>bendOf(Ek)+GRIP_TUNE.swivelBias*Math.abs(al)+liftCost(sh,Ek));
+  const Es=swivel(sh,ik,arm,T,(Ek,al)=>bendOf(Ek)+GRIP_TUNE.swivelBias*Math.abs(al)+liftCost(sh,Ek),GRIP_TUNE.swivelHold,swivelBiasNow());
   return {G:Gp, wRaw:w, E:Es, W:ik.W, bend:bendOf(Es), eRel:Es.clone().sub(sh)};
 }
 // Search the elbow's circle around the shoulder→wrist axis (±120° from the pole-based IK elbow) for the least cost(E, angle) + torso penetration
 // + distance from last frame's elbow (arm.eRel), and ease toward it. Returns the elbow.
-function swivel(sh,ik,arm,T,cost,hold=GRIP_TUNE.swivelHold){
+function swivel(sh,ik,arm,T,cost,hold=GRIP_TUNE.swivelHold,biasAl=null){
   const axis=ik.W.clone().sub(sh).normalize(), e0=ik.E.clone().sub(sh);
   const perp=v=>v.clone().addScaledVector(axis,-v.dot(axis)), p0=perp(e0).normalize();
   let prev=0; if(arm.eRel){ const pp=perp(arm.eRel); if(pp.lengthSq()>1e-6){ pp.normalize(); prev=Math.atan2(axis.dot(_gv.crossVectors(p0,pp)),p0.dot(pp))*57.2958; } }
+  const bias=biasAl==null?prev:biasAl;   // the search's pull target: normally the stale elbow (continuity); swivelBiasNow() forces 0 (the natural/pole branch) right after idle
   const at=al=>e0.clone().applyAxisAngle(axis,al*D2R).add(sh);
   let best=1e9, bestA=0;
-  for(let k=-24;k<=24;k++){ const al=k*5, Ek=at(al), c=cost(Ek,al)+hold*Math.abs(wrapA((al-prev)*D2R))*57.2958+GRIP_TUNE.bodyK*armPen(sh,Ek,ik.W)*100;
+  for(let k=-24;k<=24;k++){ const al=k*5, Ek=at(al), c=cost(Ek,al)+hold*Math.abs(wrapA((al-bias)*D2R))*57.2958+GRIP_TUNE.bodyK*armPen(sh,Ek,ik.W)*100;
     if(c<best){ best=c; bestA=al; } }
   // ease toward the best angle, but never faster than swivelRate °/s of elbow motion: when the argmin hops to the other branch the 8%/step ease alone still swung the
   // elbow 13° in one 4 ms step (3,300°/s — an elbow flick); a real elbow can't, and the hand is still exactly on target (only the elbow's side lags)
@@ -1040,6 +1062,7 @@ function blink(){
 }
 function startAttack(i,def=COMBO[i]){
   S.combo=i; S.queuedK=false; S.queuedL=false; S.queued=false; S.phase='attack'; S.trailId++; S.attackId++; S.moveTo=null;
+  S.idleRelax=0;   // a leftover relax window from the PREVIOUS idle period must not bias the elbow/roll mid-attack (broke the two-hand grip: see IDLE_RELAX_MS)
   // turn toward the nearest target if it's not too far (soft lock-on)
   let best=null, bd=2.8; for(const t of targets){ if(t.type==='bamboo'&&!t.alive) continue; const d=Math.hypot(t.x-S.pos.x,t.z-S.pos.z); if(d<bd){bd=d;best=t;} }
   if(best){ const want=Math.atan2(best.x-S.pos.x,best.z-S.pos.z); let d=want-facingS.y; d=Math.atan2(Math.sin(d),Math.cos(d)); if(Math.abs(d)<1.6) S.facing=facingS.y+d; }
@@ -1182,7 +1205,14 @@ function applySkeleton(p,T){
     const gR=real.grip.R, gL=real.grip.L, qB0=r.katana.quaternion.clone();
     const aR=real.arm.R;
     const p1=gripPass(gR,aR,shR,G,qB0,poleR,true,T), roR=rollToward(gR,qB0,dir,p1.W.clone().sub(p1.E));
-    S.rho.R=smoothAngle(S.rho.R, roR===null?S.rho.R:clampRoll(roR,S.rho.R,GRIP_TUNE.bladeRollMax*D2R), T, GRIP_TUNE.tauRoll, GRIP_TUNE.rollRate*D2R);
+    // roR is computed FROM the (swivel-search-chosen) elbow, which the idle-relax bias above is itself still converging — a stale rho and the
+    // elbow branch feed each other (rho's target depends on the elbow, the elbow's bendOf basis depends on rho via qB), so they can settle into a
+    // second, mutually-consistent but non-natural fixed point together even once the elbow search alone is biased toward 0 (measured: with only the
+    // elbow fix, eRel drifted but toward yet another value, not fresh load's — because the wrist target it was solving for still had the stale
+    // roll baked in). Breaking the loop needs rho ALSO pulled toward its natural idle value (0, confirmed by measurement: fresh load always settles
+    // there) during the same window, so the elbow's gripPass calls see an already-correcting qB instead of the stale one.
+    const roRNow=(S.idleRelax>0)?0:(roR===null?S.rho.R:clampRoll(roR,S.rho.R,GRIP_TUNE.bladeRollMax*D2R));
+    S.rho.R=smoothAngle(S.rho.R, roRNow, T, GRIP_TUNE.tauRoll, GRIP_TUNE.rollRate*D2R);
     const qBR=new THREE.Quaternion().setFromAxisAngle(dir,S.rho.R).multiply(qB0);
     const p2=gripPass(gR,aR,shR,G,qBR,poleR,true,T); aR.eRel=p2.eRel;
     G.copy(p2.G); eR=p2.E; wR=p2.W;
@@ -1197,7 +1227,8 @@ function applySkeleton(p,T){
     // a wrist bend past ~140° (extreme swings) it lets go (re-grips below 115°) instead of folding the wrist back.
     const gripAt=sd=>G.clone().addScaledVector(dir,sd);
     const q1=gripPass(gL,real.arm.L,shL,gripAt(-.11),qBR,poleL,false,T), roL=rollToward(gL,qBR,dir,q1.W.clone().sub(q1.E));
-    S.rho.L=smoothAngle(S.rho.L, roL===null?S.rho.L:clampRoll(roL,S.rho.L,GRIP_TUNE.handRollMax*D2R), T, GRIP_TUNE.tauRoll);   // (no rate cap on the off-hand's roll: capped it re-gripped the hilt up to ~400 ms late in the next attack)
+    const roLNow=(S.idleRelax>0)?0:(roL===null?S.rho.L:clampRoll(roL,S.rho.L,GRIP_TUNE.handRollMax*D2R));
+    S.rho.L=smoothAngle(S.rho.L, roLNow, T, GRIP_TUNE.tauRoll);   // (no rate cap on the off-hand's roll: capped it re-gripped the hilt up to ~400 ms late in the next attack)
     const qBL=new THREE.Quaternion().setFromAxisAngle(dir,S.rho.L).multiply(qBR);
     let q2=null, bestC=1e9, bestSd=-.11;
     for(const sd of [-.11,-.08,-.14,-.06,-.17]){ const q=gripPass(gL,real.arm.L,shL,gripAt(sd),qBL,poleL,false,T), c=q.bend+Math.abs(sd+.11)*250; if(c<bestC){ bestC=c; q2=q; bestSd=sd; } }
@@ -1502,7 +1533,9 @@ function step(T){
       if(Math.abs(dyn.spin.y)>180){ const off=360*Math.round(dyn.spin.y/360); dyn.spin.shift(-off); S.facing+=off*D2R; facingS.shift(off*D2R); }
       if(S.queuedL){ S.queuedL=false; S.queuedK=false; S.queued=false; startAttack(COMBO.length,ISSEN); }
       else if(S.queuedK){ S.queuedK=false; S.queued=false; startAttack(COMBO.length,ATTACK2); }   // ('dual' is always started at chainK, before the end)
-      else if(S.queued){ S.queued=false; startAttack(0); } }
+      else if(S.queued){ S.queued=false; startAttack(0); }
+      else{ S.idleRelax=IDLE_RELAX_MS; }   // truly back to idle, not chaining — see IDLE_RELAX_MS above for why
+      }
     if(S.act && S.act.def.draw!=null){ const a=S.act; if(a.t>=a.def.draw && a.t<a.def.sheathe) setSword2(true); else if(a.t>=a.def.sheathe) setSword2(false); }
     S.target = S.act ? timeline(S.act) : mix(IDLE,CARRY,S.walkAmt);
   } else if(S.phase==='blink'){ const b=S.blink; b.t+=T*1000;
@@ -1512,6 +1545,7 @@ function step(T){
     if(b.t>=BLINK.hide+BLINK.land){ S.phase='idle'; S.blink=null; S.blinkCd=BLINK.cd; setDyn(null); }
   } else S.target=mix(IDLE,CARRY,S.walkAmt);
   if(S.blinkCd>0) S.blinkCd-=T*1000;
+  if(S.idleRelax>0) S.idleRelax=Math.max(0,S.idleRelax-T*1000);
   if(S.sword2 && !(S.act && S.act.def.draw!=null)) setSword2(false);
   for(const k of KEYS) S.st[k]=dyn[k].update(T,S.target[k]);
   const saveF=S.facing; S.facing=facingS.y;
