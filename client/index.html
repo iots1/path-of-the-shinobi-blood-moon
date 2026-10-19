@@ -763,8 +763,26 @@ function driveRealBones(real){
    its three joints about a hand-local axis (right hand: +Z turns +Y toward -X = into the palm; left hand: the mirror), so the fist is a pure function of
    the hand-relative bind pose — stateless, nothing accumulates. local' = parentBind⁻¹ · R(axis, θ) · bind, both bind orientations relative to the hand.
    FIST.curl = MCP/PIP/DIP angle (rad) of the four fingers, FIST.thumb the same for the thumb about an axis that sweeps it across the hilt toward the
-   fingers (`thumbPd`: palm-side direction, x flipped for the left hand). Live-tunable via __iso.FIST + __iso.refist(). */
-const FIST={carryCurl:{Index:.70,Middle:.73,Ring:.76,Pinky:.76}, carryThumb:[.40,.55,.40], gripR:.65, curl:[.9,1.3,.85], thumb:[.35,.5,.4], thumbPd:[1,.25,-.55]};
+   fingers. Live-tunable via __iso.FIST + __iso.refist().
+   wrapCurl / thumbPd / thumbScale (2026-10-20): per-side, per-finger multipliers so the actual combat grip wraps the real hilt radius (measured
+   from the sword prop's tsuka LatheGeometry, ≈1.7 cm core radius × the (1.06,1,.86) xyz scale = an oval ≈1.46–1.80 cm) instead of one shared
+   curl amount for all 4 fingers of both hands. Found by, for each finger, directly driving its 3 joints by `FIST.curl[i]*scale` and binary-
+   searching `scale` (in Blender-free, live `__iso` console scans — see the PR/commit for the exact search) for the scale that puts the fingertip
+   at that finger's own angle-dependent hilt-surface radius + ~0.3 cm margin (so the fingertip mesh's own thickness reads as touching the surface,
+   not sunk into it or floating off it) — a flat, uniform `gripR` (what this used to be) can't do this because the 4 fingers' tips trace very
+   different radius-vs-curl curves (shorter/outer fingers need noticeably more curl-scale to reach the same radius as the index). The right and
+   left hands need different tables because `GRIP_CFG.R.phi` (75°) and `.L.phi` (30°) rotate the whole hand very differently around the hilt axis
+   — same reason their curl-vs-radius curves don't match either. `thumbPd` was ALSO found to need a genuinely different AXIS DIRECTION per side
+   (not just the old `-sgn`-mirrored shared vector + a scale): scanning `thumbPd` alone over a wide curl-scale range only ever swept the right
+   thumb from −167° to −124° around the hilt (at `scale` up to 1.2; the hilt/opposite-the-fingers target computed from the solved finger angles
+   is ≈+150°) — reaching that target by scale alone would need `scale≈3.5`, a grotesquely over-curled thumb, not a real fix. Re-aiming the sweep
+   AXIS (a Fibonacci-sphere search over candidate `thumbPd` directions × a sane curl-scale range, minimizing angular distance to the opposite-
+   of-the-fingers target plus radius error) found a direction that reaches the target at `scale≈1`, same order as before. Verified in `m.sheet`
+   close-ups (yaw rotated off the default 45° — it puts one hand directly behind the other from the camera) that the hilt now visibly sits in
+   the web between thumb and index on both hands, all 5 fingertips reach the hilt surface at `S.twoEff===1`, and `m.run()` shows no new FAILs. */
+const FIST={carryCurl:{Index:.70,Middle:.73,Ring:.76,Pinky:.76}, carryThumb:[.40,.55,.40], gripR:1, curl:[.9,1.3,.85], thumb:[.35,.5,.4],
+  wrapCurl:{R:{Index:.41,Middle:.56,Ring:.71,Pinky:.78}, L:{Index:.69,Middle:.71,Ring:.84,Pinky:.87}},
+  thumbPd:{R:[-.338,.051,-.940], L:[.117,.278,.953]}, thumbScale:{R:1,L:.25}};
 function prepFingers(real){
   const out=[], qa=new THREE.Quaternion();
   for(const [S0,sgn] of [['Right',1],['Left',-1]]){
@@ -775,7 +793,8 @@ function prepFingers(real){
       let A=V(0,0,sgn);
       if(f==='Thumb'){
         const d=(real.thumbD??={})[S0]??=hand.worldToLocal(tip.getWorldPosition(V())).sub(hand.worldToLocal(bs[0].getWorldPosition(V()))).normalize();   // measured once, at bind
-        A=d.clone().cross(V(-sgn*FIST.thumbPd[0],FIST.thumbPd[1],FIST.thumbPd[2]).normalize()).normalize();
+        const pd=FIST.thumbPd[S0==='Right'?'R':'L'];   // per-side axis (not a mirror of a shared vector — see the comment above)
+        A=d.clone().cross(V(pd[0],pd[1],pd[2]).normalize()).normalize();
       }
       let h=new THREE.Quaternion(), prev=new THREE.Quaternion();
       out.push({ f, thumb:f==='Thumb', side:S0, A, joints:bs.map((b,i)=>{ h=h.clone().multiply(real.bind[`${S0}Hand${f}${i+1}`].q); const j={b, bindH:h.clone(), prevInv:prev.clone().invert()}; prev=h.clone(); return j; }) });
@@ -786,7 +805,10 @@ function prepFingers(real){
 function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (0 = bind/open, 1 = full grip)
   const a=real.fingers; if(!a) return;
   for(const c of a){
-    const ang=c.thumb?FIST.thumb:FIST.curl, k=c.side==='Right'?kR:kL;
+    const side=c.side==='Right'?'R':'L';
+    const ang=c.thumb?FIST.thumb:FIST.curl;
+    const wrap=c.thumb?FIST.thumbScale[side]:FIST.wrapCurl[side][c.f];   // per-finger/per-side hilt-radius match, see the comment above FIST
+    const k=(c.side==='Right'?kR:kL)*wrap;
     const w=c.side==='Right'?carry:0;
     c.joints.forEach((j,i)=>{
       const hold=c.thumb?FIST.carryThumb[i]:ang[i]*FIST.carryCurl[c.f];
