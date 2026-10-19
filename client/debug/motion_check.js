@@ -103,6 +103,52 @@ function finisherHit() { // L: the cut is made at ~0.6 s but nothing may react b
   return { early, late: n() - n0, kanjiEarly: kan };
 }
 
+// Regression for the trailing sword arm: repeated reversals used to leave its
+// world-space swivel history behind, folding the elbow into the torso.
+export async function carryTurns() {
+  await ready(); reset();
+  const a = R.arm.R, route = ['a', 'd', 'a', 'd', 'w', 's', 'w', 's', 'a', 'd', 'a', 'd'];
+  let torso = 0, wrist = 0, minElbow = 180, maxBend = 0, maxBladeAngle = 0, maxUpperRoll = 0, behind = 0, samples = 0, nan = false, gripSide = true, gripWrap = true, prev;
+  const sample = steady => {
+    const sh = a.up.getWorldPosition(new V()), e = a.fo.getWorldPosition(new V()), wr = a.ha.getWorldPosition(new V());
+    // Use the full torso envelope (not only the narrower bare-torso metric).
+    for (const p of [e, sh.clone().lerp(e, .75), e.clone().lerp(wr, .33), e.clone().lerp(wr, .66), wr]) {
+      const q = rig.chest.worldToLocal(p.clone());
+      if (q.y >= -.55 && q.y <= .2) torso = Math.max(torso, (1 - Math.hypot(q.x / .185, (q.z - .04) / .19)) * .185);
+    }
+    const q = a.ha.quaternion.clone();
+    if (prev) wrist = Math.max(wrist, prev.angleTo(q) * D / .004);
+    prev = q;
+    nan ||= ![...e.toArray(), ...wr.toArray(), ...q.toArray()].every(Number.isFinite);
+    if (steady) {
+      maxUpperRoll = Math.max(maxUpperRoll, Math.abs(a.upperRoll || 0) * D);
+      const bladeWorld = new V(0, 1, 0).applyQuaternion(rig.katana.quaternion);
+      maxBladeAngle = Math.max(maxBladeAngle, wr.clone().sub(e).angleTo(bladeWorld) * D);
+      minElbow = Math.min(minElbow, sh.clone().sub(e).angleTo(wr.clone().sub(e)) * D);
+      const finger = new V(0, 1, 0).applyQuaternion(a.ha.getWorldQuaternion(new Q()));
+      maxBend = Math.max(maxBend, wr.clone().sub(e).angleTo(finger) * D);
+      if (rig.chest.worldToLocal(wr.clone()).z < rig.chest.worldToLocal(sh.clone()).z - .2) behind++;
+      // Anatomical grip check: the blade exits toward the thumb (+hand Z),
+      // and the middle finger wraps to the palm side of the real hilt axis.
+      const grip = a.ha.worldToLocal(rig.katana.position.clone());
+      const blade = new V(0, 1, 0).applyQuaternion(rig.katana.quaternion).applyQuaternion(a.ha.getWorldQuaternion(new Q()).invert());
+      gripSide &&= blade.z > .1;
+      const mcp = R.bone.RightHandMiddle1, dip = R.bone.RightHandMiddle3;
+      if (mcp && dip) gripWrap &&= a.ha.worldToLocal(mcp.getWorldPosition(new V())).x > grip.x && a.ha.worldToLocal(dip.getWorldPosition(new V())).x < grip.x;
+      samples++;
+    }
+  };
+  for (const k of route) {
+    // Keep each leg on the same open ground; keep velocity, facing and all IK
+    // history intact so each key reversal still exercises the real turn.
+    S.pos.set(2.5, 0, -1); key(k, true);
+    try { for (let t = 0; t < 1000; t += 4) { I.frame(0, 4, true); sample(t >= 600); } }
+    finally { key(k, false); }
+  }
+  for (let t = 0; t < 2000; t += 4) { I.frame(0, 4, true); sample(false); }
+  return { torso, wrist, minElbow, maxBend, maxBladeAngle, maxUpperRoll, behind, samples, nan, gripSide, gripWrap };
+}
+
 export async function run() {
   await ready();
   const lines = [], fail = [];
@@ -145,12 +191,23 @@ export async function run() {
     check(`${name} wrist p95`, wp95 <= LIMITS.comboWristP95, `${f(wp95)}°/s (limit ${LIMITS.comboWristP95})`);
     check(`${name} arms inside torso`, r.torso <= LIMITS.dualTorsoMax, `deepest ${(r.torso * 100).toFixed(1)} cm ${r.torsoAt} (limit ${LIMITS.dualTorsoMax * 100} cm)`);
     check(`${name} NaN`, !r.nan, r.nan ? 'NaN in a bone' : 'none');
-    check(`${name} sword back in the saya`, !S.sword2 && rig.real.backSwords[0].g.visible && !rig.katana2.visible, `sword2 ${S.sword2}, back sword visible ${rig.real.backSwords[0].g.visible}`);
+    check(`${name} sword back in the saya`, !S.sword2 && rig.real.backSwords[0].g.visible === (I.BACK_GEAR?.visible ?? true) && !rig.katana2.visible, `sword2 ${S.sword2}, back sword visible ${rig.real.backSwords[0].g.visible}`);
     if (r.worst.length) lines.push('      spikes: ' + r.worst.join(' | ')); }
   { const r = dualHits(); check('dual K K hits', r.thrust && r.dual, `thrust hit ${r.thrust}, dual cut hit ${r.dual}, sword2 shown during the cut ${r.shown}`); }
   { const r = finisherHit(); check('finisher L delayed hit', r.early === 0 && r.late > 0 && !r.kanjiEarly, `dummy hits before the release ${r.early}, after ${r.late}, kanji early ${r.kanjiEarly}`); }
   const h = hits();
   check('hits on the dummy', [0, 1, 2].every(c => h.includes(c)), `beats hit: ${h.map(c => c + 1).join(',') || 'none'}`);
+  { const r = await carryTurns();
+    check('12 direction changes: right arm outside torso', r.torso <= LIMITS.locoTorsoMax, `deepest ${(r.torso * 100).toFixed(1)} cm (full torso envelope)`);
+    check('12 direction changes: right wrist speed', r.wrist <= LIMITS.locoWristMax, `max ${f(r.wrist)}°/s (limit ${LIMITS.locoWristMax})`);
+    check('12 direction changes: extended right elbow', r.minElbow >= 150, `min ${f(r.minElbow)}° while settled (minimum 150)`);
+    check('12 direction changes: neutral right wrist', r.maxBend <= 25, `max ${f(r.maxBend)}° bend while settled (limit 25)`);
+    check('12 direction changes: blade follows forearm', r.maxBladeAngle <= 25, `max ${f(r.maxBladeAngle)}° off forearm (limit 25)`);
+    check('12 direction changes: relaxed upper-arm roll', r.maxUpperRoll <= 25, `max ${f(r.maxUpperRoll)}° while settled (limit 25)`);
+    check('12 direction changes: hand trails shoulder', r.samples > 0 && r.behind === r.samples, `${r.behind}/${r.samples} settled samples at least 20 cm behind`);
+    check('12 direction changes: thumb-side sword grip', r.gripSide && r.gripWrap, `blade on thumb side ${r.gripSide}, middle finger wraps hilt ${r.gripWrap}`);
+    check('12 direction changes: NaN', !r.nan, r.nan ? 'NaN in right arm' : 'none');
+  }
   lines.unshift(fail.length ? `MOTION CHECK: ${fail.length} FAIL` : 'MOTION CHECK: all PASS');
   lines.push('Now LOOK at it: m.sheet({mode:"combo"|"run"|"walk", yawOff:0 front / -90 side / 180 back}) and screenshot the overlay.');
   return lines.join('\n');
