@@ -789,7 +789,11 @@ const FIST={carryCurl:{Index:.70,Middle:.73,Ring:.76,Pinky:.76}, carryThumb:[.40
   // inside. A tip-beside-the-index target left it pointing up off the hilt (flagged by the user); this mesh's thumb (7.4 cm) is too short to reach the
   // index's middle phalanx around the grip as in the reference photo, so it lies along the top of the grip toward the guard instead.
   wrapCurl:{R:{Index:.40,Middle:.52,Ring:.62,Pinky:.56}, L:{Index:.69,Middle:.71,Ring:.84,Pinky:.87}},
-  thumbPd:{R:[-.809,-.021,-.587], L:[.117,.278,.953]}, thumbScale:{R:1.5,L:.25}};
+  // wrapAng (rad, per joint MCP/PIP/DIP, overrides curl×wrapCurl for that finger; still ×k): per finger, MCP offset o + s×(.9,1.3,.85) with the (o,s) that
+  // keeps the finger's bone centreline ≥ hilt surface + 0.75 cm everywhere AND the smallest mean gap (hugging), capped at natural ranges (MCP ≤1.5,
+  // PIP ≤1.7, DIP ≤1.2, sum ≤2.9 — without the cap the middle/ring fingers "hugged" by curling ~290° into a crumpled ball). Measured on the skinned mesh.
+  wrapAng:{R:{Index:[.84,.78,.51],Middle:[.96,.52,.34],Ring:[.91,.45,.3],Pinky:[.68,.26,.17]}},
+  thumbPd:{R:[-.776,.58,-.248], L:[.117,.278,.953]}, thumbScale:{R:1.2,L:.25}};
 function prepFingers(real){
   const out=[], qa=new THREE.Quaternion();
   for(const [S0,sgn] of [['Right',1],['Left',-1]]){
@@ -815,11 +819,11 @@ function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (
     const side=c.side==='Right'?'R':'L';
     const ang=c.thumb?FIST.thumb:FIST.curl;
     const wrap=c.thumb?FIST.thumbScale[side]:FIST.wrapCurl[side][c.f];   // per-finger/per-side hilt-radius match, see the comment above FIST
-    const k=(c.side==='Right'?kR:kL)*wrap;
+    const k=(c.side==='Right'?kR:kL)*wrap, kk=c.side==='Right'?kR:kL, wa=!c.thumb&&FIST.wrapAng[side]&&FIST.wrapAng[side][c.f];
     const w=c.side==='Right'?carry:0;
     c.joints.forEach((j,i)=>{
       const hold=c.thumb?FIST.carryThumb[i]:ang[i]*FIST.carryCurl[c.f];
-      j.b.quaternion.copy(j.prevInv).multiply(qa_.setFromAxisAngle(c.A,lerp(ang[i]*k,hold,w))).multiply(j.bindH);
+      j.b.quaternion.copy(j.prevInv).multiply(qa_.setFromAxisAngle(c.A,lerp(wa?wa[i]*kk:ang[i]*k,hold,w))).multiply(j.bindH);
     });
   }
 }
@@ -876,13 +880,21 @@ const GRIP_CFG={
   // is the hand's +Z, so fingers only wrap a hilt that runs near Z (small phi) — at phi 75 the hand-local finger axis was 0.97 × the blade axis, the
   // fingers lay ALONG the grip and could only hook it with their tips. phi 40 is the compromise between that wrap (phi 30 = the left hand's, best) and the
   // wrist: with the arm hanging straight, a hammer grip with a straight wrist points the blade forward-down by itself, which is the reference pose (IDLE).
-  R:{palmSign:-1, P:[.7071,0,-.7071], phi:40, carryPhi:80, carryP:[1,0,0], carryPt:[-3.1,4.2,-.7], pt:[-3.6,7.22,-1.09]},
+  // Second pass (user screenshots: the grip read as not held): measured on the SKINNED MESH (vertex positions in sword space) the fist only enclosed the
+  // grip 15–60° round near the guard — the index knuckle sat 5.5 cm off the hilt axis (pinky 3.8) because this mesh's knuckle row is arched (index knuckle
+  // 3 cm further toward the back of the hand than the pinky's) and a hilt in the hand's YZ plane can't follow it. phi 30 + tilt 29 = the direction of the
+  // line fitted through the four knuckles. Its position is a compromise: right under the knuckles the fingers wrap best but the thumb (7.4 cm, base near the
+  // wrist) is 10 cm away and can't touch the grip; the line was moved toward the palm until the thumb lies on it too (pt, then slid along the line so the
+  // index sits under the fuchi). Result: fingers ≈0.2–0.75 cm off the grip surface, thumb ≈0.4, fist enclosing ≈210–255° of the grip, ~30 palm vertices
+  // pressed ≤0.6 cm into it (flesh under the grip — invisible).
+  R:{palmSign:-1, P:[.7071,0,-.7071], phi:30, tilt:29, carryPhi:80, carryP:[1,0,0], carryPt:[-3.1,4.2,-.7], pt:[-2.73,7.97,-.19]},
   // twoRoll (deg, 2026-10-20): the off-hand's grip on the RIGHT's sword is this one rolled about the blade axis (≡ P rotated by twoRoll — real.grip.L2).
   // After R.phi 75→40 the off-hand's roll relative to the right (S.rho.L) sat pinned at its +90° limit (GRIP_TUNE.handRollMax) through the whole combo,
   // the left wrist landed past the crossL line at beat 2 and let go for ~150–260 ms. 35° fixed the standing combo but not "combo (from a run)" (another
   // roll history); 50° and 65° passed both, 4/4. Only the two-handed grip uses it — rotating L.P itself also changed K K's own-sword grip and pushed
   // the left arm 10.5 cm into the torso there.
-  L:{palmSign: 1, P:[.7071,0,-.7071], phi:30, pt:[ 3.6,7.8,-0.4], twoRoll:50} };
+  // 50 → 70 after the second right-grip pass (phi 30 + tilt): 50 passed a reset-per-scenario harness but not m.run()'s "combo (from a run)" (roll history).
+  L:{palmSign: 1, P:[.7071,0,-.7071], phi:30, pt:[ 3.6,7.8,-0.4], twoRoll:70} };
 const gripL2=()=>{ const c=GRIP_CFG.L, a=(c.twoRoll||0)*D2R, [x,y,z]=c.P; return makeGrip({...c, P:[x*Math.cos(a)+z*Math.sin(a), y, -x*Math.sin(a)+z*Math.cos(a)]}); };
 // The hands are now modelled loose fists in ninja.glb (wrapped around a 1.75 cm-radius hilt tunnel; palm surface at x≈∓2.6, hilt axis 1 cm outside it:
 // pt = that axis' point in hand-local cm, direction (0, sin phi, cos phi)). P = which way the palm faces in blade space (see the twisted-arm note in CLAUDE.md).
@@ -892,7 +904,11 @@ const CARRY_HOLD={palmSign:-1,P:[1,0,0],phi:60,pt:[-3.1,5.5,-3.4],wristFlex:5};
 function makeGrip(c){
   const eX=new THREE.Vector3(...c.P).multiplyScalar(c.palmSign), eZ0=new THREE.Vector3(0,1,0), eY0=new THREE.Vector3().crossVectors(eZ0,eX), f=c.phi*D2R;
   const eY=eY0.clone().multiplyScalar(Math.cos(f)).addScaledVector(eZ0,Math.sin(f)), eZ=eZ0.clone().multiplyScalar(Math.cos(f)).addScaledVector(eY0,-Math.sin(f));
-  return { K:new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(eX,eY,eZ)), pt:new THREE.Vector3(...c.pt).multiplyScalar(.01) };
+  const K=new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(eX,eY,eZ));
+  // tilt (deg): also lean the hilt out of the hand's YZ plane, toward +X (the back of the hand) at the thumb-side end — the hand-local blade axis becomes
+  // (sin tilt, cos tilt·sin phi, cos tilt·cos phi). Lets the hilt run parallel to an arched knuckle row (this mesh: index knuckle 3 cm higher than the pinky's).
+  if(c.tilt) K.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,Math.cos(f),-Math.sin(f)),-c.tilt*D2R));
+  return { K, pt:new THREE.Vector3(...c.pt).multiplyScalar(.01) };
 }
 const _gq=new THREE.Quaternion(), _gv=new THREE.Vector3(), GRIP_TUNE={share:1, rollMax:80, bladeRollMax:90, handRollMax:90, tauRoll:.07, swivelBias:.15, swivelHold:.5, tauSwivel:.05, bodyK:12, elbowLift:6, liftFree:-10, swivelRate:1500, rollRate:600, carryRollRate:300, carrySwivelRate:300};   // elbowLift/liftFree: cost per cm the elbow sits higher than 10 cm below the shoulder; swivelRate: max angular speed of the elbow about the shoulder from the swivel search (°/s)   // bodyK: swivel cost per cm of arm inside the torso
 // share = fraction of the hand's twist given to the forearm (clamped to ±rollMax° first: beyond that the sign flips and the forearm would snap)
@@ -1405,7 +1421,7 @@ function applySkeleton(p,T){
     // score alone can put the hilt along the back of the hand.
     if(gripR.carryPhi!==GRIP_CFG.R.carryPhi || gripR.carryP!==GRIP_CFG.R.carryP || gripR.carryPt!==GRIP_CFG.R.carryPt){
       gripR.carryPhi=GRIP_CFG.R.carryPhi; gripR.carryP=GRIP_CFG.R.carryP; gripR.carryPt=GRIP_CFG.R.carryPt;
-      gripR.carry=makeGrip({...GRIP_CFG.R,phi:gripR.carryPhi,P:gripR.carryP,pt:gripR.carryPt});
+      gripR.carry=makeGrip({...GRIP_CFG.R,phi:gripR.carryPhi,P:gripR.carryP,pt:gripR.carryPt,tilt:0});   // tilt belongs to the attack grip only
     }
     const gR={pt:gripR.pt.clone().lerp(gripR.carry.pt,aR.carryBlend),K:gripR.K.clone().slerp(gripR.carry.K,aR.carryBlend)}, gL=real.grip.L, qB0=r.katana.quaternion.clone();
     // Keep elbow history in the character's moving frame. During locomotion
