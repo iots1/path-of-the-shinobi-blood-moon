@@ -418,9 +418,11 @@ const rig={};
   // katana: +Y axis = blade length, +X = cutting edge
   const kat=new THREE.Group(); scene.add(kat); rig.katana=kat;
   // Layout along +Y, built in sword space (kashira -.23, tsuka -.22..+.008, fuchi, tsuba .034, habaki, blade .04..) and then the
-  // whole sword is lifted by .075 so the right wrist (origin) sits a palm-width below the tsuba, the off-hand (wrist-.13) near the
-  // kashira. The tip ends at .075+.745=.82 — the hit test (wrist→tip, line "tip:" in the pose result) assumes 0.82 m, keep it there.
-  const BL=.685, BASE=.04, TIPY=BASE+BL+.02, METAL=0x2b2a29, BRASS=0x8d8576;
+  // whole sword is lifted (see `sword.position.y` below) so the right fist sits right under the tsuba, the off-hand (wrist-.13) near the
+  // kashira. The tip ends at lift+BASE+BL+.02=.82 — the hit test (wrist→tip, line "tip:" in the pose result) assumes 0.82 m, keep it there.
+  // 2026-10-20: lift .075→.05 and BL .685→.71 (tip still at .05+.04+.71+.02 = .82): the guard sits 2.5 cm lower on the grip so the right fist's
+  // index finger closes right under the fuchi, as in a real katana grip, without moving the arm (G and the tip are unchanged).
+  const BL=.71, BASE=.04, TIPY=BASE+BL+.02, METAL=0x2b2a29, BRASS=0x8d8576;
   // blade: ridged cross-section (back | shinogi ridge | edge) along a curved spine (sori), kissaki point.
   // The edge-side bevel is a lighter band (hamon-like). Two copies: faceted for shading (flat normals keep the
   // ridge crisp), smooth+indexed for the inverted-hull outline (split vertices would tear the hull open).
@@ -463,7 +465,7 @@ const rig={};
   const kashira=inked(new THREE.CylinderGeometry(.0175,.0165,.014,12).scale(1.06,1,.86).translate(0,-.229,0),METAL,.004); kat.add(kashira);
   const glintMat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0});
   const glint=new THREE.Mesh(new THREE.BoxGeometry(.004,BL*.9,.008).translate(-.004,.04+BL*.48,0),glintMat); kat.add(glint); rig.glint=glintMat;
-  const sword=new THREE.Group(); sword.position.y=.075; while(kat.children.length) sword.add(kat.children[0]); kat.add(sword);
+  const sword=new THREE.Group(); sword.position.y=.05; while(kat.children.length) sword.add(kat.children[0]); kat.add(sword);
   // Back swords (the two sculpted into ninja.glb were cut out in Blender), sized to the wielded katana: its blade runs .745 m
   // past the tsuba, so the saya is SAYA_L long and the hilt matches the katana's (kashira→tsuba .24 m). One is a full sheathed
   // sword, the other an EMPTY saya — the katana in hand came out of it. Sword space: origin = tsuba centre / saya mouth,
@@ -609,7 +611,7 @@ function loadNinja(){
     // shoulder by this factor (otherwise every target is out of reach: locked straight arms, G reach-clamped, the blade pivoting on the hand).
     real.armK=Math.min(1,(real.arm.R.l1+real.arm.R.l2+real.arm.L.l1+real.arm.L.l2)/2/ARM_REF);
     real.armKSword=1;   // sword-hand keys keep their authored reach for now (see armK)
-    real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)};
+    real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L), L2:gripL2()};
     real.carryHold=makeGrip(CARRY_HOLD);
     real.fingers=prepFingers(real);
     // Shoulder drop: in the T-pose bind the shoulders sit high; once the arms hang, the clavicles read as a shrug (squared, raised shoulders).
@@ -781,8 +783,13 @@ function driveRealBones(real){
    close-ups (yaw rotated off the default 45° — it puts one hand directly behind the other from the camera) that the hilt now visibly sits in
    the web between thumb and index on both hands, all 5 fingertips reach the hilt surface at `S.twoEff===1`, and `m.run()` shows no new FAILs. */
 const FIST={carryCurl:{Index:.70,Middle:.73,Ring:.76,Pinky:.76}, carryThumb:[.40,.55,.40], gripR:1, curl:[.9,1.3,.85], thumb:[.35,.5,.4],
-  wrapCurl:{R:{Index:.41,Middle:.56,Ring:.71,Pinky:.78}, L:{Index:.69,Middle:.71,Ring:.84,Pinky:.87}},
-  thumbPd:{R:[-.338,.051,-.940], L:[.117,.278,.953]}, thumbScale:{R:1,L:.25}};
+  // R re-solved 2026-10-20 after GRIP_CFG.R.phi 75→40 (see there): each finger = the LARGEST curl whose bone centreline stays ≥ hilt radius + 0.75 cm
+  // (no clipping, tightest wrap), instead of the earlier "tip just touches the surface" target that left the fingers hooking the grip. The right thumb's
+  // axis/scale were re-searched for the thumb (Thumb2→tip) to lie ON the grip — mean gap ≈0.8 cm to the hilt surface + 0.7, nearest point touching, none
+  // inside. A tip-beside-the-index target left it pointing up off the hilt (flagged by the user); this mesh's thumb (7.4 cm) is too short to reach the
+  // index's middle phalanx around the grip as in the reference photo, so it lies along the top of the grip toward the guard instead.
+  wrapCurl:{R:{Index:.40,Middle:.52,Ring:.62,Pinky:.56}, L:{Index:.69,Middle:.71,Ring:.84,Pinky:.87}},
+  thumbPd:{R:[-.809,-.021,-.587], L:[.117,.278,.953]}, thumbScale:{R:1.5,L:.25}};
 function prepFingers(real){
   const out=[], qa=new THREE.Quaternion();
   for(const [S0,sgn] of [['Right',1],['Left',-1]]){
@@ -864,8 +871,19 @@ const GRIP_CFG={
   // The original ready/attack grip was verified with `m.run()`/`m.sheet()`
   // across idle, the 3-beat combo, K/K K/L: two-hand grip unaffected (same pre-existing beat-flicker FAILs as before,
   // finisher L's grip metric actually improved 0.67→0.90), no new torso/flare/elbow/wrist regressions.
-  R:{palmSign:-1, P:[.7071,0,-.7071], phi:75, carryPhi:80, carryP:[1,0,0], carryPt:[-3.1,4.2,-.7], pt:[-3.6,7.8,-0.4]},
-  L:{palmSign: 1, P:[.7071,0,-.7071], phi:30, pt:[ 3.6,7.8,-0.4]} };
+  // 2026-10-20 (user's grip reference photos: a hammer grip, hilt diagonal across the palm, + art/reference/new_ninja_katana/ninja_katana_side_2.jpeg —
+  // arm hanging at the side, blade pointing FORWARD ~30° below horizontal): phi 75→40, pt slid 0.9 cm along the hilt toward the guard. The finger curl axis
+  // is the hand's +Z, so fingers only wrap a hilt that runs near Z (small phi) — at phi 75 the hand-local finger axis was 0.97 × the blade axis, the
+  // fingers lay ALONG the grip and could only hook it with their tips. phi 40 is the compromise between that wrap (phi 30 = the left hand's, best) and the
+  // wrist: with the arm hanging straight, a hammer grip with a straight wrist points the blade forward-down by itself, which is the reference pose (IDLE).
+  R:{palmSign:-1, P:[.7071,0,-.7071], phi:40, carryPhi:80, carryP:[1,0,0], carryPt:[-3.1,4.2,-.7], pt:[-3.6,7.22,-1.09]},
+  // twoRoll (deg, 2026-10-20): the off-hand's grip on the RIGHT's sword is this one rolled about the blade axis (≡ P rotated by twoRoll — real.grip.L2).
+  // After R.phi 75→40 the off-hand's roll relative to the right (S.rho.L) sat pinned at its +90° limit (GRIP_TUNE.handRollMax) through the whole combo,
+  // the left wrist landed past the crossL line at beat 2 and let go for ~150–260 ms. 35° fixed the standing combo but not "combo (from a run)" (another
+  // roll history); 50° and 65° passed both, 4/4. Only the two-handed grip uses it — rotating L.P itself also changed K K's own-sword grip and pushed
+  // the left arm 10.5 cm into the torso there.
+  L:{palmSign: 1, P:[.7071,0,-.7071], phi:30, pt:[ 3.6,7.8,-0.4], twoRoll:50} };
+const gripL2=()=>{ const c=GRIP_CFG.L, a=(c.twoRoll||0)*D2R, [x,y,z]=c.P; return makeGrip({...c, P:[x*Math.cos(a)+z*Math.sin(a), y, -x*Math.sin(a)+z*Math.cos(a)]}); };
 // The hands are now modelled loose fists in ninja.glb (wrapped around a 1.75 cm-radius hilt tunnel; palm surface at x≈∓2.6, hilt axis 1 cm outside it:
 // pt = that axis' point in hand-local cm, direction (0, sin phi, cos phi)). P = which way the palm faces in blade space (see the twisted-arm note in CLAUDE.md).
 // Seat the running grip across the curled fingers, near the guard. This is
@@ -1006,7 +1024,11 @@ function rollToward(grip, qB, dir, f){
 // kink between forearm and hilt, flagged against the side-view reference in `art/reference/new_ninja_katana/...` showing a straight forearm→hilt line): for
 // this hand mesh, lower bend and a vertical/forward-leaning blade pulled in opposite directions for ANY by/el at the old GRIP_CFG.R.phi (30). Raising phi to 75
 // (see GRIP_CFG) moved the low-bend zone to where by 35/el -55 gives both: ~34° off vertical (close alongside the leg, slight forward lean) and ~9° wrist bend.
-const IDLE={hx:-.25,hy:-.33,hz:.12, by:35, el:-55, hipY:-.01, hipYaw:0, chestYaw:0, lean:.03, headYaw:0, spin:0, spread:.10, step:0, two:0, eye:0, glint:0,
+// 2026-10-20: superseded by the user's side reference (ninja_katana_side_2.jpeg): arm hanging straight at the side, blade pointing FORWARD ~30° below
+// horizontal, not across the body. With GRIP_CFG.R.phi back at 40 (so the fingers can wrap the grip), hand G lowered/back to the thigh (hy -.42, hz .05 —
+// G is a palm-length below the wrist, so -.33 kept the elbow at ~105°) and blade by 0 / el -30: forearm ≈14° off vertical, elbow ≈163°, blade ≈59° off
+// vertical straight ahead, ≈20 cm off the legs.
+const IDLE={hx:-.22,hy:-.42,hz:.05, by:0, el:-30, hipY:-.01, hipYaw:0, chestYaw:0, lean:.03, headYaw:0, spin:0, spread:.10, step:0, two:0, eye:0, glint:0,
   dual:0, hx2:.3, hy2:-.36, hz2:.14, by2:-30, el2:-30};   // dual = the left hand holds its OWN sword (hx2…el2: its grip point / blade direction, mirrored from the right's)
 // Ninja carry: extend the sword arm behind the shoulder, with a soft elbow.
 // The forearm and blade trail together, outside the right side of the body.
@@ -1421,15 +1443,16 @@ function applySkeleton(p,T){
     // The off-hand may slide along the hilt (6–17 cm below the right hand) to stay reachable and keep the wrist sane; if even the best spot needs
     // a wrist bend past ~140° (extreme swings) it lets go (re-grips below 115°) instead of folding the wrist back.
     const gripAt=sd=>G.clone().addScaledVector(dir,sd);
-    const q1=gripPass(gL,real.arm.L,shL,gripAt(-.11),qBR,poleL,false,T), roL=rollToward(gL,qBR,dir,q1.W.clone().sub(q1.E));
+    const gL2=real.grip.L2;   // the two-handed grip = gL rolled by GRIP_CFG.L.twoRoll about the blade axis (see GRIP_CFG); gL itself stays the K K own-sword grip
+    const q1=gripPass(gL2,real.arm.L,shL,gripAt(-.11),qBR,poleL,false,T), roL=rollToward(gL2,qBR,dir,q1.W.clone().sub(q1.E));
     const roLNow=(S.idleRelax>0)?0:(roL===null?S.rho.L:clampRoll(roL,S.rho.L,GRIP_TUNE.handRollMax*D2R));
     S.rho.L=smoothAngle(S.rho.L, roLNow, T, GRIP_TUNE.tauRoll);   // (no rate cap on the off-hand's roll: capped it re-gripped the hilt up to ~400 ms late in the next attack)
     const qBL=new THREE.Quaternion().setFromAxisAngle(dir,S.rho.L).multiply(qBR);
     let q2=null, bestC=1e9, bestSd=-.11;
-    for(const sd of [-.11,-.08,-.14,-.06,-.17]){ const q=gripPass(gL,real.arm.L,shL,gripAt(sd),qBL,poleL,false,T), c=q.bend+Math.abs(sd+.11)*250; if(c<bestC){ bestC=c; q2=q; bestSd=sd; } }
+    for(const sd of [-.11,-.08,-.14,-.06,-.17]){ const q=gripPass(gL2,real.arm.L,shL,gripAt(sd),qBL,poleL,false,T), c=q.bend+Math.abs(sd+.11)*250; if(c<bestC){ bestC=c; q2=q; bestSd=sd; } }
     // ease the slide along the hilt — snapping between the 3 cm-apart candidates spun the left fist (one-step 11,000°/s spikes)
     S.sdL=(S.sdL??bestSd)+(bestSd-(S.sdL??bestSd))*(1-Math.exp(-T/.06));
-    if(Math.abs(S.sdL-bestSd)>1e-4) q2=gripPass(gL,real.arm.L,shL,gripAt(S.sdL),qBL,poleL,false,T);
+    if(Math.abs(S.sdL-bestSd)>1e-4) q2=gripPass(gL2,real.arm.L,shL,gripAt(S.sdL),qBL,poleL,false,T);
     // grip or let go — never a steady half-weight (that blended the hand halfway between the hilt and the hip, floating in mid-air); hysteresis stops flicker
     // ...and also when the hilt has swept past the body's centre line to the right (beat 3): holding on there drags the left arm straight across
     // the chest (elbow ~10 cm inside the torso) — a real swordsman lets go. (A penetration threshold here also tripped in beats 1–2.)
@@ -1467,8 +1490,9 @@ function applySkeleton(p,T){
     eL=swivel(shL,ik,aL,T,Ek=>Math.acos(clamp(Ek.clone().sub(shL).normalize().dot(prefL),-1,1))*57.2958*.4+liftCost(shL,Ek),GRIP_TUNE.swivelHold*Math.max(S.twoEff,dE)); wL=ik.W; aL.eRel=eL.clone().sub(shL);
     aimArm(real.arm.L,shL,eL,wL); // hand orientation: from LAST frame's toward the target (the right-hilt grip qBL, then the own-sword grip qD past dE .5) in small steps — a slerp(qBL,qD,dE) flips
     // its path when the two are ~180° apart (36,000°/s one-step wrist spikes, depending on history); the lag shrinks to ~10 ms once the hand is fully dual
-    let qHand=qBL;
-    if(dq){ S.qHandL=(S.qHandL||qBL.clone()).slerp(dE>.5?qD:qBL, 1-Math.exp(-T/lerp(.045,.01,smooth(clamp((dE-.7)/.3,0,1))))); qHand=S.qHandL; } else S.qHandL=null;
+    const qBLk=qBL.clone().multiply(_q.setFromAxisAngle(_gv.set(0,1,0),(GRIP_CFG.L.twoRoll||0)*D2R));   // qBL·Ry(twoRoll)·gL.K = qBL·gL2.K, so aimHand can keep using gL
+    let qHand=qBLk;
+    if(dq){ S.qHandL=(S.qHandL||qBLk.clone()).slerp(dE>.5?qD:qBLk,1-Math.exp(-T/lerp(.045,.01,smooth(clamp((dE-.7)/.3,0,1))))); qHand=S.qHandL; } else S.qHandL=null;
     aimHand(real.arm.L,qHand,Math.min(1,S.twoEff+dE),gL,T);   // sum, not max: while the grip hands over (twoEff↓, dE↑) max() dipped under .5 and the fist spun toward the bind pose (10,000°/s one-step spike)
     // the second sword is glued to the left fist the same way (blade = hand * K⁻¹)
     if(S.sword2){ const qH=aL.ha.getWorldQuaternion(new THREE.Quaternion()), qB2=qH.clone().multiply(_q.copy(gL.K).invert());
@@ -1946,7 +1970,7 @@ function saveDevState(){ try{ sessionStorage.setItem(DEV_KEY, JSON.stringify({bo
   }
 }
 window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
-  GRIP_CFG, GRIP_TUNE, CARRY_HOLD, SHOULDER, BACK_GEAR, setBackGearVisible, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real){ rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; rig.real.carryHold=makeGrip(CARRY_HOLD); } },
+  GRIP_CFG, GRIP_TUNE, CARRY_HOLD, SHOULDER, BACK_GEAR, setBackGearVisible, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real){ rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L), L2:gripL2()}; rig.real.carryHold=makeGrip(CARRY_HOLD); } },
   loop:setLoop};  // edit GRIP_CFG/IDLE/CARRY/COMBO/ATTACK2/ISSEN in the console; regrip() applies a GRIP_CFG edit; loop('atk2') etc. repeats a move in place so poses can be watched continuously while tuning ('off','run','run1','walk','walk1','atk1','atk2','dual','finisher' — the '1' modes run one-way instead of back and forth, e.g. into a wall)
 loadNinja();
 </script>
