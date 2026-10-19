@@ -15,7 +15,7 @@ const LIMITS = {
   comboWristP95: 4000,  // °/s
   minTwo: 0.8,          // off-hand grip weight through beats 1–3 (all three cuts are two-handed now)
   freeFlareMax: 0.18,   // m the free off-hand's elbow/wrist may sit outboard of the left shoulder (the old 'balance' pose flung the wrist ~0.3 m out at every attack start)
-  freeStandAngleMax: 150, // ° elbow interior angle of the free off-hand standing (a straight 170° arm reads as broken / no strength)
+  freeStandAngleMax: 165, // ° elbow interior angle of the free off-hand standing. Was 150; the new ninja's reference stance (art/reference/new_ninja_katana/ninja_katana_2_front.jpeg) lets the left arm hang almost straight (measured 160°); a fully locked 175°+ arm still reads as broken
   freeMoveAngleMax: 135,  // ° while running/walking: a runner's pump keeps the elbow clearly bent
   bladeLegMin: 0.1,     // m between the blade and the leg bones while moving (old idle blade: inside a leg 60% of frames)
   locoTorsoMax: 0.01,   // m an arm point (elbow, upper/forearm, wrist) may sit inside the bare torso while running/walking

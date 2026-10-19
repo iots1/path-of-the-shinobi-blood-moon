@@ -68,6 +68,21 @@
   .controls button.primary { background: var(--btn-on-bg); color: var(--btn-on-ink); border-color: var(--btn-on-bg); padding: 5px 22px; font-weight: 600; }
   .controls button[aria-pressed="true"] { background: var(--btn-on-bg); color: var(--btn-on-ink); border-color: var(--btn-on-bg); }
   .controls button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  /* Capture 8 preview: full-screen modal over everything, Cancel / Download */
+  #capModal { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; background: rgba(16,15,14,.95); color: #ece7dc; }
+  #capModal[hidden] { display: none; }
+  #capModal header { padding: 14px 20px 6px; display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; }
+  #capModal h2 { margin: 0; font-size: 18px; font-weight: 600; }
+  #capModal .where { font-size: 13px; color: #b9b2a6; }
+  #capModal .where code { font-family: ui-monospace, Menlo, monospace; color: #ece7dc; }
+  #capModal .shot { flex: 1; min-height: 0; padding: 8px 20px; display: flex; align-items: center; justify-content: center; }
+  #capModal img { max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+  #capModal footer { padding: 10px 20px 18px; display: flex; gap: 10px; justify-content: flex-end; align-items: center; }
+  #capModal .status { margin-right: auto; font-size: 14px; color: #b9b2a6; }
+  #capModal button { font: inherit; font-size: 15px; min-height: 40px; padding: 6px 26px; border-radius: 999px; cursor: pointer; border: 1px solid #8a8378; background: transparent; color: #ece7dc; }
+  #capModal button.primary { background: #ece7dc; color: #151413; border-color: #ece7dc; font-weight: 600; }
+  #capModal button:disabled { opacity: .5; cursor: default; }
+  #capModal button:focus-visible { outline: 2px solid #d4574a; outline-offset: 2px; }
   .controls .sep { width: 1px; height: 22px; background: var(--btn-line); margin: 0 4px; }
   @media (max-width: 700px) { .hint { display: none; } .controls { width: 100%; justify-content: center; } }
 </style>
@@ -88,7 +103,7 @@
       <span><kbd>Space</kbd> dash (short warp)</span>
       <span><kbd>K</kbd> lunging thrust (attack 2)</span>
       <span><kbd>L</kbd> finisher: 一閃 single cut (the target falls after the blade stills)</span>
-      <span><kbd>C</kbd> arm "Capture 8": the next attack is saved as an 8-frame sheet + skeleton JSON</span>
+      <span><kbd>C</kbd> arm "Capture 8": the next attack is shown as an 8-frame sheet; Download saves it + a skeleton JSON</span>
       <span><kbd>Q</kbd><kbd>E</kbd> rotate camera</span>
       <span><kbd>R</kbd><kbd>F</kbd> high/low angle</span>
       <span>Scroll wheel to zoom, click-drag (or right-click drag) to free rotate</span>
@@ -105,6 +120,12 @@
       <button id="bAtk" class="primary" title="Slash (J)">Slash</button>
     </div>
   </div>
+
+<div id="capModal" role="dialog" aria-modal="true" aria-labelledby="capTitle" hidden>
+  <header><h2 id="capTitle">Capture 8</h2><span class="where" id="capWhere"></span></header>
+  <div class="shot"><img id="capImg" alt="8-frame contact sheet of the captured attack"></div>
+  <footer><span class="status" id="capStatus" role="status"></span><button id="capCancel" type="button">Cancel</button><button id="capOk" type="button" class="primary">Download</button></footer>
+</div>
 
 <script type="importmap">
 {
@@ -539,6 +560,9 @@ function loadNinja(){
     real.armKSword=1;   // sword-hand keys keep their authored reach for now (see armK)
     real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)};
     real.fingers=prepFingers(real);
+    // Shoulder drop: in the T-pose bind the shoulders sit high; once the arms hang, the clavicles read as a shrug (squared, raised shoulders).
+    // Each Shoulder bone is rolled about the chest's forward axis (expressed in its parent's frame at bind) by SHOULDER.drop.
+    real.shAx={}; for(const S0 of ['Left','Right']){ const sb=bone[`${S0}Shoulder`]; real.shAx[S0]={b:sb, name:`${S0}Shoulder`, ax:V(0,0,1).applyQuaternion(real.bind[canonBone(sb.parent.name)].rl.clone().invert()), sgn:S0==='Left'?-1:1}; }
 
     // keep the glb's normal map: the cloth folds live there. The base-colour texture is nearly black
     // (mean ~28/255, 96% of pixels < 64), so through the shared 3-band toon ramp (darkest band 27%) the
@@ -555,7 +579,12 @@ function loadNinja(){
     skinned.material.onBeforeCompile=s=>{ s.fragmentShader=s.fragmentShader.replace('#include <map_fragment>','#include <map_fragment>\n diffuseColor.rgb=vec3(0.07)+0.93*pow(diffuseColor.rgb,vec3(0.42));'); };
     skinned.material.customProgramCacheKey=()=>'ninjaBodyLift';
     skinned.castShadow=true; skinned.receiveShadow=true; skinned.frustumCulled=false;
-    const ol=new THREE.SkinnedMesh(skinned.geometry, outlineMat(.014));
+    // .014 (the old model's outline thickness) self-intersected across the right shoulder on this remeshed body (10,260 tris, low-poly — the outline hull is
+    // extruded along vertex normals, and a sharp/concave crease there made the shell cross back over the surface instead of just sitting outside it), reading
+    // as a chipped-out gouge ("แหว่ง") rather than a clean ink line. .008 clears it (checked front-on close-up + the normal gameplay zoom — the silhouette
+    // line is still clearly visible at play distance). Root cause is almost certainly a normals/crease issue in that one spot of the mesh — fixable properly
+    // in Blender (recalculate normals / add an edge split there) if it's still visible after this; .008 is a quick mitigation, not a real fix.
+    const ol=new THREE.SkinnedMesh(skinned.geometry, outlineMat(.008));
     ol.bind(skinned.skeleton, skinned.bindMatrix); ol.frustumCulled=false;
     ol.position.copy(skinned.position); ol.quaternion.copy(skinned.quaternion); ol.scale.copy(skinned.scale);
     skinned.parent.add(ol);
@@ -641,6 +670,7 @@ function rlq(o){ // root-local quaternion of a glb node, built from the current 
   q = o.parent===rig.root ? o.quaternion.clone() : rlq(o.parent).clone().multiply(o.quaternion);
   _rlq.set(o,q); return q;
 }
+const SHOULDER={drop:.10};   // rad (≈6°) the shoulders sag from the T-pose bind (live-tunable: __iso.SHOULDER). .16 looked right from the front but gave a pointed, hunched right shoulder from the iso camera
 function driveRealBones(real){
   _rlq.clear();
   for(const name in real.bind) real.bone[name].quaternion.copy(real.bind[name].q); // reset → no drift
@@ -653,6 +683,7 @@ function driveRealBones(real){
     bone.quaternion.copy(rlq(bone.parent)).invert().multiply(want);
     _rlq.set(bone,want.clone());
   }
+  for(const k in real.shAx){ const o=real.shAx[k]; o.b.quaternion.setFromAxisAngle(o.ax,o.sgn*SHOULDER.drop).multiply(real.bind[o.name].q); }
   const L=real.loco;
   if(L && L.w>0) for(const b of L.walk.tracks.keys()) if(L.run.tracks.has(b)) b.quaternion.slerp(locoPose(L,b,_qr), L.w);
   const hipsRL=real.hipsPos.clone().add(rig.hips.position).sub(DRIVER_REST.hips.p);
@@ -829,7 +860,7 @@ function rollToward(grip, qB, dir, f){
 // Idle blade direction was by -42/el -48 (hanging along the forearm, 25° apart): the hammer grip then needed a ~90° wrist hinge + ~45° twist ("twisted arm"), and the
 // forearm-twist workaround flipped ~175° when running started (elbow snap). Scanned (by, el, palm angle psi) analytically for the least hinge+twist: by 30 (blade across
 // the body toward the left), el -30, psi 315° → hinge ≈35°, twist ≈22°, so no forearm twist is needed.
-const IDLE={hx:-.24,hy:-.28,hz:.14, by:70, el:-38, hipY:-.03, hipYaw:0, chestYaw:0, lean:.06, headYaw:0, spin:0, spread:.16, step:0, two:0, eye:0, glint:0,
+const IDLE={hx:-.25,hy:-.33,hz:.12, by:60, el:-38, hipY:-.01, hipYaw:0, chestYaw:0, lean:.03, headYaw:0, spin:0, spread:.10, step:0, two:0, eye:0, glint:0,
   dual:0, hx2:.3, hy2:-.36, hz2:.14, by2:-30, el2:-30};   // dual = the left hand holds its OWN sword (hx2…el2: its grip point / blade direction, mirrored from the right's)
 // Running/walking carry (blended in by walkAmt while not attacking): blade upright beside the right hip, tip above the shoulder. The idle blade
 // (low, across the front) sat right where the swinging legs go, so running made the legs pass through it. Verify changes with
@@ -850,39 +881,57 @@ const COMBO=[
   // wind-up: spine back 15–30° (`lean -.22`), hips/chest wound −.3/−.5 rad, sword above the right shoulder, weight loaded on the back leg; mid: the torso unwinds
   // through square while the hands extend; impact (`step -1`): deep lunge, right knee bent heavily, left leg stretched behind, spine 15–30° forward, torso twisted
   // to the left, arms extended down-left; follow-through holds the lunge. `start:1` = the wind-up key (lunge / trail / hit test begin there).
-  { kanji:'一', lunge:2.6, impactMin:270, chain:410, end:1010, reach:2.0, hit:3, start:1,
-    keys:[ [100, P({hx:0,hy:0,hz:.3, by:10, el:15, hipY:-.16, hipYaw:-.05, chestYaw:-.1, lean:.12, headYaw:0, two:1, spread:.26, step:-.2, glint:.2}),'out'],
-           [190, P({hx:-.02,hy:.5, hz:.16, by:45, el:128, hipY:-.12, hipYaw:-.3, chestYaw:-.5, lean:-.22, headYaw:.2, two:1, spread:.3, step:-.5, glint:.4}),'out'],
-           [260, P({hx:-.03,hy:.22,hz:.34, by:35, el:60,  hipY:-.16, hipYaw:0, chestYaw:.04, lean:.12, headYaw:0, two:1, spread:.3, step:-.8, glint:.8}),'in'],
-           [310, P({hx:.05, hy:-.06,hz:.34, by:10, el:-22, hipY:-.24, hipYaw:.15, chestYaw:.3, lean:.38, headYaw:-.12, two:1, spread:.3, step:-1, glint:1}),'lin'],
-           [455, P({hx:.02, hy:-.14,hz:.22, by:55, el:-55, hipY:-.26, hipYaw:.3, chestYaw:.5, lean:.42, headYaw:-.12, two:1, spread:.3, step:-1, glint:.6}),'out'] ],
+  // Hand targets (hx,hy,hz) pulled in 2026-10-19 to fit this rig's shorter reach (.388 m vs the .456 m these were authored for — every key below used to
+  // overreach by 1.7–9.6 cm, which forced gripPass's reach-clamp to pin the wrist at max extension on EVERY key: the elbow angle measured dead-locked at
+  // 161° for the whole 260–440ms strike+follow-through, regardless of which key was active (a 2-bone IK's elbow angle is a pure function of wrist distance,
+  // so once every key clamps to the same max distance, they all give the identical "locked straight" elbow — that's the stiff/robotic swing). Each key's
+  // (hx,hy,hz) was rescaled toward the shoulder to ~.37 m so the elbow can actually flex through the cut; `lunge` raised 2.6→2.9 to make up the lost reach.
+  { kanji:'一', lunge:2.9, impactMin:270, chain:410, end:1010, reach:2.0, hit:3, start:1,
+    keys:[ [100, P({hx:-.02,hy:.01,hz:.26, by:10, el:15, hipY:-.16, hipYaw:-.05, chestYaw:-.1, lean:.12, headYaw:0, two:1, spread:.26, step:-.2, glint:.2}),'out'],
+           [190, P({hx:-.05,hy:.42,hz:.11, by:45, el:128, hipY:-.12, hipYaw:-.3, chestYaw:-.5, lean:-.22, headYaw:.2, two:1, spread:.3, step:-.5, glint:.4}),'out'],
+           [260, P({hx:-.05,hy:.20,hz:.28, by:35, el:60,  hipY:-.16, hipYaw:0, chestYaw:.04, lean:.12, headYaw:0, two:1, spread:.3, step:-.8, glint:.8}),'in'],
+           [310, P({hx:-.01,hy:-.02,hz:.24, by:10, el:-22, hipY:-.24, hipYaw:.15, chestYaw:.3, lean:.38, headYaw:-.12, two:1, spread:.3, step:-1, glint:1}),'lin'],
+           [455, P({hx:-.01,hy:-.11,hz:.18, by:55, el:-55, hipY:-.26, hipYaw:.3, chestYaw:.5, lean:.42, headYaw:-.12, two:1, spread:.3, step:-1, glint:.6}),'out'] ],
     dyn:{hand:[4.6,.55,.7], blade:[3.3,.5,.4], body:[3.6,.6,.1], two:[7,1,0]} },   // hand 4.6 Hz: the sword hand has to cross from the right hip to the belly centre before the left hand may grip (crossL rule) — at 3.6 Hz the first J after a reload sometimes never gripped in the wind-up
   // 二 — the rising cut. Keys are authored so the hands actually travel (low-left → forward with the arms extended → up beside the right shoulder); the old
   // keys dwelt ~150 ms near the belly (key 0 ≈ the end of beat 1), then flicked the blade from level to vertical in ~40 ms around hands that had barely
   // moved (arms bent, hz ≤ .3). Strike key G ≈ .36 m from the right shoulder, mid key ≈ .44 m; hand dynamics 5 Hz so the pose isn't ~100 ms late.
+  // Hand targets rescaled 2026-10-19 — but NOT the same way as beat 1. Pulling in the HIT key (210ms) moved the dummy from along the blade's edge to right
+  // at the grip (hitTest's u — position along the blade — collapsed to ~0, which the normal-beat hit test rejects at u<.25: a deterministic miss, not the
+  // old flake). Pulling in the 150ms key ALSO broke the hit even with the hit key itself untouched — the elbow-swivel search is history-dependent (picks
+  // the branch closest to last frame's elbow, CLAUDE.md "Elbow / arm naturalness pass"), so changing an EARLIER key can walk the solve onto a different
+  // branch that is still live when the hit key arrives, moving the actual (smoothed) grip even though its authored target didn't change. Checked each key
+  // in isolation with `m.run()`×6 — only the 70ms key (was .51 m from the shoulder, now ~.384 m) can be pulled in without breaking the hit; 150ms/210ms/360ms
+  // are left at their original values. `lunge`/`hitPad` stay original (the hit geometry didn't move). Smaller win than beat 1/3, but a regression-free one.
   { kanji:'二', lunge:2.2, impactMin:180, chain:320, end:950, reach:2.0, hit:2, hitPad:.12,   // hitPad: extra hit radius (m) — the dummy's collider stops the body at a fixed distance, where this rising cut only just grazes it
-    keys:[ [70,  P({hx:.06, hy:-.2, hz:.26, by:58, el:-52, hipY:-.14, hipYaw:.3, chestYaw:.5, lean:.25, headYaw:-.15, two:1, spread:.26, glint:.6}),'out'],
-           [150, P({hx:0,   hy:-.02,hz:.37, by:25, el:-8,  hipY:-.1, hipYaw:.05, chestYaw:.1, lean:.18, two:1, spread:.24, glint:.8}),'lin'],
-           [210, P({hx:-.1, hy:.2,  hz:.37, by:-10,el:42,  hipY:-.03,hipYaw:-.2, chestYaw:-.3, lean:.05, headYaw:.1, two:1, spread:.22, glint:1}),'lin'],
-           [360, P({hx:-.08,hy:.36, hz:.25, by:-30,el:100, hipY:0,   hipYaw:-.28,chestYaw:-.45,lean:-.08,headYaw:.15, two:1, spread:.2, glint:.6}),'out'] ],
+    keys:[ [70,  P({hx:-.009,hy:-.120,hz:.192, by:58, el:-52, hipY:-.14, hipYaw:.3, chestYaw:.5, lean:.25, headYaw:-.15, two:1, spread:.26, glint:.6}),'out'],
+           [150, P({hx:0,   hy:-.02, hz:.37,  by:25, el:-8,  hipY:-.1, hipYaw:.05, chestYaw:.1, lean:.18, two:1, spread:.24, glint:.8}),'lin'],
+           [210, P({hx:-.1,  hy:.2,   hz:.37,  by:-10,el:42,  hipY:-.03,hipYaw:-.2, chestYaw:-.3, lean:.05, headYaw:.1, two:1, spread:.22, glint:1}),'lin'],
+           [360, P({hx:-.08, hy:.36,  hz:.25,  by:-30,el:100, hipY:0,   hipYaw:-.28,chestYaw:-.45,lean:-.08,headYaw:.15, two:1, spread:.2, glint:.6}),'out'] ],
     dyn:{hand:[5.0,.55,.8], blade:[4.4,.5,.4], two:[7,1,0]} },
   // 三 — a lunging horizontal cut (yokogiri), right → left, two-handed: torso wound to the right with the blade held out behind the right hip, then a
   // fast forward step while the torso unwinds ~90° and the blade sweeps ~210° around the front, the body leaning well forward (no spin, no deep crouch).
   // Hands stay in front of the chest at belly height, so the off-hand never has to cross the body.
+  // Hand targets rescaled 2026-10-19 (same policy as beat 2's fix): the HIT key (420ms) is left untouched — even though it overreaches the most here (9 cm) —
+  // because pulling it in is what broke beat 2's hit (moves the dummy off the blade's edge). Only 330ms and 640ms (not the hit key) are pulled toward ~.384 m.
+  // `lunge` stays at its original value since the hit key's position didn't move.
   { kanji:'三', lunge:3.4, impactMin:300, chain:99999, end:1050, final:true, reach:2.4, hit:2,
-    keys:[ [210, P({hx:-.17,hy:-.04,hz:.30, by:-62, el:4, hipY:-.07, hipYaw:-.34, chestYaw:-.46, lean:.12, headYaw:.25, spread:.3, two:1, glint:.6}),'out'],
-           [330, P({hx:-.02,hy:-.02,hz:.36, by:2,   el:0, hipY:-.10, hipYaw:-.04, chestYaw:-.02, lean:.30, headYaw:0, spread:.34, two:1, glint:1}),'lin'],
-           [420, P({hx:.10, hy:-.04,hz:.30, by:66,  el:-3,hipY:-.12, hipYaw:.30, chestYaw:.44, lean:.42, headYaw:-.2, spread:.36, two:1, glint:1}),'out'],
-           [640, P({hx:.09, hy:-.06,hz:.26, by:78,  el:-8,hipY:-.10, hipYaw:.32, chestYaw:.46, lean:.36, headYaw:-.2, spread:.34, two:1, glint:.5}),'out'] ],
+    keys:[ [210, P({hx:-.17, hy:-.04, hz:.30,  by:-62, el:4, hipY:-.07, hipYaw:-.34, chestYaw:-.46, lean:.12, headYaw:.25, spread:.3, two:1, glint:.6}),'out'],
+           [330, P({hx:-.049,hy:.001, hz:.306, by:2,   el:0, hipY:-.10, hipYaw:-.04, chestYaw:-.02, lean:.30, headYaw:0, spread:.34, two:1, glint:1}),'lin'],
+           [420, P({hx:.10,  hy:-.04, hz:.30,  by:66,  el:-3,hipY:-.12, hipYaw:.30, chestYaw:.44, lean:.42, headYaw:-.2, spread:.36, two:1, glint:1}),'out'],
+           [640, P({hx:.042, hy:-.032,hz:.218, by:78,  el:-8,hipY:-.10, hipYaw:.32, chestYaw:.46, lean:.36, headYaw:-.2, spread:.34, two:1, glint:.5}),'out'] ],
     dyn:{hand:[4.2,.55,.7], blade:[4.2,.5,.3], body:[3.6,.6,.1], two:[7,1,0]} },
 ];
 // attack2 (K) — 突き, a lunging thrust: sink into a deep crouch pulling the hilt back to the right hip (blade level, pointing at the target), then a fast
 // step forward with the body folding well forward over the front knee while both hands drive the point straight out; hold the extension, recover.
 // Not part of the J combo chain (it sits outside COMBO, so `chain` never leads into it). G stays ~0.4 m from the right shoulder.
+// Reach check 2026-10-19 (same policy as beat 2/3): the wind-up (170ms) is already inside this rig's .388 m reach; the HIT key (260ms, 5.3 cm over) is left
+// untouched — a thrust's whole point is a fully extended arm at the moment of the stab, so the lock there reads as correct, not stiff, and (per beat 2's
+// lesson) pulling in a hit key risks breaking the hit. Only the hold (400ms, not the hit key, 6.5 cm over) is pulled toward ~.384 m. Verified with `m.run()`.
 const ATTACK2={ kanji:'突', lunge:10, impactMin:140, chain:99999, chainK:400, end:760, reach:2.2, hit:1,
   keys:[ [170, P({hx:.03, hy:.1,  hz:.24, by:35, el:30, hipY:-.2,  hipYaw:-.3, chestYaw:-.42, lean:.18, headYaw:.2,  spread:.36, step:.3, two:1, glint:.5}),'out'],
          [260, P({hx:-.06,hy:-.02,hz:.37, by:0, el:10, hipY:-.3, hipYaw:.16, chestYaw:.28,  lean:.52, headYaw:-.1, spread:.3, step:1, two:1, glint:1}),'in'],
-         [400, P({hx:-.06,hy:-.03,hz:.38, by:0, el:10, hipY:-.3, hipYaw:.18, chestYaw:.3,   lean:.55, headYaw:-.1, spread:.3, step:1, two:1, glint:.6}),'out'] ],
+         [400, P({hx:-.085,hy:-.007,hz:.320, by:0, el:10, hipY:-.3, hipYaw:.18, chestYaw:.3,   lean:.55, headYaw:-.1, spread:.3, step:1, two:1, glint:.6}),'out'] ],
   dyn:{hand:[4.2,.55,.7], blade:[4.2,.5,.3], body:[3.6,.6,.1], two:[7,1,0]} };
 // dual wield (K, K) — 双 sō, a scissor cut with two swords. The second K (during the thrust's hold, or within DUAL_WINDOW after it) makes the LEFT hand reach
 // over to the back-saya hilt and draw the second sword (`draw`: the saya sword is swapped for the one in the hand at that moment — the draw pose below is
@@ -912,12 +961,16 @@ const DUAL={ kanji:'双', lunge:9, impactMin:440, chain:99999, end:1240, reach:2
 // first key), then one very fast step-and-sweep (right → left, ~2 m), then hold — the cut only *lands* when the blade is flicked clean (血振り, `release`):
 // targets the sweep crossed are marked at the cut and fall/burst at the release (`delayed`). The stroke lingers `trailLife` so the single ink line hangs
 // in the air through the stillness. Hit test stops right after the strike (`hitEnd`) so the flick can't cut anything.
+// Reach check 2026-10-19 (same conservative policy as beat 2/ATTACK2): 520ms/1300ms already fit this rig's .388 m reach. 575ms and the HIT key (640ms, 9.4 cm
+// over — the worst in the whole finisher) are left untouched: this move holds its pose through a dramatic charge/release, so the brief extension reads as
+// held tension rather than stiffness, and 575ms sits right before the hit key where beat 2 showed even an untouched-hit-key neighbor can move the actual
+// hit via the elbow-swivel's history dependence. Only 980ms (the hold, after the hit, least risk) is pulled toward ~.384 m. Verified with `m.run()`.
 const ISSEN={ kanji:'斬', lunge:12, impactMin:640, chain:99999, end:1800, final:true, delayed:true, charge:true, release:1280, burst:575, hitEnd:760,
   trailLife:1500, trailTail:260, reach:2.4, hit:2,
   keys:[ [520, P({hx:-.17,hy:-.06,hz:.29, by:-78, el:-4, hipY:-.2,  hipYaw:-.4,  chestYaw:-.52, lean:.16, headYaw:.25, spread:.34, step:.4, two:1, glint:.5}),'io'],
          [575, P({hx:-.02,hy:-.04,hz:.36, by:4,   el:2,  hipY:-.28, hipYaw:-.02, chestYaw:-.02, lean:.4,  headYaw:0,   spread:.34, step:.8, two:1, glint:1}),'lin'],
          [640, P({hx:.10, hy:-.05,hz:.30, by:70,  el:6,  hipY:-.3,  hipYaw:.32,  chestYaw:.46,  lean:.5,  headYaw:-.2, spread:.36, step:1,  two:1, glint:1}),'out'],
-         [980, P({hx:.10, hy:-.06,hz:.30, by:72,  el:6,  hipY:-.3,  hipYaw:.34,  chestYaw:.48,  lean:.46, headYaw:-.2, spread:.36, step:1,  two:1, glint:.4}),'out'],
+         [980, P({hx:.033,hy:-.021,hz:.234, by:72,  el:6,  hipY:-.3,  hipYaw:.34,  chestYaw:.48,  lean:.46, headYaw:-.2, spread:.36, step:1,  two:1, glint:.4}),'out'],
          [1300,P({hx:-.2, hy:-.1, hz:.22, by:-50, el:-45,hipY:-.14, hipYaw:.1,   chestYaw:.16,  lean:.1,  headYaw:-.05,spread:.3,  step:.3, two:0, glint:.6}),'io'] ],
   dyn:{hand:[5,.55,.7], blade:[5,.5,.3], body:[3.8,.6,.1], two:[7,1,0]} };
 // keys[0] = wind-up, keys[hit] = the strike (default 1; lunge + trail run k0→hit), last key = follow-through (hit test runs k0→last+40)
@@ -1119,7 +1172,7 @@ function applySkeleton(p,T){
   // front of the hip, elbow tucked back. Walking/running: a runner's pump (elbow ~80–95°), fist swinging from belly-front back to the hip, elbow
   // always behind the body, contralateral to the legs. All targets are chest-local; the elbow side comes from `poleFree`.
   const run=L?L.b:0, u=(-Math.sin(ph)+1)/2;   // u: 0 = fist back at the hip … 1 = fist forward
-  const stand=V(.15,-.16,.22), walkP=V(.20,lerp(-.19,-.12,u),lerp(.05,.24,u)), runP=V(.20,lerp(-.15,.02,u),lerp(-.01,.31,u));
+  const stand=V(.30,-.33,.04), walkP=V(.20,lerp(-.19,-.12,u),lerp(.05,.24,u)), runP=V(.20,lerp(-.15,.02,u),lerp(-.01,.31,u));
   const freeL=stand.lerp(walkP.lerp(runP,run),w);
   const hang=chest.localToWorld(toReach(freeL));
   const poleFree=V(.55,-.2,-1).lerp(V(.15,-.1,-1),w).normalize().applyQuaternion(cq);
@@ -1201,7 +1254,8 @@ function applySkeleton(p,T){
     const grip=G.clone().addScaledVector(dir,-.11), tL=hang.lerp(grip,clamp(p.two,0,1));
     ({E:eL,W:wL}=solveIK(shL,tL,poleL)); placeLimb(r.upperL,shL,eL); placeLimb(r.foreL,eL,wL); r.handL.position.copy(wL);
   }
-  if(real) setFingers(real);
+  // free off-hand: relaxed open fingers when standing (reference stance), a loose fist while moving, a full grip on the hilt
+  if(real) setFingers(real, lerp(.3+.35*w, 1, Math.max(S.twoEff||0, S.dualEff||0)));
   // ---- cloak: spring bones ----
   const vLocal=S.vel.clone().applyAxisAngle(UP,-(S.facing+p.spin*D2R));
   const spinV=dyn.spin.yd*D2R;
@@ -1369,13 +1423,26 @@ function showKanji(def){ kanjiEl.textContent=def.kanji; kanjiEl.classList.toggle
   clearTimeout(kanjiTimer); kanjiTimer=setTimeout(()=>kanjiEl.classList.remove('show'),def.final?900:600); }
 
 /* ---------- debug skeleton ---------- */
-const boneGeo=new THREE.BufferGeometry(); boneGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(64*3),3));
+const boneGeo=new THREE.BufferGeometry(); boneGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(160*2*3),3));
 const boneLines=new THREE.LineSegments(boneGeo,new THREE.LineBasicMaterial({color:0xc0392b,depthTest:false}));
-const jointGeo=new THREE.BufferGeometry(); jointGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(32*3),3));
+const jointGeo=new THREE.BufferGeometry(); jointGeo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(96*3),3));
 const joints=new THREE.Points(jointGeo,new THREE.PointsMaterial({color:0xc0392b,size:9,sizeAttenuation:false,map:dotTex,alphaTest:.5,depthTest:false}));
 boneLines.renderOrder=joints.renderOrder=10; boneLines.visible=joints.visible=false; boneLines.frustumCulled=joints.frustumCulled=false; scene.add(boneLines,joints);
+// With the real model loaded the overlay draws ITS bones (parent→child lines + a dot per joint; fingers and the toe/head tip markers are skipped to keep it
+// readable) plus the sword; without it, the old driver-rig stick figure.
+const BONE_SKIP=/Thumb|Index|Middle|Ring|Pinky|Toe_End|headfront/;
 function drawBones(arm){
   const w=o=>o.getWorldPosition(V()), r=rig;
+  if(r.real){
+    r.root.updateMatrixWorld(true);
+    const P=boneGeo.attributes.position.array, Q=jointGeo.attributes.position.array; let ns=0, nj=0;
+    for(const n in r.real.bone){ if(BONE_SKIP.test(n)) continue; const b=r.real.bone[n], p=w(b);
+      if(nj<96) Q.set([p.x,p.y,p.z],3*nj++);
+      if(b.parent&&b.parent.isBone&&!BONE_SKIP.test(canonBone(b.parent.name))&&ns<159){ const q=w(b.parent); P.set([q.x,q.y,q.z,p.x,p.y,p.z],6*ns++); } }
+    P.set([arm.wR.x,arm.wR.y,arm.wR.z,arm.tip.x,arm.tip.y,arm.tip.z],6*ns++);   // the blade
+    boneGeo.setDrawRange(0,ns*2); boneGeo.attributes.position.needsUpdate=true; jointGeo.setDrawRange(0,nj); jointGeo.attributes.position.needsUpdate=true;
+    return;
+  }
   const J={root:w(r.root),hips:w(r.hips),chest:w(r.chest),neck:w(r.neck),head:w(r.head).add(V(0,.15,0)),
     tL:w(r.thighL),kL:w(r.kneeL),aL:w(r.ankleL),tR:w(r.thighR),kR:w(r.kneeR),aR:w(r.ankleR),
     shR:arm.shR,eR:arm.eR,wR:arm.wR,shL:arm.shL,eL:arm.eL,wL:arm.wL,tip:arm.tip};
@@ -1484,8 +1551,8 @@ function step(T){
 
 /* ---------- motion capture: 8-frame contact sheet + skeleton JSON of the next attack ----------
    Button "Capture 8" (or C) arms it; the next attack (J/K/L/K K) is recorded. Frames are spaced evenly over the
-   attack's duration, each rendered from a camera locked to the character (3/4 front view), then a PNG sheet and a
-   JSON with every real bone's pose per frame are downloaded — hand both to whoever analyses the motion. */
+   attack's duration, each rendered from a camera locked to the character (3/4 front view). The finished PNG sheet is shown in a full-screen
+   modal (Cancel / Download); Download saves the sheet and a JSON with every real bone's pose per frame — hand both to whoever analyses the motion. */
 const CAP={ armed:false, rec:null, n:8, cols:4, yawOff:20, pitch:10, zoom:1.3, fy:.88, width:.42 };
 const capBtn=document.getElementById('bCap');
 function capLabel(){ capBtn.textContent=CAP.rec?`● Recording ${CAP.rec.shots.length}/${CAP.n}`:CAP.armed?'Armed — press J/K/L':'Capture 8'; capBtn.setAttribute('aria-pressed',CAP.armed||!!CAP.rec); }
@@ -1518,6 +1585,14 @@ function capShot(){
   if(!R.canvas){ R.canvas=document.createElement('canvas'); R.canvas.width=Math.round(CAP.cols*cw*sc); R.canvas.height=Math.round(rows*ch*sc); const g=R.canvas.getContext('2d'); g.fillStyle='#fff'; g.fillRect(0,0,R.canvas.width,R.canvas.height); }
   const g=R.canvas.getContext('2d'), x=(i%CAP.cols)*cw*sc, y=Math.floor(i/CAP.cols)*ch*sc;
   g.drawImage(cv,cx,0,cw,ch,x,y,cw*sc,ch*sc); g.strokeStyle='#999'; g.strokeRect(x,y,cw*sc,ch*sc);
+  if(boneLines.visible){   // Skeleton toggle on → the overlay is part of the picture. Drawn in 2D on the sheet (1 px GL lines vanish on the dark cloth once the sheet is scaled down)
+    const A=boneGeo.attributes.position.array, ns=boneGeo.drawRange.count/2, B=jointGeo.attributes.position.array, nj=jointGeo.drawRange.count, v=V();
+    const pr=(px,py,pz)=>{ v.set(px,py,pz).project(camera); return [x+((v.x*.5+.5)*W-cx)*sc, y+(1-(v.y*.5+.5))*H*sc]; };
+    g.save(); g.beginPath(); g.rect(x,y,cw*sc,ch*sc); g.clip(); g.lineCap='round';
+    const lines=[]; for(let k=0;k<ns;k++) lines.push([pr(A[k*6],A[k*6+1],A[k*6+2]),pr(A[k*6+3],A[k*6+4],A[k*6+5])]);
+    for(const [col,wd] of [['#fff',5],['#e0301f',2.5]]){ g.strokeStyle=col; g.lineWidth=wd; g.beginPath(); for(const [a,b] of lines){ g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); } g.stroke(); }
+    for(let k=0;k<nj;k++){ const [jx,jy]=pr(B[k*3],B[k*3+1],B[k*3+2]); g.beginPath(); g.arc(jx,jy,4.5,0,7); g.fillStyle='#fff'; g.fill(); g.beginPath(); g.arc(jx,jy,3,0,7); g.fillStyle='#e0301f'; g.fill(); }
+    g.restore(); }
   g.font='bold 22px sans-serif'; const label=`#${i+1}  ${Math.round(a.t)}ms  [${R.def.kanji||''}]`; g.fillStyle='rgba(255,255,255,.85)'; g.fillRect(x+2,y+2,g.measureText(label).width+10,28); g.fillStyle='#c00'; g.fillText(label,x+6,y+24);
   const A=lastArm;
   R.frames.push({ index:i+1, t:r4(a.t), clock:r4(S.clock), pose:Object.fromEntries(KEYS.map(k=>[k,r4(S.st[k])])), twoEff:r4(S.twoEff||0), gripOn:!!S.gripOn, walkAmt:r4(S.walkAmt), pos:[r4(S.pos.x),r4(S.pos.z)], facing:r4(S.facing),
@@ -1527,16 +1602,37 @@ function capShot(){
   c.yaw.y=sv.yaw[0]; c.yawT=sv.yaw[1]; c.pitch.y=sv.pitch[0]; c.pitchT=sv.pitch[1]; c.zoom.y=sv.zoom[0]; c.zoomT=sv.zoom[1]; c.focus.copy(sv.focus); S.punch=sv.punch; S.shake=sv.shake; S.charge=sv.charge;
   updateCamera(.001); renderer.render(scene,camera); capLabel();
 }
-// Saved into <project>/out/ through the dev server (POST /debug/save); falls back to a normal browser download if that fails.
-async function capSave(blob,name){ try{ const r=await fetch('/debug/save?name='+encodeURIComponent(name),{method:'POST',body:blob}); if(r.ok){ console.log('capture saved → out/'+name); return; } }catch(e){} capDownload(blob,name); }
+// Download saves into <project>/out/ through the dev server (POST /debug/save); falls back to a normal browser download (the browser's Downloads folder) if that fails.
+// Resolves to where the file went.
+async function capSave(blob,name){ try{ const r=await fetch('/debug/save?name='+encodeURIComponent(name),{method:'POST',body:blob}); if(r.ok){ console.log('capture saved → out/'+name); return 'out/'+name; } }catch(e){} capDownload(blob,name); return 'browser download: '+name; }
 function capDownload(blob,name){ const u=URL.createObjectURL(blob), l=document.createElement('a'); l.href=u; l.download=name; document.body.appendChild(l); l.click(); l.remove(); setTimeout(()=>URL.revokeObjectURL(u),4000); }
-function capFinish(){
+const capModal=document.getElementById('capModal'), capImg=document.getElementById('capImg'), capWhere=document.getElementById('capWhere'), capStatus=document.getElementById('capStatus'), capOk=document.getElementById('capOk'), capCancel=document.getElementById('capCancel');
+let capPending=null;
+function capShowModal(p){
+  capPending=p; capImg.src=URL.createObjectURL(p.png);
+  document.getElementById('capTitle').textContent=`Capture 8 — ${p.label} (${p.frames} frames)`;
+  capWhere.innerHTML=`Download saves <code>${p.name}.png</code> + <code>.json</code> into the project's <code>out/</code> folder`;
+  capStatus.textContent=''; capOk.disabled=false; capOk.textContent='Download'; capCancel.textContent='Cancel';
+  capModal.hidden=false; capOk.focus();
+}
+function capClose(){ capModal.hidden=true; if(capImg.src) URL.revokeObjectURL(capImg.src); capImg.removeAttribute('src'); capPending=null; }
+async function capDownloadPending(){
+  const p=capPending; if(!p) return; capOk.disabled=true; capStatus.textContent='Saving…';
+  const where=await capSave(p.png,p.name+'.png'); await capSave(p.json,p.name+'.json');
+  capStatus.textContent=where.startsWith('out/') ? `Saved ✓  out/${p.name}.png  +  out/${p.name}.json` : `Server save failed — downloaded through the browser (Downloads folder): ${p.name}.png + .json`;
+  capOk.textContent='Saved'; capCancel.textContent='Close'; capCancel.focus();
+}
+capOk.addEventListener('click',capDownloadPending); capCancel.addEventListener('click',capClose);
+// while the modal is open the game gets no key presses (J/K/L would attack behind it); Esc = Cancel
+window.addEventListener('keydown',e=>{ if(capModal.hidden) return; e.stopImmediatePropagation(); if(e.key==='Escape'){ e.preventDefault(); capClose(); } },true);
+async function capFinish(){
   const R=CAP.rec; CAP.rec=null; capLabel(); if(!R||!R.frames.length) return;
-  const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19), name=`slash-${{'一':'beat1','二':'beat2','三':'beat3','突':'thrust','斬':'issen','双':'dual'}[R.def.kanji]||'atk'}-${stamp}`;   // ASCII only: the server whitelists file names
-  const meta={ readme:'Per-frame skeleton dump of one attack from Path of the Shinobi. Units: meters, in the character-local frame (+Z = forward, right hand on -X, Y up). bones[name].pos = bone world position relative to the character root; q = local quaternion [x,y,z,w]; bindDeg = how far the bone has rotated away from its bind pose. pose = the smoothed pose parameters driving the procedural rig (hx/hy/hz = hand target in chest-local, by/el = blade direction, ...). sword.* = IK solver outputs (gripG = blade root, tip = blade tip). Bone names are NOT Mixamo (see docs/BONES.md). The PNG sheet shows the same frames left→right, top→bottom from a 3/4 front camera.',
-    attack:{ kanji:R.def.kanji, end:R.def.end, hitKeyIndex:R.def.hit, keyTimesMs:(R.def.keys||[]).map(k=>k[0]) }, plannedTimesMs:R.times, truncated:R.frames.length<CAP.n, camera:{yawOffsetDeg:CAP.yawOff,pitchDeg:CAP.pitch,zoom:CAP.zoom}, frames:R.frames };
-  R.canvas.toBlob(b=>capSave(b,name+'.png'),'image/png');
-  capSave(new Blob([JSON.stringify(meta)],{type:'application/json'}),name+'.json');
+  const kn={'一':'beat1','二':'beat2','三':'beat3','突':'thrust','斬':'issen','双':'dual'}[R.def.kanji]||'atk';
+  const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19), name=`slash-${kn}-${stamp}`;   // ASCII only: the server whitelists file names
+  const meta={ readme:'Per-frame skeleton dump of one attack from Path of the Shinobi. Units: meters, in the character-local frame (+Z = forward, right hand on -X, Y up). bones[name].pos = bone world position relative to the character root; q = local quaternion [x,y,z,w]; bindDeg = how far the bone has rotated away from its bind pose. pose = the smoothed pose parameters driving the procedural rig (hx/hy/hz = hand target in chest-local, by/el = blade direction, ...). sword.* = IK solver outputs (gripG = blade root, tip = blade tip). Bone names are the short code-side names (Mixamo `Spine`/`Spine1`/`Spine2` appear as Spine02/Spine01/Spine, `Neck` as neck; see CLAUDE.md "Current model"). The PNG sheet shows the same frames left→right, top→bottom from a 3/4 front camera.',
+    attack:{ kanji:R.def.kanji, end:R.def.end, hitKeyIndex:R.def.hit, keyTimesMs:(R.def.keys||[]).map(k=>k[0]) }, plannedTimesMs:R.times, truncated:R.frames.length<CAP.n, skeletonOverlay:boneLines.visible, camera:{yawOffsetDeg:CAP.yawOff,pitchDeg:CAP.pitch,zoom:CAP.zoom}, frames:R.frames };
+  const png=await new Promise(ok=>R.canvas.toBlob(ok,'image/png'));
+  capShowModal({ name, label:`${R.def.kanji||''} ${kn}`, frames:R.frames.length, png, json:new Blob([JSON.stringify(meta)],{type:'application/json'}) });
 }
 function capTick(){
   const R=CAP.rec; if(!R) return;
@@ -1596,7 +1692,7 @@ bind('bRotL',()=>rotateCam(-90)); bind('bRotR',()=>rotateCam(90)); bind('bUp',()
 bind('bBones',()=>toggle('bBones')); bind('bSlow',()=>toggle('bSlow'));
 document.getElementById('bAtk').addEventListener('pointerdown',e=>{ e.preventDefault(); press(); });
 window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
-  GRIP_CFG, GRIP_TUNE, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; }};  // edit GRIP_CFG in the console, call regrip(), to tune the grip live
+  GRIP_CFG, GRIP_TUNE, SHOULDER, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; }};  // edit GRIP_CFG in the console, call regrip(), to tune the grip live
 loadNinja();
 </script>
 </body>
