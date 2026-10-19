@@ -1213,12 +1213,20 @@ function applySkeleton(p,T){
   const chest=r.chest;
   const shR=real ? real.arm.R.up.getWorldPosition(V()) : chest.localToWorld(V(-.2,.1,0));
   const shL=real ? real.arm.L.up.getWorldPosition(V()) : chest.localToWorld(V(.2,.1,0));
-  // the sword arm swings forward when the opposite (left) leg swings forward — same contralateral timing as the off-hand below, but only
-  // a few cm: it carries the blade upright (CARRY), and a big swing both waved the blade around and made the grip re-twist the wrist every step
+  // the sword arm swings forward when the opposite (left) leg swings forward — same contralateral timing as the off-hand below. It used to only
+  // swing a few cm (±4 cm on hz) to keep the blade from waving and re-twisting the grip every step; now it reuses the OFF-HAND's own walk/run
+  // swing shape (2026-10-19, requested as a first pass at making the right arm move like the left while the hand/finger rig is reworked in a
+  // separate session) — same per-axis amplitude (`SWING_Y`/`SWING_Z`, walk→run blended), same up/down-forward/back pattern, just mirrored in
+  // phase (`uR=1-u`, since the right arm leads when the LEFT leg leads) and applied as a delta on top of the CARRY/IDLE pose's own hx/hy/hz
+  // instead of jumping to an absolute target (the off-hand has no pose-authored base to blend from; the sword hand does). Re-run
+  // client/debug/motion_check.js after any further change here — the previous ±4 cm swing was kept deliberately small specifically to avoid
+  // re-twisting the grip/wrist every step, so a bigger swing may need the grip tuned again, or hand off to whoever is reworking the hand rig.
+  const run=L?L.b:0, uR=(Math.sin(ph)+1)/2, duR=(uR-.5)*w;
+  const swingY=duR*lerp(.07,.17,run), swingZ=duR*lerp(.19,.32,run);
   const armK=real?real.armK:1, armKs=real?real.armKSword:1;
   const shMid=chest.worldToLocal(shR.clone().add(shL).multiplyScalar(.5));
   const toReach=(v,k=armK)=>v.sub(shMid).multiplyScalar(k).add(shMid);   // pose target (chest-local) → this arm's reach, pulled toward the mid-shoulder point (both hands must still reach one hilt)
-  const tgt=chest.localToWorld(toReach(V(p.hx,p.hy+Math.sin(t*1.8+.5)*.006,p.hz+Math.sin(ph)*.04*w),armKs));
+  const tgt=chest.localToWorld(toReach(V(p.hx,p.hy+swingY+Math.sin(t*1.8+.5)*.006,p.hz+swingZ),armKs));
   const cq=chest.getWorldQuaternion(new THREE.Quaternion());
   // poleR biases which side the elbow swivel search starts from (see gripPass/swivel): (-1,-.5,-.6) (pre-2026-10-19) left the sword-hand elbow
   // ~10 cm outboard of the shoulder at idle on this rig (per a front-view reference comparison, `art/reference/ninja-no-hood/...`, showing the
@@ -1268,7 +1276,7 @@ function applySkeleton(p,T){
   // earlier "balance" pose flung the arm out at the start of EVERY attack, before it had grabbed the hilt. Standing: elbow bent ~120°, fist in
   // front of the hip, elbow tucked back. Walking/running: a runner's pump (elbow ~80–95°), fist swinging from belly-front back to the hip, elbow
   // always behind the body, contralateral to the legs. All targets are chest-local; the elbow side comes from `poleFree`.
-  const run=L?L.b:0, u=(-Math.sin(ph)+1)/2;   // u: 0 = fist back at the hip … 1 = fist forward
+  const u=1-uR;   // u: 0 = fist back at the hip … 1 = fist forward (uR/run are already computed above, for the sword arm's mirrored swing)
   const stand=V(.30,-.33,.04), walkP=V(.20,lerp(-.19,-.12,u),lerp(.05,.24,u)), runP=V(.20,lerp(-.15,.02,u),lerp(-.01,.31,u));
   const freeL=stand.lerp(walkP.lerp(runP,run),w);
   const hang=chest.localToWorld(toReach(freeL));
