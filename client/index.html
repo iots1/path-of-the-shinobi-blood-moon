@@ -610,6 +610,7 @@ function loadNinja(){
     real.armK=Math.min(1,(real.arm.R.l1+real.arm.R.l2+real.arm.L.l1+real.arm.L.l2)/2/ARM_REF);
     real.armKSword=1;   // sword-hand keys keep their authored reach for now (see armK)
     real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)};
+    real.carryHold=makeGrip(CARRY_HOLD);
     real.fingers=prepFingers(real);
     // Shoulder drop: in the T-pose bind the shoulders sit high; once the arms hang, the clavicles read as a shrug (squared, raised shoulders).
     // Each Shoulder bone is rolled about the chest's forward axis (expressed in its parent's frame at bind) by SHOULDER.drop.
@@ -763,7 +764,7 @@ function driveRealBones(real){
    the hand-relative bind pose — stateless, nothing accumulates. local' = parentBind⁻¹ · R(axis, θ) · bind, both bind orientations relative to the hand.
    FIST.curl = MCP/PIP/DIP angle (rad) of the four fingers, FIST.thumb the same for the thumb about an axis that sweeps it across the hilt toward the
    fingers (`thumbPd`: palm-side direction, x flipped for the left hand). Live-tunable via __iso.FIST + __iso.refist(). */
-const FIST={gripR:.65, curl:[.9,1.3,.85], thumb:[.35,.5,.4], thumbPd:[1,.25,-.55]};
+const FIST={carryCurl:{Index:.70,Middle:.73,Ring:.76,Pinky:.76}, carryThumb:[.40,.55,.40], gripR:.65, curl:[.9,1.3,.85], thumb:[.35,.5,.4], thumbPd:[1,.25,-.55]};
 function prepFingers(real){
   const out=[], qa=new THREE.Quaternion();
   for(const [S0,sgn] of [['Right',1],['Left',-1]]){
@@ -782,10 +783,16 @@ function prepFingers(real){
   }
   return out;
 }
-function setFingers(real, kL=1, kR=1){ // k = how closed each fist is (0 = bind/open, 1 = full grip)
+function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (0 = bind/open, 1 = full grip)
   const a=real.fingers; if(!a) return;
-  for(const c of a){ const ang=c.thumb?FIST.thumb:FIST.curl, k=c.side==='Right'?kR:kL;
-    c.joints.forEach((j,i)=>j.b.quaternion.copy(j.prevInv).multiply(qa_.setFromAxisAngle(c.A,ang[i]*k)).multiply(j.bindH)); }
+  for(const c of a){
+    const ang=c.thumb?FIST.thumb:FIST.curl, k=c.side==='Right'?kR:kL;
+    const w=c.side==='Right'?carry:0;
+    c.joints.forEach((j,i)=>{
+      const hold=c.thumb?FIST.carryThumb[i]:ang[i]*FIST.carryCurl[c.f];
+      j.b.quaternion.copy(j.prevInv).multiply(qa_.setFromAxisAngle(c.A,lerp(ang[i]*k,hold,w))).multiply(j.bindH);
+    });
+  }
 }
 const qa_=new THREE.Quaternion();
 function aimBone(bone, childDir, target){ // rotate bone (from its bind-relative pose) so childDir points at target
@@ -839,6 +846,9 @@ const GRIP_CFG={
   L:{palmSign: 1, P:[.7071,0,-.7071], phi:30, pt:[ 3.6,7.8,-0.4]} };
 // The hands are now modelled loose fists in ninja.glb (wrapped around a 1.75 cm-radius hilt tunnel; palm surface at x≈∓2.6, hilt axis 1 cm outside it:
 // pt = that axis' point in hand-local cm, direction (0, sin phi, cos phi)). P = which way the palm faces in blade space (see the twisted-arm note in CLAUDE.md).
+// Seat the running grip across the curled fingers, near the guard. This is
+// applied AFTER arm IK so wrist/finger tuning cannot move the approved elbow.
+const CARRY_HOLD={palmSign:-1,P:[1,0,0],phi:60,pt:[-3.1,5.5,-3.4],wristFlex:5};
 function makeGrip(c){
   const eX=new THREE.Vector3(...c.P).multiplyScalar(c.palmSign), eZ0=new THREE.Vector3(0,1,0), eY0=new THREE.Vector3().crossVectors(eZ0,eX), f=c.phi*D2R;
   const eY=eY0.clone().multiplyScalar(Math.cos(f)).addScaledVector(eZ0,Math.sin(f)), eZ=eZ0.clone().multiplyScalar(Math.cos(f)).addScaledVector(eY0,-Math.sin(f));
@@ -1377,9 +1387,13 @@ function applySkeleton(p,T){
     G.copy(p2.G); eR=p2.E; wR=p2.W;
     aimArm(aR,shR,eR,wR,lerp(Math.PI,SHOULDER.carryTwist*D2R,carryR),T); aimHand(aR,qBR,1,gR,T,carryR>0?GRIP_TUNE.carryRollRate*D2R:Infinity);
     // the sword is glued to the fist: blade = hand * K⁻¹, G = wrist + palm offset (≈ qBR/G; exact even where the IK/twist limits bite)
+    const holdW=aR.carryBlend;
+    aR.ha.quaternion.multiply(_q.setFromAxisAngle(V(0,0,1),CARRY_HOLD.wristFlex*D2R*holdW));
+    aR.ha.updateMatrixWorld(true);
+    const seated={K:gripR.K.clone().slerp(real.carryHold.K,holdW),pt:gripR.pt.clone().lerp(real.carryHold.pt,holdW)};
     const qH=aR.ha.getWorldQuaternion(new THREE.Quaternion());
-    qBR.copy(qH).multiply(_q.copy(gR.K).invert()); dir.set(0,1,0).applyQuaternion(qBR);
-    G.copy(aR.ha.getWorldPosition(V())).add(gR.pt.clone().applyQuaternion(qH));
+    qBR.copy(qH).multiply(_q.copy(seated.K).invert()); dir.set(0,1,0).applyQuaternion(qBR);
+    G.copy(aR.ha.getWorldPosition(V())).add(seated.pt.clone().applyQuaternion(qH));
     r.katana.quaternion.copy(qBR); r.katana.position.copy(G);
     // ---- left arm: hangs at the side, or grips the hilt below the right hand ----
     // The off-hand may slide along the hilt (6–17 cm below the right hand) to stay reachable and keep the wrist sane; if even the best spot needs
@@ -1445,7 +1459,7 @@ function applySkeleton(p,T){
     ({E:eL,W:wL}=solveIK(shL,tL,poleL)); placeLimb(r.upperL,shL,eL); placeLimb(r.foreL,eL,wL); r.handL.position.copy(wL);
   }
   // free off-hand: relaxed open fingers when standing (reference stance), a loose fist while moving, a full grip on the hilt
-  if(real) setFingers(real, lerp(.3+.35*w, 1, Math.max(S.twoEff||0, S.dualEff||0)), FIST.gripR);
+  if(real) setFingers(real, lerp(.3+.35*w, 1, Math.max(S.twoEff||0, S.dualEff||0)), FIST.gripR, real.arm.R.carryBlend||0);
   // ---- cloak: spring bones ----
   const vLocal=S.vel.clone().applyAxisAngle(UP,-(S.facing+p.spin*D2R));
   const spinV=dyn.spin.yd*D2R;
@@ -1910,7 +1924,7 @@ function saveDevState(){ try{ sessionStorage.setItem(DEV_KEY, JSON.stringify({bo
   }
 }
 window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
-  GRIP_CFG, GRIP_TUNE, SHOULDER, BACK_GEAR, setBackGearVisible, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; },
+  GRIP_CFG, GRIP_TUNE, CARRY_HOLD, SHOULDER, BACK_GEAR, setBackGearVisible, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real){ rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; rig.real.carryHold=makeGrip(CARRY_HOLD); } },
   loop:setLoop};  // edit GRIP_CFG/IDLE/CARRY/COMBO/ATTACK2/ISSEN in the console; regrip() applies a GRIP_CFG edit; loop('atk2') etc. repeats a move in place so poses can be watched continuously while tuning ('off','run','run1','walk','walk1','atk1','atk2','dual','finisher' — the '1' modes run one-way instead of back and forth, e.g. into a wall)
 loadNinja();
 </script>

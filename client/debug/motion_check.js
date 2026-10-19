@@ -108,7 +108,7 @@ function finisherHit() { // L: the cut is made at ~0.6 s but nothing may react b
 export async function carryTurns() {
   await ready(); reset();
   const a = R.arm.R, route = ['a', 'd', 'a', 'd', 'w', 's', 'w', 's', 'a', 'd', 'a', 'd'];
-  let torso = 0, wrist = 0, minElbow = 180, maxBend = 0, maxBladeAngle = 0, maxUpperRoll = 0, behind = 0, samples = 0, nan = false, gripSide = true, gripWrap = true, prev;
+  let torso = 0, wrist = 0, minElbow = 180, maxBend = 0, maxBladeAngle = 0, maxUpperRoll = 0, minPommelGap = Infinity, maxGuardGap = 0, minGuardGap = Infinity, behind = 0, samples = 0, nan = false, gripSide = true, gripWrap = true, prev;
   const sample = steady => {
     const sh = a.up.getWorldPosition(new V()), e = a.fo.getWorldPosition(new V()), wr = a.ha.getWorldPosition(new V());
     // Use the full torso envelope (not only the narrower bare-torso metric).
@@ -124,6 +124,16 @@ export async function carryTurns() {
       maxUpperRoll = Math.max(maxUpperRoll, Math.abs(a.upperRoll || 0) * D);
       const bladeWorld = new V(0, 1, 0).applyQuaternion(rig.katana.quaternion);
       maxBladeAngle = Math.max(maxBladeAngle, wr.clone().sub(e).angleTo(bladeWorld) * D);
+      // The pommel must separate from the forearm, while the index finger
+      // remains just below the tsuba (sword-local y = .1085).
+      const pommel = new V(0, -.154, 0).applyQuaternion(rig.katana.quaternion).add(rig.katana.position);
+      const fore = wr.clone().sub(e), along = Math.max(0, Math.min(1, pommel.clone().sub(e).dot(fore) / fore.lengthSq()));
+      minPommelGap = Math.min(minPommelGap, pommel.distanceTo(e.clone().addScaledVector(fore, along)));
+      const index = R.bone.RightHandIndex3;
+      if (index) {
+        const gap = .1085 - rig.katana.worldToLocal(index.getWorldPosition(new V())).y;
+        minGuardGap = Math.min(minGuardGap, gap); maxGuardGap = Math.max(maxGuardGap, gap);
+      }
       minElbow = Math.min(minElbow, sh.clone().sub(e).angleTo(wr.clone().sub(e)) * D);
       const finger = new V(0, 1, 0).applyQuaternion(a.ha.getWorldQuaternion(new Q()));
       maxBend = Math.max(maxBend, wr.clone().sub(e).angleTo(finger) * D);
@@ -146,7 +156,7 @@ export async function carryTurns() {
     finally { key(k, false); }
   }
   for (let t = 0; t < 2000; t += 4) { I.frame(0, 4, true); sample(false); }
-  return { torso, wrist, minElbow, maxBend, maxBladeAngle, maxUpperRoll, behind, samples, nan, gripSide, gripWrap };
+  return { torso, wrist, minElbow, maxBend, maxBladeAngle, maxUpperRoll, minPommelGap, minGuardGap, maxGuardGap, behind, samples, nan, gripSide, gripWrap };
 }
 
 export async function run() {
@@ -206,6 +216,8 @@ export async function run() {
     check('12 direction changes: relaxed upper-arm roll', r.maxUpperRoll <= 25, `max ${f(r.maxUpperRoll)}° while settled (limit 25)`);
     check('12 direction changes: hand trails shoulder', r.samples > 0 && r.behind === r.samples, `${r.behind}/${r.samples} settled samples at least 20 cm behind`);
     check('12 direction changes: thumb-side sword grip', r.gripSide && r.gripWrap, `blade on thumb side ${r.gripSide}, middle finger wraps hilt ${r.gripWrap}`);
+    check('12 direction changes: pommel clears forearm', r.minPommelGap >= .06, `min ${(r.minPommelGap*100).toFixed(1)} cm from forearm axis (minimum 6)`);
+    check('12 direction changes: index near guard', r.minGuardGap >= .005 && r.maxGuardGap <= .04, `${(r.minGuardGap*100).toFixed(1)}–${(r.maxGuardGap*100).toFixed(1)} cm below guard (range 0.5–4)`);
     check('12 direction changes: NaN', !r.nan, r.nan ? 'NaN in right arm' : 'none');
   }
   lines.unshift(fail.length ? `MOTION CHECK: ${fail.length} FAIL` : 'MOTION CHECK: all PASS');
