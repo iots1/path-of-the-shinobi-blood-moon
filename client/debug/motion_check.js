@@ -34,6 +34,7 @@ async function ready() {
 }
 // open ground, camera yaw 45 so 'a' runs ~5 m without hitting the edge or a target
 function reset(x = 2.5, z = -1, facing = -Math.PI / 4) {
+  if (I.loop) I.loop('off');   // a dev loop (run-in-place / repeat-an-attack) left on would fight every scenario below — always start clean
   I.CAM.yaw.y = I.CAM.yawT = 45; S.act = null; S.phase = 'idle'; S.combo = -1; S.queued = false;
   S.pos.set(x, 0, z); S.facing = facing; S.vel.set(0, 0, 0); adv(1500); S.pos.set(x, 0, z);
 }

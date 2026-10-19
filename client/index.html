@@ -84,6 +84,11 @@
   #capModal button:disabled { opacity: .5; cursor: default; }
   #capModal button:focus-visible { outline: 2px solid #d4574a; outline-offset: 2px; }
   .controls .sep { width: 1px; height: 22px; background: var(--btn-line); margin: 0 4px; }
+  .controls select {
+    font: inherit; font-size: 14px; color: var(--bar-ink); background: var(--bg); min-height: 36px;
+    border: 1px solid var(--btn-line); border-radius: 999px; padding: 5px 10px; cursor: pointer;
+  }
+  .controls select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   @media (max-width: 700px) { .hint { display: none; } .controls { width: 100%; justify-content: center; } }
 </style>
 </head>
@@ -106,6 +111,7 @@
       <span><kbd>C</kbd> arm "Capture 8": the next attack is shown as an 8-frame sheet; Download saves it + a skeleton JSON</span>
       <span><kbd>Q</kbd><kbd>E</kbd> rotate camera</span>
       <span><kbd>R</kbd><kbd>F</kbd> high/low angle</span>
+      <span><kbd>P</kbd> cycle the loop mode (run/walk, one-way or back-and-forth, or an attack — repeats in place, for tuning poses live)</span>
       <span>Scroll wheel to zoom, click-drag (or right-click drag) to free rotate</span>
     </p>
     <div class="controls">
@@ -116,6 +122,17 @@
       <span class="sep"></span>
       <button id="bBones" aria-pressed="false" title="Show skeleton (B)">Skeleton</button>
       <button id="bSlow" aria-pressed="false" title="Slow-mo (T)">Slow-mo</button>
+      <select id="selLoop" title="Repeat a move (or run/walk) in place, for watching it continuously while tuning poses live (P cycles)">
+        <option value="off">Loop: off</option>
+        <option value="run">Loop: run (back and forth)</option>
+        <option value="run1">Loop: run (one way)</option>
+        <option value="walk">Loop: walk (back and forth)</option>
+        <option value="walk1">Loop: walk (one way)</option>
+        <option value="atk1">Loop: attack 1 (J)</option>
+        <option value="atk2">Loop: attack 2 (K)</option>
+        <option value="dual">Loop: dual (K K)</option>
+        <option value="finisher">Loop: finisher (L)</option>
+      </select>
       <button id="bCap" title="Capture the next attack as 8 frames + skeleton JSON (C)">Capture 8</button>
       <button id="bAtk" class="primary" title="Slash (J)">Slash</button>
     </div>
@@ -1077,6 +1094,43 @@ const S={ speed:1, pos:V(0,0,-1), facing:0, vel:V(), moveTo:null, phase:'idle', 
   hitstop:0, clock:0, shake:0, walkPhase:0, walkAmt:0, target:{...IDLE}, st:{...IDLE}, trailId:0, prevTip:null, prevDir:null, edge:V(1,0,0), attackId:0 };
 const facingS=new SOD(3,.9,0,0);
 const keys={};
+// Loop mode (dev convenience, 2026-10-19): repeats a move (or run/walk) in place, so a pose can be watched
+// continuously — e.g. from __iso.CAM / console edits to IDLE/CARRY/COMBO/ATTACK2/ISSEN — without re-pressing a key
+// or re-holding WASD every time. Cycle with P, pick directly from #selLoop, or __iso.loop('atk2') etc.
+// 'run'/'walk' (back and forth) reuse the existing click-to-move path (S.moveTo) to walk along a short line through
+// the character's current facing, turning around at each end (re-picked as a walkable line each time one of them is
+// turned on; WASD overrides it, and it resumes once released). 'run1'/'walk1' (one-way) instead aim S.moveTo 50 m
+// out along that same facing and never retarget — in open ground that's a one-way run off into the distance, but
+// aimed at a wall it just keeps pressing into it (S.vel keeps easing toward the desired velocity even though
+// collision stops S.pos from moving), which is the "stuck running into a wall" case that's otherwise hard to hold
+// in place to look at. The attack modes re-fire the move each time it returns to idle, snapping position and facing
+// back to where the loop started first — attacks that lunge (K, L, beat 3) would otherwise walk the character
+// off-screen after a few repeats.
+const LOOP_MODES=['off','run','run1','walk','walk1','atk1','atk2','dual','finisher'];
+const LOOP_ATTACKS=['atk1','atk2','dual','finisher'];
+let loopMode='off', loopAnchor=null, loopFacing=0, patrolPts=null, patrolI=0;
+function fireLoopMove(){
+  if(loopMode==='atk1') press();
+  else if(loopMode==='atk2') pressK();
+  else if(loopMode==='dual'){ pressK(); pressK(); }   // 2nd call (same frame, still 'idle'→'attack') queues the dual chain, same as two real key presses
+  else if(loopMode==='finisher') pressL();
+}
+function setLoop(mode){
+  if(!LOOP_MODES.includes(mode)) mode='off';
+  loopMode=mode; patrolPts=null; S.moveTo=null;
+  if(mode==='run' || mode==='walk'){
+    const f=V(Math.sin(S.facing),0,Math.cos(S.facing)); let a=null,b=null;
+    for(let d=2.5; d>=.5; d-=.5){ const pa=S.pos.clone().addScaledVector(f,d), pb=S.pos.clone().addScaledVector(f,-d);
+      if(walkable(pa.x,pa.z) && walkable(pb.x,pb.z)){ a=pa; b=pb; break; } }
+    patrolPts=a?[a,b]:[S.pos.clone(),S.pos.clone()]; patrolI=0; S.moveTo=patrolPts[0];
+  } else if(mode==='run1' || mode==='walk1'){
+    const f=V(Math.sin(S.facing),0,Math.cos(S.facing)); S.moveTo=S.pos.clone().addScaledVector(f,50);
+  } else if(LOOP_ATTACKS.includes(mode)){
+    loopAnchor=S.pos.clone(); loopFacing=S.facing;
+    if(S.phase==='idle') fireLoopMove();
+  }
+  const sel=document.getElementById('selLoop'); if(sel) sel.value=mode;
+}
 
 function press(){
   if(S.phase==='idle'){ startAttack(0); return; }
@@ -1568,8 +1622,15 @@ function drawBones(arm){
 }
 
 /* ---------- 6) CAMERA ---------- */
-const CAM={ yaw:new SOD(1.6,1,0,45), pitch:new SOD(1.6,1,0,35.26), zoom:new SOD(1.6,1,0,4.6), yawT:45, pitchT:35.26, zoomT:4.6, focus:V(0,.9,-1) };
-function rotateCam(d){ CAM.yawT+=d; } function tiltCam(d){ CAM.pitchT=clamp(CAM.pitchT+d,12,82); }
+// Camera angle/zoom persisted to localStorage (dev convenience: keeps the view steady across reloads while tuning
+// poses live) — saved (debounced) on every rotate/tilt/zoom/drag, loaded once here before CAM's own defaults.
+const CAM_KEY='potsbm_cam';
+function loadCam(){ try{ const s=JSON.parse(localStorage.getItem(CAM_KEY)); if(s && [s.yaw,s.pitch,s.zoom].every(Number.isFinite)) return s; }catch(e){} return null; }
+let _camSaveT=null;
+function saveCam(){ clearTimeout(_camSaveT); _camSaveT=setTimeout(()=>{ try{ localStorage.setItem(CAM_KEY, JSON.stringify({yaw:CAM.yawT,pitch:CAM.pitchT,zoom:CAM.zoomT})); }catch(e){} },150); }
+const _camInit=loadCam()||{yaw:45,pitch:35.26,zoom:4.6};
+const CAM={ yaw:new SOD(1.6,1,0,_camInit.yaw), pitch:new SOD(1.6,1,0,_camInit.pitch), zoom:new SOD(1.6,1,0,_camInit.zoom), yawT:_camInit.yaw, pitchT:_camInit.pitch, zoomT:_camInit.zoom, focus:V(0,.9,-1) };
+function rotateCam(d){ CAM.yawT+=d; saveCam(); } function tiltCam(d){ CAM.pitchT=clamp(CAM.pitchT+d,12,82); saveCam(); }
 function updateCamera(T){
   S.punch=(S.punch||0)*Math.exp(-T*5);   // finisher camera punch-in (fraction of zoom), decays in ~0.4 s
   const yaw=CAM.yaw.update(T,CAM.yawT)*D2R, pitch=CAM.pitch.update(T,CAM.pitchT)*D2R, zoom=CAM.zoom.update(T,CAM.zoomT)*(1-S.punch-.06*(S.charge||0));
@@ -1591,11 +1652,15 @@ function step(T){
   S.clock+=T*1000;
   // ---- movement ----
   let ix=0,iz=0; if(keys.w||keys.arrowup) iz+=1; if(keys.s||keys.arrowdown) iz-=1; if(keys.d||keys.arrowright) ix+=1; if(keys.a||keys.arrowleft) ix-=1;
+  if(patrolPts && !S.moveTo && !ix && !iz){ patrolI=1-patrolI; S.moveTo=patrolPts[patrolI]; }   // re-target once the current leg is reached (or WASD let go)
+  else if((loopMode==='run1'||loopMode==='walk1') && !S.moveTo && !ix && !iz){ const f=V(Math.sin(S.facing),0,Math.cos(S.facing)); S.moveTo=S.pos.clone().addScaledVector(f,50); }   // re-aim if the far point was somehow reached (open ground) or WASD let go
+  else if(LOOP_ATTACKS.includes(loopMode) && S.phase==='idle'){ S.pos.copy(loopAnchor); S.vel.set(0,0,0); S.facing=loopFacing; fireLoopMove(); }
   const {fwd,right}=camBasis(); const want=V();
   if(ix||iz){ want.addScaledVector(fwd,iz).addScaledVector(right,ix).normalize(); S.moveTo=null; }
   else if(S.moveTo){ const d=V(S.moveTo.x-S.pos.x,0,S.moveTo.z-S.pos.z); if(d.length()<.12) S.moveTo=null; else want.copy(d.normalize()); }
   const canMove=S.phase==='idle';
-  const tv=want.multiplyScalar(canMove?(keys.shift?WALK_SPEED:RUN_SPEED):0);
+  const walkPace=loopMode==='walk'||loopMode==='walk1' || (loopMode==='off' && keys.shift);   // loop 'run'/'walk' (and their one-way variants) force the pace so manual Shift presses during it don't change it
+  const tv=want.multiplyScalar(canMove?(walkPace?WALK_SPEED:RUN_SPEED):0);
   if(S.act && S.act.def.lunge){ const a=S.act, k0=kStart(a.def), k1=kHit(a.def); if(a.t>k0-40 && a.t<k1) tv.add(V(Math.sin(S.facing),0,Math.cos(S.facing)).multiplyScalar(a.def.lunge)); }
   S.vel.lerp(tv,1-Math.exp(-T*(tv.lengthSq()?12:9)));
   const np=S.pos.clone().addScaledVector(S.vel,T);
@@ -1787,7 +1852,8 @@ window.addEventListener('keydown',e=>{ const k=e.key.toLowerCase(); keys.shift=e
   else if(k==='q') rotateCam(-90); else if(k==='e') rotateCam(90);
   else if(k==='r') tiltCam(12); else if(k==='f') tiltCam(-12);
   else if(k==='c') capToggle();
-  else if(k==='b') toggle('bBones'); else if(k==='t') toggle('bSlow'); });
+  else if(k==='b') toggle('bBones'); else if(k==='t') toggle('bSlow');
+  else if(k==='p') setLoop(LOOP_MODES[(LOOP_MODES.indexOf(loopMode)+1)%LOOP_MODES.length]); });
 window.addEventListener('keyup',e=>{ keys[e.key.toLowerCase()]=false; keys.shift=e.shiftKey; });
 window.addEventListener('blur',()=>{ for(const k in keys) keys[k]=false; });
 const cv=renderer.domElement; let drag=null;
@@ -1795,20 +1861,22 @@ cv.addEventListener('contextmenu',e=>e.preventDefault());
 cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId); drag={x:e.clientX,y:e.clientY,moved:false,isClick:e.button===0&&!e.shiftKey}; });
 cv.addEventListener('pointermove',e=>{ if(!drag) return; const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
   if(!drag.moved && Math.hypot(dx,dy)>7) drag.moved=true;
-  if(drag.moved){ CAM.yawT-=dx*.35; tiltCam(dy*.18); drag.x=e.clientX; drag.y=e.clientY; } }); // any held drag free-orbits (full 360° yaw)
+  if(drag.moved){ CAM.yawT-=dx*.35; tiltCam(dy*.18); saveCam(); drag.x=e.clientX; drag.y=e.clientY; } }); // any held drag free-orbits (full 360° yaw)
 cv.addEventListener('pointerup',e=>{ if(drag && !drag.moved && drag.isClick){
     const r=cv.getBoundingClientRect(); ray.setFromCamera({x:(e.clientX-r.left)/r.width*2-1,y:-(e.clientY-r.top)/r.height*2+1},camera);
     const p=ray.ray.intersectPlane(ground,V()); if(p && walkable(p.x,p.z)) S.moveTo=p; }
   drag=null; });
-cv.addEventListener('wheel',e=>{ e.preventDefault(); CAM.zoomT=clamp(CAM.zoomT*Math.pow(1.0015,e.deltaY),.55,9); },{passive:false});
+cv.addEventListener('wheel',e=>{ e.preventDefault(); CAM.zoomT=clamp(CAM.zoomT*Math.pow(1.0015,e.deltaY),.55,9); saveCam(); },{passive:false});
 function toggle(id){ const b=document.getElementById(id), on=b.getAttribute('aria-pressed')!=='true'; b.setAttribute('aria-pressed',on);
   if(id==='bBones'){ boneLines.visible=joints.visible=on; } if(id==='bSlow') S.speed=on?.25:1; }
 const bind=(id,fn)=>document.getElementById(id).addEventListener('click',e=>{ fn(); e.currentTarget.blur(); });
+document.getElementById('selLoop').addEventListener('change',e=>setLoop(e.target.value));
 bind('bRotL',()=>rotateCam(-90)); bind('bRotR',()=>rotateCam(90)); bind('bUp',()=>tiltCam(12)); bind('bDown',()=>tiltCam(-12));
 bind('bBones',()=>toggle('bBones')); bind('bSlow',()=>toggle('bSlow'));
 document.getElementById('bAtk').addEventListener('pointerdown',e=>{ e.preventDefault(); press(); });
 window.__iso={S,step,frame,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
-  GRIP_CFG, GRIP_TUNE, SHOULDER, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; }};  // edit GRIP_CFG in the console, call regrip(), to tune the grip live
+  GRIP_CFG, GRIP_TUNE, SHOULDER, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real) rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L)}; },
+  loop:setLoop};  // edit GRIP_CFG/IDLE/CARRY/COMBO/ATTACK2/ISSEN in the console; regrip() applies a GRIP_CFG edit; loop('atk2') etc. repeats a move in place so poses can be watched continuously while tuning ('off','run','run1','walk','walk1','atk1','atk2','dual','finisher' — the '1' modes run one-way instead of back and forth, e.g. into a wall)
 loadNinja();
 </script>
 </body>
