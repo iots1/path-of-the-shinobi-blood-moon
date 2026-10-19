@@ -62,12 +62,18 @@ func main() {
 	})
 	mux.HandleFunc("/debug/save", saveCapture)
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("../assets"))))
-	mux.Handle("/", http.FileServer(http.Dir("../client")))
+	var handler http.Handler = mux
+	if devMode {
+		mux.Handle("/", clientHandler())
+		handler = enableDevReload(mux)
+	} else {
+		mux.Handle("/", http.FileServer(http.Dir("../client")))
+	}
 
 	addr := ":8080"
 	if p := os.Getenv("PORT"); p != "" {
 		addr = ":" + p
 	}
-	log.Printf("Path of the Shinobi: Blood Moon dev server: http://localhost%s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Printf("Path of the Shinobi: Blood Moon server: http://localhost%s (live reload: %v)", addr, devMode)
+	log.Fatal(http.ListenAndServe(addr, handler))
 }

@@ -7,10 +7,15 @@ Client: Three.js · Server: Go · Art: Blender + Meshy
 ## Running the game
 
 ```bash
-cd server
-go run .
-# open http://localhost:8080
+make dev    # dev: hot reload (edit .go → rebuild + restart; edit html/js/css/glb → browser reloads itself)
+make prod   # build and run the production binary (no reload)
+make stop   # stop the server started by make dev / make prod
+make restart        # stop + dev   (make restart-prod = stop + prod)
+# dev  → http://localhost:8081   (hot reload)
+# prod / `cd server && go run .` → http://localhost:8080   (PORT=9000 make dev|prod to override)
 ```
+
+`make dev` needs [air](https://github.com/air-verse/air) (`go install github.com/air-verse/air@latest`). Plain `cd server && go run .` still works too.
 
 No Go? You can still run it this way (view-only, no server logic):
 
