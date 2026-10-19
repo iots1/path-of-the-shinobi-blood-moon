@@ -512,8 +512,33 @@ function rootLocal(o){ rig.root.updateMatrixWorld(true); return rig.root.matrixW
 const BONE_RENAME={Spine:'Spine02',Spine1:'Spine01',Spine2:'Spine',Neck:'neck',HeadTop_End:'head_end'};
 function canonBone(n){ n=n.replace(/^mixamorig:?/,''); return BONE_RENAME[n]||n; }
 const ARM_REF=.456;
+// GLTFLoader's own texture-dependency resolution is intermittently racy for this model's large (16 MB,
+// 4096²) embedded base-colour PNG: on a plain `.load()`, the resulting material sometimes has `map:null`
+// with nothing thrown or logged — confirmed not an asset problem (the exact same bytes always decode fine
+// via a plain Image()/createImageBitmap(), repeatedly, in isolation) and not new (reproduces on both the
+// pre- and post-shoulder-fix glb). Symptom: the whole character renders flat white (MeshToonMaterial with
+// no map falls back to its white base colour). Fix: fetch the glb ourselves, hand the SAME buffer to
+// GLTFLoader.parse() for the skeleton/mesh, and ALSO decode the base-colour image from it directly,
+// bypassing GLTFLoader's texture pipeline entirely so the result can't depend on that race.
+async function embeddedImageTexture(buf, imageIndex){
+  const dv=new DataView(buf); let offset=12, json=null, bin=null;
+  while(offset<buf.byteLength){
+    const clen=dv.getUint32(offset,true), ctype=dv.getUint32(offset+4,true);
+    const chunk=buf.slice(offset+8,offset+8+clen);
+    if(ctype===0x4E4F534A) json=JSON.parse(new TextDecoder().decode(chunk));
+    else if(ctype===0x004E4942) bin=chunk;
+    offset+=8+clen;
+  }
+  const img=json.images[imageIndex], bv=json.bufferViews[img.bufferView];
+  const bytes=new Uint8Array(bin, bv.byteOffset||0, bv.byteLength);
+  const bitmap=await createImageBitmap(new Blob([bytes],{type:img.mimeType||'image/png'}), {imageOrientation:'flipY', premultiplyAlpha:'none', colorSpaceConversion:'none'});
+  const tex=new THREE.Texture(bitmap);
+  tex.flipY=false; tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.needsUpdate=true;
+  return tex;
+}
 function loadNinja(){
-  new GLTFLoader().load('assets/ninja.glb', gltf=>{
+  fetch('assets/ninja.glb').then(r=>r.arrayBuffer()).then(buf=>{
+  new GLTFLoader().parse(buf, '', async gltf=>{
     const model=gltf.scene, bone={}; let skinned=null;
     model.traverse(o=>{ if(o.isBone) bone[canonBone(o.name)]=o; if(o.isSkinnedMesh) skinned=o; });
     rig.root.add(model);
@@ -573,7 +598,8 @@ function loadNinja(){
     // DoubleSide: Meshy's cloak is a double layer with ~half its faces wound inward. With FrontSide, wherever an outward
     // face is missing the outline hull's back faces show through as black blobs; three flips the normal on back faces,
     // so both layers light correctly from any angle.
-    skinned.material=new THREE.MeshToonMaterial({color:0xffffff, map:skinned.material.map, normalMap:skinned.material.normalMap, gradientMap:bodyGrad, side:THREE.DoubleSide});
+    const bodyMap=await embeddedImageTexture(buf, 0);   // decoded ourselves — see the comment above embeddedImageTexture
+    skinned.material=new THREE.MeshToonMaterial({color:0xffffff, map:bodyMap, normalMap:skinned.material.normalMap, gradientMap:bodyGrad, side:THREE.DoubleSide});
     skinned.material.normalScale.set(2.2,2.2);
     // the trousers/boots albedo is ~0, so gamma alone leaves them black: add a small floor (0.07) so their folds read
     skinned.material.onBeforeCompile=s=>{ s.fragmentShader=s.fragmentShader.replace('#include <map_fragment>','#include <map_fragment>\n diffuseColor.rgb=vec3(0.07)+0.93*pow(diffuseColor.rgb,vec3(0.42));'); };
@@ -618,7 +644,8 @@ function loadNinja(){
     rig.real=real;
     console.log('[GLTF] ninja.glb attached', {flipped:model.rotation.y!==0, armR:[real.arm.R.l1,real.arm.R.l2], hips:real.hipsPos.toArray()});
     loadLocoClips(real, gltf.animations);
-  }, undefined, err=>console.error('[GLTF] failed to load assets/ninja.glb — keeping the procedural character', err));
+  }, err=>console.error('[GLTF] failed to parse assets/ninja.glb — keeping the procedural character', err));
+  }).catch(err=>console.error('[GLTF] failed to fetch assets/ninja.glb — keeping the procedural character', err));
 }
 
 /* Locomotion: Meshy's free walk + run clips (same rig, in place) drive the LEGS ONLY while moving;
@@ -1718,7 +1745,7 @@ cv.addEventListener('pointerup',e=>{ if(drag && !drag.moved && drag.isClick){
     const r=cv.getBoundingClientRect(); ray.setFromCamera({x:(e.clientX-r.left)/r.width*2-1,y:-(e.clientY-r.top)/r.height*2+1},camera);
     const p=ray.ray.intersectPlane(ground,V()); if(p && walkable(p.x,p.z)) S.moveTo=p; }
   drag=null; });
-cv.addEventListener('wheel',e=>{ e.preventDefault(); CAM.zoomT=clamp(CAM.zoomT*Math.pow(1.0015,e.deltaY),1.2,9); },{passive:false});
+cv.addEventListener('wheel',e=>{ e.preventDefault(); CAM.zoomT=clamp(CAM.zoomT*Math.pow(1.0015,e.deltaY),.55,9); },{passive:false});
 function toggle(id){ const b=document.getElementById(id), on=b.getAttribute('aria-pressed')!=='true'; b.setAttribute('aria-pressed',on);
   if(id==='bBones'){ boneLines.visible=joints.visible=on; } if(id==='bSlow') S.speed=on?.25:1; }
 const bind=(id,fn)=>document.getElementById(id).addEventListener('click',e=>{ fn(); e.currentTarget.blur(); });
