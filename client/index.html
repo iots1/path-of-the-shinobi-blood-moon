@@ -938,10 +938,24 @@ function rollToward(grip, qB, dir, f){
 // (see GRIP_CFG) moved the low-bend zone to where by 35/el -55 gives both: ~34° off vertical (close alongside the leg, slight forward lean) and ~9° wrist bend.
 const IDLE={hx:-.25,hy:-.33,hz:.12, by:35, el:-55, hipY:-.01, hipYaw:0, chestYaw:0, lean:.03, headYaw:0, spin:0, spread:.10, step:0, two:0, eye:0, glint:0,
   dual:0, hx2:.3, hy2:-.36, hz2:.14, by2:-30, el2:-30};   // dual = the left hand holds its OWN sword (hx2…el2: its grip point / blade direction, mirrored from the right's)
-// Running/walking carry (blended in by walkAmt while not attacking): blade upright beside the right hip, tip above the shoulder. The idle blade
-// (low, across the front) sat right where the swinging legs go, so running made the legs pass through it. Verify changes with
-// client/debug/motion_check.js (blade↔leg clearance, wrist/elbow speeds, grip, hits).
-const CARRY={...IDLE, hx:-.26, hy:-.26, hz:.12, by:-15, el:55, hipY:0, lean:.05, spread:.12, step:0};   // upright, feet together for running/walking (the Meshy leg clips take over)
+// Running/walking carry (blended in by walkAmt while not attacking): the idle blade (low, across the front) sat right where the swinging legs
+// go, so running made the legs pass through it. First fix: blade upright beside the right hip, tip above the shoulder (by:-15, el:55) — but on
+// this rig that pointed the tip ~56 cm forward-up of the chest (measured at the grip point + 0.82 m along the blade), which combined with the
+// run's forward lean read as the sword thrust out in front rather than carried, and the elbow with it (flagged against a side-view reference,
+// `art/reference/ninja-no-hood/...`, showing the elbow bent BACK behind the torso with the hand at the hip, not reaching forward). Flipping the
+// yaw (by:165, el:-10 — tip back and slightly down, chest-local ≈(0,-.4,-.7)) fixed the elbow/arm direction but put the tip right through the
+// swinging legs' own height band (`m.run()`'s blade↔legs clearance dropped to ~1 cm, limit 10 cm) — raising the grip enough to clear it (tested
+// up to hy:.35) put the hand up near the face instead, which looked worse. Settled on by:140, el:85 (same backward yaw, but almost straight up
+// like the original fix instead of near-horizontal — at el:85, cos(el) is small enough that `by` barely matters any more, it's mostly a pure
+// vertical carry with a slight backward/sideways lean): the elbow still reads as bent back with the hand at the hip (matching the reference), the
+// blade trails up and back over the shoulder instead of thrusting forward. by:140/el:55 and el:65 both passed at full running speed but dipped
+// close to or under the 10 cm limit right at the run/walk START (~100 ms in, measured repeatedly ACROSS FRESH PAGE LOADS, not just within one —
+// while walkAmt is still low the pose is mostly a blend with IDLE's forward-pointing blade, not the full CARRY angle, and that blend can pass
+// through a worse angle than either endpoint; el:65 passed most fresh loads but still failed some at ~0.099 m). el:85 clears it consistently
+// (~11–18 cm across several fresh-page-load `m.run()`s, both run→stop and walk→stop) — verify changes with client/debug/motion_check.js, and
+// specifically reload the page a few times when tuning this, not just re-run `m.run()` in the same session: the run/walk START is history-
+// sensitive (same class of first-load flakiness documented elsewhere in this file for the grip system) and can look fine on a warm session only.
+const CARRY={...IDLE, hx:-.26, hy:-.26, hz:.12, by:140, el:85, hipY:0, lean:.05, spread:.12, step:0};   // feet together for running/walking (the Meshy leg clips take over)
 const P=o=>Object.assign({},IDLE,o);   // (the attack poses used to set eye:1 — a white eye glow during slashes; removed on request. `eye` still drives rig.eyeMat if a pose sets it)
 /* The strikes are authored for the real model's reach (arm 0.456 m; shoulders at chest-local (∓.19,.17,.02)): every two-handed key keeps G within
    ~0.45 m of the right shoulder and the off-hand within reach of the left. The old keys pushed the hands 0.55–0.6 m out (authored for the procedural
