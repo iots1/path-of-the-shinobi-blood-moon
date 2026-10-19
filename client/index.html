@@ -531,7 +531,16 @@ async function embeddedImageTexture(buf, imageIndex){
   }
   const img=json.images[imageIndex], bv=json.bufferViews[img.bufferView];
   const bytes=new Uint8Array(bin, bv.byteOffset||0, bv.byteLength);
-  const bitmap=await createImageBitmap(new Blob([bytes],{type:img.mimeType||'image/png'}), {imageOrientation:'flipY', premultiplyAlpha:'none', colorSpaceConversion:'none'});
+  // imageOrientation:'flipY' here (tried first, to match GLTFLoader's texture.flipY=false convention by
+  // pre-flipping instead) silently produced a visibly degraded decode for this 4096² image — sharp cloth
+  // folds and skin tone turned into a fine, noisy, "shattered glass" mess once mapped onto the mesh at any
+  // close zoom, even though the bitmap still reported 4096×4096 and nothing threw or logged. Confirmed by
+  // diffing crops of the same 300×300 region: 'flipY' decode vs. 'none' decode are NOT the same pixels —
+  // only 'none' matches GLTFLoader's own (working) result pixel-for-pixel. Root cause not pinned down
+  // further (looks like a Chromium createImageBitmap bug/slow-path specific to flipping very large
+  // images), so just avoid it: decode unflipped (as GLTFLoader itself does) and set texture.flipY=false
+  // to match, instead of pre-flipping the bitmap.
+  const bitmap=await createImageBitmap(new Blob([bytes],{type:img.mimeType||'image/png'}), {imageOrientation:'none', premultiplyAlpha:'none', colorSpaceConversion:'none'});
   const tex=new THREE.Texture(bitmap);
   tex.flipY=false; tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.needsUpdate=true;
   return tex;
