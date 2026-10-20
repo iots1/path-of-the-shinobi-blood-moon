@@ -1002,7 +1002,7 @@ function makeGrip(c){
   if(c.tilt) K.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,Math.cos(f),-Math.sin(f)),-c.tilt*D2R));
   return { K, pt:new THREE.Vector3(...c.pt).multiplyScalar(.01) };
 }
-const _gq=new THREE.Quaternion(), _gv=new THREE.Vector3(), GRIP_TUNE={share:1, rollMax:80, bladeRollMax:90, handRollMax:90, tauRoll:.07, swivelBias:.15, swivelHold:.5, tauSwivel:.05, bodyK:12, elbowLift:6, liftFree:-10, swivelRate:1500, rollRate:600, carryRollRate:300, carrySwivelRate:300, wristCost:40, rollByWrist:false};   // elbowLift/liftFree: cost per cm the elbow sits higher than 10 cm below the shoulder; swivelRate: max angular speed of the elbow about the shoulder from the swivel search (°/s)   // bodyK: swivel cost per cm of arm inside the torso
+const _gq=new THREE.Quaternion(), _gv=new THREE.Vector3(), GRIP_TUNE={share:1, rollMax:80, bladeRollMax:90, handRollMax:90, tauRoll:.07, swivelBias:.15, swivelHold:.5, tauSwivel:.05, bodyK:12, elbowLift:6, liftFree:-10, swivelRate:1500, rollRate:600, carryRollRate:300, carrySwivelRate:300, wristCost:40, rollByWrist:false, seatFlex:30};   // elbowLift/liftFree: cost per cm the elbow sits higher than 10 cm below the shoulder; swivelRate: max angular speed of the elbow about the shoulder from the swivel search (°/s)   // bodyK: swivel cost per cm of arm inside the torso
 // share = fraction of the hand's twist given to the forearm (clamped to ±rollMax° first: beyond that the sign flips and the forearm would snap)
 const wrapA=x=>Math.atan2(Math.sin(x),Math.cos(x));
 // maxRate (rad/s): cap on the step — when the wanted blade roll jumps (e.g. it leaves its ±90° clamp as the blade swings from the ready guard to the carry) the exponential
@@ -1205,7 +1205,8 @@ const COMBO=[
     keys:[ [70,  P({hx:-.009,hy:-.120,hz:.192, by:58, el:-52, hipY:-.14, hipYaw:.3, chestYaw:.5, lean:.25, headYaw:-.15, two:1, spread:.26, glint:.6}),'out'],
            [150, P({hx:0,   hy:-.02, hz:.37,  by:25, el:-8,  hipY:-.1, hipYaw:.05, chestYaw:.1, lean:.18, two:1, spread:.24, glint:.8}),'lin'],
            [210, P({hx:-.1,  hy:.2,   hz:.37,  by:-10,el:42,  hipY:-.03,hipYaw:-.2, chestYaw:-.3, lean:.05, headYaw:.1, two:1, spread:.22, glint:1}),'lin'],
-           [360, P({hx:-.08, hy:.36,  hz:.25,  by:-30,el:100, hipY:0,   hipYaw:-.28,chestYaw:-.45,lean:-.08,headYaw:.15, two:1, spread:.2, glint:.6}),'out'] ],
+           // by -30 / el 100 (blade up and back past the right shoulder) folded the left wrist on the hilt to ~2× its range
+           [360, P({hx:-.08, hy:.36,  hz:.25,  by:-10,el:70, hipY:0,   hipYaw:-.28,chestYaw:-.45,lean:-.08,headYaw:.15, two:1, spread:.2, glint:.6}),'out'] ],
     dyn:{hand:[5.0,.55,.8], blade:[4.4,.5,.4], two:[7,1,0]} },
   // 三 — a lunging horizontal cut (yokogiri), right → left, two-handed: torso wound to the right with the blade held out behind the right hip, then a
   // fast forward step while the torso unwinds ~90° and the blade sweeps ~210° around the front, the body leaning well forward (no spin, no deep crouch).
@@ -1216,8 +1217,11 @@ const COMBO=[
   { kanji:'三', lunge:3.4, impactMin:300, chain:99999, end:1050, final:true, reach:2.4, hit:2,
     keys:[ [210, P({hx:-.17, hy:-.04, hz:.30,  by:-62, el:4, hipY:-.07, hipYaw:-.34, chestYaw:-.46, lean:.12, headYaw:.25, spread:.3, two:1, glint:.6}),'out'],
            [330, P({hx:-.049,hy:.001, hz:.306, by:2,   el:0, hipY:-.10, hipYaw:-.04, chestYaw:-.02, lean:.30, headYaw:0, spread:.34, two:1, glint:1}),'lin'],
-           [420, P({hx:.10,  hy:-.04, hz:.30,  by:66,  el:-3,hipY:-.12, hipYaw:.30, chestYaw:.44, lean:.42, headYaw:-.2, spread:.36, two:1, glint:1}),'out'],
-           [640, P({hx:.042, hy:-.032,hz:.218, by:78,  el:-8,hipY:-.10, hipYaw:.32, chestYaw:.46, lean:.36, headYaw:-.2, spread:.34, two:1, glint:.5}),'out'] ],
+           // strike/follow-through: by 66/78 → 30/35 with the torso unwound further (chestYaw .44/.46 → .65/.67, hipYaw .30/.32 → .42/.44) — the
+           // blade still ends ~67–73° left of facing in the world (was 91/104), but relative to the chest it no longer points back past the left
+           // forearm (forearm↔blade 134° → ≤~100°): the left wrist on the hilt went from ~2× to ≤ its range with the seat flex
+           [420, P({hx:0,    hy:-.04, hz:.30,  by:30,  el:-10,hipY:-.12, hipYaw:.42, chestYaw:.65, lean:.42, headYaw:-.2, spread:.36, two:1, glint:1}),'out'],
+           [640, P({hx:.042, hy:-.032,hz:.218, by:35,  el:-8,hipY:-.10, hipYaw:.44, chestYaw:.67, lean:.36, headYaw:-.2, spread:.34, two:1, glint:.5}),'out'] ],
     dyn:{hand:[4.2,.55,.7], blade:[4.2,.5,.3], body:[3.6,.6,.1], two:[7,1,0]} },
 ];
 // attack2 (K) — 突き, a lunging thrust: sink into a deep crouch pulling the hilt back to the right hip (blade level, pointing at the target), then a fast
@@ -1265,10 +1269,12 @@ const DUAL={ kanji:'双', lunge:9, impactMin:440, chain:99999, end:1240, reach:2
 // hit via the elbow-swivel's history dependence. Only 980ms (the hold, after the hit, least risk) is pulled toward ~.384 m. Verified with `m.run()`.
 const ISSEN={ kanji:'斬', lunge:12, impactMin:640, chain:99999, end:1800, final:true, delayed:true, charge:true, release:1280, burst:575, hitEnd:760,
   trailLife:1500, trailTail:260, reach:2.4, hit:2,
+  // strike / hold: blade by 70/72 → 20/22 with the torso unwound further (chest/hip yaw .46/.48 → .75/.77, .32/.34 → .5/.52), same reasoning as beat 3 (三).
+  // (Winding the wind-up further too made the off-hand grab the hilt ~100 ms late in the charge.)
   keys:[ [520, P({hx:-.17,hy:-.06,hz:.29, by:-78, el:-4, hipY:-.2,  hipYaw:-.4,  chestYaw:-.52, lean:.16, headYaw:.25, spread:.34, step:.4, two:1, glint:.5}),'io'],
          [575, P({hx:-.02,hy:-.04,hz:.36, by:4,   el:2,  hipY:-.28, hipYaw:-.02, chestYaw:-.02, lean:.4,  headYaw:0,   spread:.34, step:.8, two:1, glint:1}),'lin'],
-         [640, P({hx:.10, hy:-.05,hz:.30, by:70,  el:6,  hipY:-.3,  hipYaw:.32,  chestYaw:.46,  lean:.5,  headYaw:-.2, spread:.36, step:1,  two:1, glint:1}),'out'],
-         [980, P({hx:.033,hy:-.021,hz:.234, by:72,  el:6,  hipY:-.3,  hipYaw:.34,  chestYaw:.48,  lean:.46, headYaw:-.2, spread:.36, step:1,  two:1, glint:.4}),'out'],
+         [640, P({hx:0,   hy:-.05,hz:.30, by:20,  el:-10, hipY:-.3,  hipYaw:.5,   chestYaw:.75,  lean:.5,  headYaw:-.2, spread:.36, step:1,  two:1, glint:1}),'out'],
+         [980, P({hx:.033,hy:-.021,hz:.234, by:22,  el:6,  hipY:-.3,  hipYaw:.52,  chestYaw:.77,  lean:.46, headYaw:-.2, spread:.36, step:1,  two:1, glint:.4}),'out'],
          [1300,P({hx:-.2, hy:-.1, hz:.22, by:-50, el:-45,hipY:-.14, hipYaw:.1,   chestYaw:.16,  lean:.1,  headYaw:-.05,spread:.3,  step:.3, two:0, glint:.6}),'io'] ],
   dyn:{hand:[5,.55,.7], blade:[5,.5,.3], body:[3.8,.6,.1], two:[7,1,0]} };
 // keys[0] = wind-up, keys[hit] = the strike (default 1; lunge + trail run k0→hit), last key = follow-through (hit test runs k0→last+40)
@@ -1632,6 +1638,14 @@ function applySkeleton(p,T){
     // ease the slide along the hilt — snapping between the 3 cm-apart candidates spun the left fist (one-step 11,000°/s spikes)
     S.sdL=(S.sdL??bestSd)+(bestSd-(S.sdL??bestSd))*(1-Math.exp(-T/.06));
     if(Math.abs(S.sdL-bestSd)>1e-4) q2=gripPass(gL2,real.arm.L,shL,gripAt(S.sdL),qBL,poleL,false,T);
+    // Seat flex: a round hilt can lie more along or more across the palm — a rotation of the hand about its palm normal (hand-local X) through the
+    // palm's contact point (the grip point stays on the hilt), within ±GRIP_TUNE.seatFlex°. With one fixed seat the wrist only stayed in range for a
+    // forearm↔blade angle of ~40–85°; the cuts need ~15–145°. Pick the seat that keeps the wrist in range for this forearm, eased; back to 0 off the hilt.
+    { const f=q2.W.clone().sub(q2.E).normalize(), mx=GRIP_TUNE.seatFlex*D2R; let be=Infinity, bd=0;
+      if((S.twoEff||0)>.05 || p.two>.5) for(let k=-6;k<=6;k++){ const d=k*mx/6, e=wristEllipse(_wl1.copy(f).applyQuaternion(_wlq.copy(qBL).multiply(gL2.K).multiply(_q.setFromAxisAngle(AX_X,d)).invert()),'L').e+.08*Math.abs(d); if(e<be){ be=e; bd=d; } }
+      S.dL=lerp(S.dL||0,bd,1-Math.exp(-T/.06)); }
+    const seatQ=new THREE.Quaternion().setFromAxisAngle(AX_X,S.dL), gL2d={K:gL2.K.clone().multiply(seatQ), pt:gL2.pt};
+    if(Math.abs(S.dL)>1e-4) q2=gripPass(gL2d,real.arm.L,shL,gripAt(S.sdL),qBL,poleL,false,T);
     // grip or let go — never a steady half-weight (that blended the hand halfway between the hilt and the hip, floating in mid-air); hysteresis stops flicker
     // ...and also when the hilt has swept past the body's centre line to the right (beat 3): holding on there drags the left arm straight across
     // the chest (elbow ~10 cm inside the torso) — a real swordsman lets go. (A penetration threshold here also tripped in beats 1–2.)
@@ -1668,7 +1682,7 @@ function applySkeleton(p,T){
     // by how far past the wrist's anatomical range (WRIST_LIM) the resulting forearm direction would bend it. Without this the off-hand wrist folded
     // to 3–6× its range in the two-handed cuts.
     const wGripL=Math.min(1,(S.twoEff||0)+dE);
-    const qHL=wGripL>.01?(dE>.5&&qD?qD.clone():qBL.clone().multiply(_q.setFromAxisAngle(_gv.set(0,1,0),(GRIP_CFG.L.twoRoll||0)*D2R))).multiply(gL.K).invert():null;
+    const qHL=wGripL>.01?(dE>.5&&qD?qD.clone().multiply(gL.K):qBL.clone().multiply(_q.setFromAxisAngle(_gv.set(0,1,0),(GRIP_CFG.L.twoRoll||0)*D2R)).multiply(gL.K).multiply(seatQ)).invert():null;
     const wristCostL=Ek=>qHL?wGripL*GRIP_TUNE.wristCost*Math.max(0,wristEllipse(_wl1.copy(ik.W).sub(Ek).normalize().applyQuaternion(qHL),'L').e-.8):0;
     // continuity (hold) only while it is on the hilt: with a free arm the pole IS the answer, and a sticky elbow kept whichever side it last
     // happened to be on — results depended on what the arm had done before (a flared elbow survived a whole idle second).
@@ -1678,7 +1692,7 @@ function applySkeleton(p,T){
     const qBLk=qBL.clone().multiply(_q.setFromAxisAngle(_gv.set(0,1,0),(GRIP_CFG.L.twoRoll||0)*D2R));   // qBL·Ry(twoRoll)·gL.K = qBL·gL2.K, so aimHand can keep using gL
     let qHand=qBLk;
     if(dq){ S.qHandL=(S.qHandL||qBLk.clone()).slerp(dE>.5?qD:qBLk,1-Math.exp(-T/lerp(.045,.01,smooth(clamp((dE-.7)/.3,0,1))))); qHand=S.qHandL; } else S.qHandL=null;
-    aimHand(real.arm.L,qHand,Math.min(1,S.twoEff+dE),gL,T);   // sum, not max: while the grip hands over (twoEff↓, dE↑) max() dipped under .5 and the fist spun toward the bind pose (10,000°/s one-step spike)
+    aimHand(real.arm.L,qHand,Math.min(1,S.twoEff+dE),dE>.5?gL:{K:gL.K.clone().multiply(seatQ),pt:gL.pt},T);   // (seat flex only on the right sword's hilt) sum, not max: while the grip hands over (twoEff↓, dE↑) max() dipped under .5 and the fist spun toward the bind pose (10,000°/s one-step spike)
     // Free left arm while moving: the clips' own arm swing (an animator's FK — natural plane, elbow bend and wrist, within joint range) replaces the
     // IK pump, faded by walkAmt and out as soon as the hand is wanted on a hilt. The IK pump put the fist on the belly on the back-swing.
     S.armClipW=lerp(S.armClipW||0,RUN_CLIP.armL*(S.act?0:1),1-Math.exp(-T/.08));   // eased: an attack starting mid-run must not snap the arm from the clip pose to the IK pose in one frame

@@ -34,6 +34,11 @@ const LIMITS = {
   wrist: { flex: 80, ext: 70, radial: 25, ulnar: 40 },   // ° — checked as an ellipse (armAngles().wrist ≤ 1 + 3 % tolerance)
   elbowMin: 35,         // ° interior angle (a real elbow stops at ~30–35°)
   shoulderExtMax: 70,   // ° upper arm behind the torso's down axis (normal extension ~50–60°)
+  // The off-hand on the right sword's hilt can't always be in range at the fastest instant of a cut (the wind-up→impact whip of beat 1, the strike
+  // of beat 3 / L: 40–100 ms each). Measured after the seat-flex + key fixes (2026-10-21): combo 6 % of held frames / peak 156 %, L 11 % / 143 %
+  // (before: 73 % / 289 %, 86 % / 343 %).
+  twoHandWristOverFrac: 0.15, // share of two-handed frames allowed past the ellipse
+  twoHandWristPeak: 2.5,      // worst single frame (× the ellipse)
 };
 
 let I, S, R, rig, V, Q;
@@ -241,6 +246,7 @@ export async function shoulderTrace({ until = 2600, runMs = 1200, shift = false,
       // the off-hand on the RIGHT sword's hilt (two-handed cuts) is recorded apart as 'L2' — see the WARN line in run()
       const aa = armAngles(s), rr = (out.rom ??= {})[s === 'L' && (S.twoEff || 0) > .5 ? 'L2' : s] ??= {};
       for (const k in aa) { const r = rr[k] ??= { min: Infinity, max: -Infinity, minAt: 0, maxAt: 0 }; if (aa[k] < r.min) { r.min = aa[k]; r.minAt = t; } if (aa[k] > r.max) { r.max = aa[k]; r.maxAt = t; } }
+      const cnt = (out.romN ??= {})[s === 'L' && (S.twoEff || 0) > .5 ? 'L2' : s] ??= { n: 0, over: 0 }; cnt.n++; if (aa.wrist > 1.03) cnt.over++;
     }
     if (t >= steady[0] && t <= steady[1]) {
       const m = poseMetrics(); if (t % 40 === 0) out.samples.push({ t, ...m });
@@ -326,7 +332,8 @@ export async function run() {
     const r = await shoulderTrace(o), j = Math.max(r.jump.L, r.jump.R), c = Math.max(r.clavRate.L, r.clavRate.R);
     // joint range of motion, every frame, both arms
     const m2 = r.rom.L2;
-    if (m2) lines.push(`WARN  ${name} left wrist ON THE HILT (two-handed): peak ${(m2.wrist.max * 100).toFixed(0)}% of the anatomical ellipse at ${m2.wrist.maxAt}ms (flex ${f(m2.flex.min)}…${f(m2.flex.max)}°, radial ${f(m2.radial.min)}…${f(m2.radial.max)}°) — KNOWN (2026-10-21): the two-handed grip pose itself needs re-authoring; not counted as a FAIL yet`);
+    if (m2) { const c2 = r.romN.L2, fr = c2.over / Math.max(c2.n, 1);
+      check(`${name} left wrist on the hilt (two-handed)`, fr <= LIMITS.twoHandWristOverFrac && m2.wrist.max <= LIMITS.twoHandWristPeak, `out of range ${(fr * 100).toFixed(0)}% of the held frames (limit ${LIMITS.twoHandWristOverFrac * 100}%), peak ${(m2.wrist.max * 100).toFixed(0)}% of the ellipse at ${m2.wrist.maxAt}ms (limit ${LIMITS.twoHandWristPeak * 100}%) — flex ${f(m2.flex.min)}…${f(m2.flex.max)}°, radial ${f(m2.radial.min)}…${f(m2.radial.max)}°`); }
     for (const s of ['R', 'L']) {
       const m = r.rom[s], arm = s === 'R' ? 'right' : 'left';
       if (!m) continue;
