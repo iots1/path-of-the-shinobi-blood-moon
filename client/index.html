@@ -697,7 +697,8 @@ function loadNinja(){
    same phase so the procedural arm swing / torso twist stay in step with the clip's legs. */
 const RUN_SPEED=4.0;      // top movement speed, m/s
 const WALK_SPEED=1.6;     // movement speed while Shift is held, m/s
-const RUN_TUNE={lean:.65,headCounter:.85,wristPitch:-.7}; // live tuning in /debug/run-overlay.html; -.7 puts the blade ~32° below horizontal like the reference (-.39 gave ~51°)
+const RUN_TUNE={lean:.65,headCounter:.85,wristPitch:-.8,wristYaw:-.25}; // live tuning in /debug/run-overlay.html. Blade angle in the image plane, measured at the phase where the right foot leads (u≈.77) against BOTH references:
+// side 29° (ref 31°) and front 31° (ref 34.5°) — pitch alone can't do both (-.6/0: 37°/47°); yaw (about the hand's down axis) swings the blade sideways.
 // RUN_TUNE is calibrated against hip/neck landmarks in the reference overlay.
 const CADENCE_BOOST=1.0;  // >1 = quicker steps than the stride strictly allows (slight foot slide)
 const LOCO_BONES=['LeftUpLeg','LeftLeg','LeftFoot','LeftToeBase','RightUpLeg','RightLeg','RightFoot','RightToeBase'];
@@ -753,7 +754,7 @@ const BACK_GEAR={visible:false}; // temporarily hide back-mounted props while tu
 // Keep the shoulder close to rest height; retract ~6° when walking and ~37° for the trailing run arm.
 // raise (rad): the right clavicle lifts as the upper arm goes up (a real shoulder elevates once the arm passes ~horizontal); without it the overhead
 // beat-1 wind-up read as the arm hinging off a locked, dropped shoulder. Ramped by S.shRaiseR (0..1, from last frame's right-elbow elevation, see the arm solve).
-const SHOULDER={drop:.10,dropR:.08,carryDrop:.06,carryBack:.10,runBack:.30,carryTwist:20,raise:.24};   // dropR: extra idle drop for the RIGHT clavicle only (the right shoulder read higher/more shrugged than the left)
+const SHOULDER={drop:.10,dropR:.08,carryDrop:.06,carryBack:.10,runBack:.12,carryTwist:20,raise:.24};   // runBack was .30: with the torso pitched 40° the retracted right clavicle rose → shoulder line rolled −5° (idle +2°) and the shoulder read shrugged; .12 → ≈ −2° (front reference: right shoulder ~4° higher)   // dropR: extra idle drop for the RIGHT clavicle only (the right shoulder read higher/more shrugged than the left)
 function driveRealBones(real){
   _rlq.clear();
   for(const name in real.bind) real.bone[name].quaternion.copy(real.bind[name].q); // reset → no drift
@@ -825,7 +826,9 @@ const FIST={carryCurl:{Index:.70,Middle:.73,Ring:.76,Pinky:.76}, carryThumb:[.40
   // runAng: the same per-joint idea for the RUN grip (RUN_HOLD seats the hilt differently from the attack grip, and the attack angles sank the ring/pinky tips
   // 7–8 mm into the tsuka while index/middle hung 9–13 mm off it). Grid-searched on the skinned mesh at run phase .3 (every finger's vertices: no vertex
   // more than 0.8 mm inside the hilt surface, the closest 15% held at ~1.5 mm) → every finger touches (min gap .7–1.1 mm), none penetrates.
-  runAng:{Index:[.5,1.4,.95],Middle:[.8,1.1,.85],Ring:[.2,.7,.55],Pinky:[.2,.6,.45]},
+  // Re-solved 2026-10-20 (2nd pass) with client/debug/grip_solver.js for the new RUN_HOLD seat (phi 36 / tilt 12): fingers curl about an axis leaned −30° toward the finger
+  // direction (runAxisTilt) so they wrap the obliquely-held hilt; ≤1.5 mm into the surface (skin gives), skin within 4 mm of the hilt over ~200° (ring 50°, pinky 60°).
+  runAng:{Index:[.65,.6,.4],Middle:[.65,.85,.6],Ring:[.6,.35,.05],Pinky:[.3,.55,.05]}, runAxisTilt:-30,
   thumbPd:{R:[-.776,.58,-.248], L:[.117,.278,.953]}, thumbScale:{R:1.2,L:.25}};
 function prepFingers(real){
   const out=[], qa=new THREE.Quaternion();
@@ -858,11 +861,14 @@ function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (
       const carryHold=c.thumb?FIST.carryThumb[i]:ang[i]*FIST.carryCurl[c.f];
       const runHold=c.thumb?ang[i]*FIST.thumbScale.R:(FIST.runAng?.[c.f]?.[i]??wa?.[i]??ang[i]*wrap);
       const hold=lerp(carryHold,runHold,real.loco?.b||0);
-      j.b.quaternion.copy(j.prevInv).multiply(qa_.setFromAxisAngle(c.A,lerp(wa?wa[i]*kk:ang[i]*k,hold,w))).multiply(j.bindH);
+      // runAxisTilt (deg): while running, the right hand's curl axis leans toward the finger direction like the run hilt does (RUN_HOLD phi), so the fingers wrap
+      // an oblique hilt instead of crossing it as an ellipse (the hilt only touched a few mm of each finger once it was leaned toward the fingers)
+      const tilt=(!c.thumb&&c.side==='Right'&&FIST.runAxisTilt)?FIST.runAxisTilt*D2R*w*(real.loco?.b||0):0;
+      j.b.quaternion.copy(j.prevInv).multiply(qa_.setFromAxisAngle(tilt?AX_T.copy(c.A).applyAxisAngle(AX_X,tilt):c.A,lerp(wa?wa[i]*kk:ang[i]*k,hold,w))).multiply(j.bindH);
     });
   }
 }
-const qa_=new THREE.Quaternion();
+const qa_=new THREE.Quaternion(), AX_X=new THREE.Vector3(1,0,0), AX_T=new THREE.Vector3();
 function aimBone(bone, childDir, target){ // rotate bone (from its bind-relative pose) so childDir points at target
   const pq=bone.parent.getWorldQuaternion(new THREE.Quaternion());
   const wq=pq.clone().multiply(bone.quaternion);
@@ -937,7 +943,10 @@ const gripL2=()=>{ const c=GRIP_CFG.L, a=(c.twoRoll||0)*D2R, [x,y,z]=c.P; return
 // applied AFTER arm IK so wrist/finger tuning cannot move the approved elbow.
 const CARRY_HOLD={palmSign:-1,P:[1,0,0],phi:60,pt:[-3.1,5.5,-3.4],wristFlex:5};
 // Run reference: blade drops behind the fist while the wrist stays neutral.
-const RUN_HOLD=makeGrip({...GRIP_CFG.R,pt:[-4.0,7.75,-1.12]});
+// phi 36 / tilt 12 (attack grip: 30 / 29): the run hilt lies closer to the finger direction so the blade can trail along the forearm like the reference (blade ~21° off the
+// forearm instead of 31°, kashira hidden behind the arm) without a bigger wrist bend. Min blade↔forearm angle = tilt, hence the smaller tilt.
+// pt: the old [-4.0,7.75,-1.12] slid 3.2 cm along the new hilt axis — rotating the hilt about the grip point (phi/tilt change) had pushed the fist into the tsuba (index .3 cm under it).
+const RUN_HOLD=makeGrip({...GRIP_CFG.R,phi:36,tilt:12,pt:[-3.335,9.59,1.412]});
 // Grip point seats the index ~2.4 cm below the guard; fitted to actual skinned hand vertices.
 function makeGrip(c){
   const eX=new THREE.Vector3(...c.P).multiplyScalar(c.palmSign), eZ0=new THREE.Vector3(0,1,0), eY0=new THREE.Vector3().crossVectors(eZ0,eX), f=c.phi*D2R;
@@ -1090,7 +1099,13 @@ const IDLE={hx:-.27,hy:-.44,hz:.05, by:0, el:-30, hipY:-.01, hipYaw:0, chestYaw:
 // The forearm and blade trail together, outside the right side of the body.
 // Reach-clamping keeps a soft ~163° elbow rather than locking it straight.
 const CARRY={...IDLE, hx:-.32, hy:-.23, hz:-.58, by:-175, el:-35, hipY:0, lean:.05, spread:.12, step:0};
-const RUN_ARM={back:.44,drop:.08,out:.12}; // shoulder-relative, stays level as the torso pitches
+const RUN_ARM={back:.44,drop:.14,out:.26};   // drop .08→.14: the front reference's elbow/hand land on their marks at .14 (the side one alone would want .08); at .08–.11 the arm stuck out at shoulder height like a "T" and bunched the deltoid // shoulder-relative, stays level as the torso pitches
+// The free (left) arm at full run, chest-local (before toReach/shoulder-drift): fist back/forward targets of the pump and the elbow-side pole. Front reference
+// (ninja_katana_run_front.jpeg): fist high at the chest, elbow flared wide. fwd was [.20,.04,.36] — measured against that reference at the phase where the
+// right foot leads (u≈.77): this puts the fist on the reference's fist (5 px) and the elbow within ~10 cm of its (the model's arm is shorter than the
+// reference's perspective-enlarged one). The pole only chooses the elbow side; the swivel search still keeps it out of the torso.
+// RUN_ARM.out .12 → .26: the reference's sword arm is spread ~14 cm further out sideways (invisible in the side view).
+const RUN_FREE={back:[.20,-.13,.04], fwd:[.22,.22,.18], pole:[1.8,.3,-.2], poleBack:[.15,-.1,-1]};
 const RUN_V2={...CARRY, hy:-.19, hz:-.62, el:-36}; // raised rear hand; blade trails down behind the extended forearm
 function movingPose(){
   const speed=Math.hypot(S.vel.x,S.vel.z), run=smooth(clamp((speed-2)/1.4,0,1));
@@ -1464,7 +1479,7 @@ function applySkeleton(p,T){
   const u=1-uR;   // u: 0 = fist back at the hip … 1 = fist forward (uR/run are already computed above, for the sword arm's mirrored swing)
   // runP is relative to the STANDING shoulder (see the drift note below); the pre-2026-10-20 values (.20,-.15→.02,-.01→.31) had the old run's
   // ~5 cm shoulder drift baked in — these are the same shoulder-relative pump.
-  const stand=V(.30,-.33,.04), walkP=V(.20,lerp(-.19,-.12,u),lerp(.05,.24,u)), runP=V(.20,lerp(-.13,.04,u),lerp(.04,.36,u));
+  const stand=V(.30,-.33,.04), walkP=V(.20,lerp(-.19,-.12,u),lerp(.05,.24,u)), runP=V(lerp(RUN_FREE.back[0],RUN_FREE.fwd[0],u),lerp(RUN_FREE.back[1],RUN_FREE.fwd[1],u),lerp(RUN_FREE.back[2],RUN_FREE.fwd[2],u));
   const freeL=stand.lerp(walkP.lerp(runP,run),w);
   // The real left shoulder drifts back/down in chest-local space as the run lean grows (the driver's spine pivots at a different height than the
   // glb's Spine02; orientations match, positions don't): at RUN_LEAN .62 it sat ~10 cm behind, the forward pump then reached .45 m and locked
@@ -1472,7 +1487,9 @@ function applySkeleton(p,T){
   const shLc=chest.worldToLocal(shL.clone());
   if(w<.01 && !S.act) S.shL0=(S.shL0||shLc.clone()).lerp(shLc,1-Math.exp(-T/.3));
   const hang=chest.localToWorld(toReach(freeL).add(S.shL0?shLc.sub(S.shL0).multiplyScalar(w*run):V()));
-  const poleFree=V(.55,-.2,-1).lerp(V(.15,-.1,-1),w).normalize().applyQuaternion(cq);
+  // run: elbow flared out only as the fist comes forward (u→1); on the back-swing it points back like before — a flared pole all cycle made a
+  // "chicken wing" behind the body (seen from the back in m.views)
+  const poleFree=V(.55,-.2,-1).lerp(V(.15,-.1,-1).lerp(V(...RUN_FREE.poleBack).lerp(V(...RUN_FREE.pole),u),run),w).normalize().applyQuaternion(cq);
   let eR,wR,eL,wL, sw2=null;
   S.rho=S.rho||{R:0,L:0};
   if(real){
@@ -1527,6 +1544,7 @@ function applySkeleton(p,T){
     const handX=V().crossVectors(handY,handZ).normalize();
     const neutralHand=new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(handX,handY,handZ));
     neutralHand.multiply(new THREE.Quaternion().setFromAxisAngle(V(1,0,0),RUN_TUNE.wristPitch*run));
+    if(RUN_TUNE.wristYaw) neutralHand.multiply(new THREE.Quaternion().setFromAxisAngle(V(0,0,1),RUN_TUNE.wristYaw*run));   // swings the blade sideways (front reference: it trails out to the right)
     const runBlade=neutralHand.multiply(gR.K.clone().invert());
     const handBlade=qBR.clone().slerp(runBlade,run*carryR);
     aimHand(aR,handBlade,1,gR,T,carryR>0?GRIP_TUNE.carryRollRate*D2R:Infinity);
@@ -2077,7 +2095,7 @@ function saveDevState(){ try{ sessionStorage.setItem(DEV_KEY, JSON.stringify({bo
     if(dv.loop && dv.loop!=='off') setLoop(dv.loop);
   }
 }
-window.__iso={S,step,frame,camera,renderer,shaderErrors,RUN_TUNE,RUN_ARM,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
+window.__iso={S,step,frame,camera,renderer,shaderErrors,RUN_TUNE,RUN_ARM,RUN_FREE,makeGrip,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
   GRIP_CFG, GRIP_TUNE, CARRY_HOLD, RUN_HOLD, SHOULDER, BACK_GEAR, setBackGearVisible, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, RUN_V2, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real){ rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L), L2:gripL2()}; rig.real.carryHold=makeGrip(CARRY_HOLD); } },
   loop:setLoop};  // edit GRIP_CFG/IDLE/CARRY/COMBO/ATTACK2/ISSEN in the console; regrip() applies a GRIP_CFG edit; loop('atk2') etc. repeats a move in place so poses can be watched continuously while tuning ('off','run','run1','walk','walk1','atk1','atk2','dual','finisher' — the '1' modes run one-way instead of back and forth, e.g. into a wall)
 loadNinja();
