@@ -725,7 +725,9 @@ function loadLocoClips(real, clips){ // the Walking/Running clips come inside ni
   const w=clips.find(c=>c.name==='Walking'), r=clips.find(c=>c.name==='Running');
   if(!w || !r){ console.warn('[GLTF] no Walking/Running clips in ninja.glb — procedural legs only'); return; }
   real.loco={walk:calibrateClip(real,w), run:calibrateClip(real,r), u:0, w:0, b:0};
-  const L=real.loco; console.log('[GLTF] loco clips ready', {walk:[+L.walk.speed.toFixed(2),+L.walk.dur.toFixed(2)], run:[+L.run.speed.toFixed(2),+L.run.dur.toFixed(2)]});
+  const L=real.loco;
+  // the animator-made arm swing of the same two clips (keyed to their own leg timing — RunningV2 is derived from the embedded Running, same timing)
+  L.arms={walk:{cal:L.walk, tr:clipTracks(real,w,ARM_CLIP_BONES)}, run:{cal:L.run, tr:clipTracks(real,r,ARM_CLIP_BONES)}}; console.log('[GLTF] loco clips ready', {walk:[+L.walk.speed.toFixed(2),+L.walk.dur.toFixed(2)], run:[+L.run.speed.toFixed(2),+L.run.dur.toFixed(2)]});
   // V2 uses this model's rig; keep the embedded run available if the optional asset fails.
   new GLTFLoader().load('/assets/anim/run-v2.glb', gltf=>{
     const clip=gltf.animations.find(c=>c.name==='RunningV2');
@@ -737,6 +739,19 @@ function loadLocoClips(real, clips){ // the Walking/Running clips come inside ni
   },undefined,err=>console.warn('[GLTF] RunningV2 unavailable; using embedded Running',err));
 }
 const _qw=new THREE.Quaternion();
+const ARM_CLIP_BONES=['LeftArm','LeftForeArm','LeftHand','RightArm','RightForeArm','RightHand'];
+// RUN_CLIP.armL: how much of the clips' own left-arm swing replaces the procedural (IK) pump while walking/running with the left hand free (0..1)
+const RUN_CLIP={armL:1};
+function clipTracks(real, clip, names){
+  const m=new Map();
+  for(const tr of clip.tracks){ const [raw,prop]=tr.name.split('.'), n=canonBone(raw); if(prop==='quaternion' && names.includes(n) && real.bone[n]) m.set(n, tr.createInterpolant()); }
+  return m;
+}
+function locoArmPose(L, name, out){ // local rotation of an arm bone in the walk/run clips at the shared phase, blended by L.b
+  const A=L.arms, at=c=>((L.u-.25+c.uFwd)%1+1)%1*c.dur;
+  out.fromArray(A.walk.tr.get(name).evaluate(at(A.walk.cal))).normalize();
+  return out.slerp(_qw.fromArray(A.run.tr.get(name).evaluate(at(A.run.cal))).normalize(), L.b);
+}
 function locoPose(L, bone, out){ // walk/run pose for one bone at the shared phase, blended by L.b
   const at=(c)=>((L.u-.25+c.uFwd)%1+1)%1*c.dur;
   out.fromArray(L.walk.tracks.get(bone).evaluate(at(L.walk))).normalize();
@@ -869,6 +884,36 @@ function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (
   }
 }
 const qa_=new THREE.Quaternion(), AX_X=new THREE.Vector3(1,0,0), AX_T=new THREE.Vector3();
+// Anatomical wrist range (°, adult averages): flexion toward the palm / extension / radial (thumb side) / ulnar (little-finger side) deviation.
+// limitWrist() pulls the hand back onto that ellipse if the solve asked for more (twist stays with the forearm, see aimHand's rollMax).
+// Hand-bone axes on this rig: fingers +Y, thumb side +Z, palm −X (right) / +X (left). client/debug/motion_check.js armAngles() measures the same thing.
+const WRIST_LIM={flex:80, ext:70, radial:25, ulnar:40, rate:3000};   // rate: °/s cap on the hand while it is being held on the boundary
+const _wl1=new THREE.Vector3(), _wl2=new THREE.Vector3(), _wlq=new THREE.Quaternion();
+// fh = the forearm direction (elbow → wrist) in hand space → how much of the wrist's range the bend uses (1 = on the ellipse)
+function wristEllipse(fh, side){
+  const bend=Math.acos(clamp(fh.y,-1,1));
+  const palm=side==='R'?-1:1, phi=Math.atan2(-fh.z,-palm*fh.x), fl=bend*Math.cos(phi), rd=bend*Math.sin(phi);
+  return { bend, e: bend<1e-4?0:Math.hypot(fl/((fl>=0?WRIST_LIM.flex:WRIST_LIM.ext)*D2R), rd/((rd>=0?WRIST_LIM.radial:WRIST_LIM.ulnar)*D2R)) };
+}
+function limitWrist(a, side, weight=1, T=0){
+  const keep=()=>{ (a.wlPrev??=new THREE.Quaternion()).copy(a.ha.quaternion); };
+  if(weight<=0){ a.wlPrev=null; return; }
+  a.ha.updateMatrixWorld(true);
+  const fh=a.ha.getWorldPosition(_wl1).sub(a.fo.getWorldPosition(_wl2)).normalize().applyQuaternion(a.ha.getWorldQuaternion(_wlq).invert());   // forearm direction, hand space
+  const {bend,e}=wristEllipse(fh,side);
+  const ax=_wl2.set(0,1,0).cross(fh);
+  if(e<=1){ keep(); return; }
+  if(ax.lengthSq()<1e-6) ax.set(-(side==='R'?-1:1),0,0).cross(_wl1.set(0,1,0));   // folded straight back (~180°): Y×fh vanishes — bend it back toward the palm side
+  a.ha.quaternion.multiply(_wlq.setFromAxisAngle(ax.normalize(),(bend-bend/e)*weight));   // turn the finger axis toward the forearm until the bend is on the ellipse
+  // on the boundary the projected pose can slide fast when the wanted one swings far outside (measured 16,000°/s in K K) — cap it while clamped
+  if(T>0 && a.wlPrev){ a.wlPrev.rotateTowards(a.ha.quaternion, WRIST_LIM.rate*D2R*T); a.ha.quaternion.copy(a.wlPrev); }
+  // the range wins over the rate: if the capped pose lags outside the ellipse (hand flung toward rest at the end of a cut), pull it in hard
+  a.ha.updateMatrixWorld(true);
+  const fh2=a.ha.getWorldPosition(_wl1).sub(a.fo.getWorldPosition(_wl2)).normalize().applyQuaternion(a.ha.getWorldQuaternion(_wlq).invert()), w2=wristEllipse(fh2,side);
+  const ax2=_wl2.set(0,1,0).cross(fh2);
+  if(w2.e>1 && ax2.lengthSq()>1e-6) a.ha.quaternion.multiply(_wlq.setFromAxisAngle(ax2.normalize(),(w2.bend-w2.bend/w2.e)*weight));
+  keep(); a.ha.updateMatrixWorld(true);
+}
 function aimBone(bone, childDir, target){ // rotate bone (from its bind-relative pose) so childDir points at target
   const pq=bone.parent.getWorldQuaternion(new THREE.Quaternion());
   const wq=pq.clone().multiply(bone.quaternion);
@@ -957,7 +1002,7 @@ function makeGrip(c){
   if(c.tilt) K.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,Math.cos(f),-Math.sin(f)),-c.tilt*D2R));
   return { K, pt:new THREE.Vector3(...c.pt).multiplyScalar(.01) };
 }
-const _gq=new THREE.Quaternion(), _gv=new THREE.Vector3(), GRIP_TUNE={share:1, rollMax:80, bladeRollMax:90, handRollMax:90, tauRoll:.07, swivelBias:.15, swivelHold:.5, tauSwivel:.05, bodyK:12, elbowLift:6, liftFree:-10, swivelRate:1500, rollRate:600, carryRollRate:300, carrySwivelRate:300};   // elbowLift/liftFree: cost per cm the elbow sits higher than 10 cm below the shoulder; swivelRate: max angular speed of the elbow about the shoulder from the swivel search (°/s)   // bodyK: swivel cost per cm of arm inside the torso
+const _gq=new THREE.Quaternion(), _gv=new THREE.Vector3(), GRIP_TUNE={share:1, rollMax:80, bladeRollMax:90, handRollMax:90, tauRoll:.07, swivelBias:.15, swivelHold:.5, tauSwivel:.05, bodyK:12, elbowLift:6, liftFree:-10, swivelRate:1500, rollRate:600, carryRollRate:300, carrySwivelRate:300, wristCost:40, rollByWrist:false};   // elbowLift/liftFree: cost per cm the elbow sits higher than 10 cm below the shoulder; swivelRate: max angular speed of the elbow about the shoulder from the swivel search (°/s)   // bodyK: swivel cost per cm of arm inside the torso
 // share = fraction of the hand's twist given to the forearm (clamped to ±rollMax° first: beyond that the sign flips and the forearm would snap)
 const wrapA=x=>Math.atan2(Math.sin(x),Math.cos(x));
 // maxRate (rad/s): cap on the step — when the wanted blade roll jumps (e.g. it leaves its ±90° clamp as the blade swings from the ready guard to the carry) the exponential
@@ -1559,6 +1604,7 @@ function applySkeleton(p,T){
     const holdW=aR.carryBlend;
     const holdK=real.carryHold.K.clone().slerp(RUN_HOLD.K,run), holdPt=real.carryHold.pt.clone().lerp(RUN_HOLD.pt,run);
     aR.ha.quaternion.multiply(_q.setFromAxisAngle(V(0,0,1),CARRY_HOLD.wristFlex*D2R*holdW));
+    limitWrist(aR,'R',1,T);   // before the sword is glued to the fist below, so the blade follows the limited hand
     aR.ha.updateMatrixWorld(true);
     const seated={K:gripR.K.clone().slerp(holdK,holdW),pt:gripR.pt.clone().lerp(holdPt,holdW)};
     const qH=aR.ha.getWorldQuaternion(new THREE.Quaternion());
@@ -1570,7 +1616,14 @@ function applySkeleton(p,T){
     // a wrist bend past ~140° (extreme swings) it lets go (re-grips below 115°) instead of folding the wrist back.
     const gripAt=sd=>G.clone().addScaledVector(dir,sd);
     const gL2=real.grip.L2;   // the two-handed grip = gL rolled by GRIP_CFG.L.twoRoll about the blade axis (see GRIP_CFG); gL itself stays the K K own-sword grip
-    const q1=gripPass(gL2,real.arm.L,shL,gripAt(-.11),qBR,poleL,false,T), roL=rollToward(gL2,qBR,dir,q1.W.clone().sub(q1.E));
+    const q1=gripPass(gL2,real.arm.L,shL,gripAt(-.11),qBR,poleL,false,T);
+    // The off-hand may sit at any roll around the round hilt: pick the roll that keeps the wrist inside its anatomical range (WRIST_LIM) for this
+    // forearm, staying near last frame's roll (10° steps over ±180°, a small cost per degree moved). rollToward only lined the fingers up with the
+    // forearm, which ignores that a wrist bends far less sideways than toward the palm — the two-handed cuts folded the wrist to ~3× its range.
+    let roL=null;
+    if(GRIP_TUNE.rollByWrist){ const fL=q1.W.clone().sub(q1.E).normalize(), hb=qBR.clone().multiply(gL2.K); let be=Infinity;
+      for(let k=-18;k<=18;k++){ const th=S.rho.L+k*10*D2R, e=wristEllipse(_wl1.copy(fL).applyQuaternion(_wlq.setFromAxisAngle(dir,th).multiply(hb).invert()),'L').e+.004*Math.abs(k*10); if(e<be){ be=e; roL=wrapA(th); } } }
+    else roL=rollToward(gL2,qBR,dir,q1.W.clone().sub(q1.E));
     const roLNow=(S.idleRelax>0)?0:(roL===null?S.rho.L:clampRoll(roL,S.rho.L,GRIP_TUNE.handRollMax*D2R));
     S.rho.L=smoothAngle(S.rho.L, roLNow, T, GRIP_TUNE.tauRoll);   // (no rate cap on the off-hand's roll: capped it re-gripped the hilt up to ~400 ms late in the next attack)
     const qBL=new THREE.Quaternion().setFromAxisAngle(dir,S.rho.L).multiply(qBR);
@@ -1611,15 +1664,29 @@ function applySkeleton(p,T){
     }
     // one IK for the blended wrist target, elbow found on its circle (lerping the hang elbow and the grip elbow cut through the chest mid-grab)
     const ik=solveIK(shL,tL,poleH,aL.l1,aL.l2), prefL=ik.E.clone().sub(shL).normalize(), upL=V(0,1,0).lerp(V(0,1,0).applyQuaternion(cq),w*run).normalize();
+    // On a hilt the hand's orientation is fixed by the grip, so the only freedom left for the wrist is where the elbow sits: cost each candidate elbow
+    // by how far past the wrist's anatomical range (WRIST_LIM) the resulting forearm direction would bend it. Without this the off-hand wrist folded
+    // to 3–6× its range in the two-handed cuts.
+    const wGripL=Math.min(1,(S.twoEff||0)+dE);
+    const qHL=wGripL>.01?(dE>.5&&qD?qD.clone():qBL.clone().multiply(_q.setFromAxisAngle(_gv.set(0,1,0),(GRIP_CFG.L.twoRoll||0)*D2R))).multiply(gL.K).invert():null;
+    const wristCostL=Ek=>qHL?wGripL*GRIP_TUNE.wristCost*Math.max(0,wristEllipse(_wl1.copy(ik.W).sub(Ek).normalize().applyQuaternion(qHL),'L').e-.8):0;
     // continuity (hold) only while it is on the hilt: with a free arm the pole IS the answer, and a sticky elbow kept whichever side it last
     // happened to be on — results depended on what the arm had done before (a flared elbow survived a whole idle second).
-    eL=swivel(shL,ik,aL,T,Ek=>Math.acos(clamp(Ek.clone().sub(shL).normalize().dot(prefL),-1,1))*57.2958*.4+liftCost(shL,Ek,upL),GRIP_TUNE.swivelHold*Math.max(S.twoEff,dE)); wL=ik.W; aL.eRel=eL.clone().sub(shL);
+    eL=swivel(shL,ik,aL,T,Ek=>Math.acos(clamp(Ek.clone().sub(shL).normalize().dot(prefL),-1,1))*57.2958*.4+liftCost(shL,Ek,upL)+wristCostL(Ek),GRIP_TUNE.swivelHold*Math.max(S.twoEff,dE)); wL=ik.W; aL.eRel=eL.clone().sub(shL);
     aimArm(real.arm.L,shL,eL,wL); // hand orientation: from LAST frame's toward the target (the right-hilt grip qBL, then the own-sword grip qD past dE .5) in small steps — a slerp(qBL,qD,dE) flips
     // its path when the two are ~180° apart (36,000°/s one-step wrist spikes, depending on history); the lag shrinks to ~10 ms once the hand is fully dual
     const qBLk=qBL.clone().multiply(_q.setFromAxisAngle(_gv.set(0,1,0),(GRIP_CFG.L.twoRoll||0)*D2R));   // qBL·Ry(twoRoll)·gL.K = qBL·gL2.K, so aimHand can keep using gL
     let qHand=qBLk;
     if(dq){ S.qHandL=(S.qHandL||qBLk.clone()).slerp(dE>.5?qD:qBLk,1-Math.exp(-T/lerp(.045,.01,smooth(clamp((dE-.7)/.3,0,1))))); qHand=S.qHandL; } else S.qHandL=null;
     aimHand(real.arm.L,qHand,Math.min(1,S.twoEff+dE),gL,T);   // sum, not max: while the grip hands over (twoEff↓, dE↑) max() dipped under .5 and the fist spun toward the bind pose (10,000°/s one-step spike)
+    // Free left arm while moving: the clips' own arm swing (an animator's FK — natural plane, elbow bend and wrist, within joint range) replaces the
+    // IK pump, faded by walkAmt and out as soon as the hand is wanted on a hilt. The IK pump put the fist on the belly on the back-swing.
+    S.armClipW=lerp(S.armClipW||0,RUN_CLIP.armL*(S.act?0:1),1-Math.exp(-T/.08));   // eased: an attack starting mid-run must not snap the arm from the clip pose to the IK pose in one frame
+    const clipW=S.armClipW*w*(1-Math.min(1,(S.twoEff||0)+dE));
+    if(L && L.arms && clipW>.001){ for(const n of ['LeftArm','LeftForeArm','LeftHand']) real.bone[n].quaternion.slerp(locoArmPose(L,n,_qr),clipW); aL.up.updateMatrixWorld(true); wL=aL.ha.getWorldPosition(V()); eL=aL.fo.getWorldPosition(V()); aL.eRel=eL.clone().sub(shL); }
+    // free hand, or holding its OWN sword (K K: sword 2 is glued to this fist just below, so it follows) — but not on the right sword's hilt, where the
+    // hand must stay seated on the grip; there the elbow choice above (wristCostL) keeps the wrist in range instead
+    limitWrist(aL,'L',Math.max(smooth(clamp(dE/.3,0,1)),smooth(clamp((.8-(S.twoEff||0))/.3,0,1))*(1-dE)),T);   // full strength once the hand is mostly off the hilt / mostly on its own sword (hand-overs)
     // the second sword is glued to the left fist the same way (blade = hand * K⁻¹)
     if(S.sword2){ const qH=aL.ha.getWorldQuaternion(new THREE.Quaternion()), qB2=qH.clone().multiply(_q.copy(gL.K).invert());
       r.katana2.quaternion.copy(qB2); r.katana2.position.copy(aL.ha.getWorldPosition(V())).add(gL.pt.clone().applyQuaternion(qH));
@@ -2095,7 +2162,7 @@ function saveDevState(){ try{ sessionStorage.setItem(DEV_KEY, JSON.stringify({bo
     if(dv.loop && dv.loop!=='off') setLoop(dv.loop);
   }
 }
-window.__iso={S,step,frame,camera,renderer,shaderErrors,RUN_TUNE,RUN_ARM,RUN_FREE,makeGrip,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
+window.__iso={S,step,frame,camera,renderer,shaderErrors,RUN_TUNE,RUN_ARM,RUN_FREE,RUN_CLIP,makeGrip,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
   GRIP_CFG, GRIP_TUNE, CARRY_HOLD, RUN_HOLD, SHOULDER, BACK_GEAR, setBackGearVisible, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, RUN_V2, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real){ rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L), L2:gripL2()}; rig.real.carryHold=makeGrip(CARRY_HOLD); } },
   loop:setLoop};  // edit GRIP_CFG/IDLE/CARRY/COMBO/ATTACK2/ISSEN in the console; regrip() applies a GRIP_CFG edit; loop('atk2') etc. repeats a move in place so poses can be watched continuously while tuning ('off','run','run1','walk','walk1','atk1','atk2','dual','finisher' — the '1' modes run one-way instead of back and forth, e.g. into a wall)
 loadNinja();
