@@ -735,7 +735,7 @@ const BACK_GEAR={visible:false}; // temporarily hide back-mounted props while tu
 // Keep the shoulder close to its rest height and retract only ~6° during carry.
 // raise (rad): the right clavicle lifts as the upper arm goes up (a real shoulder elevates once the arm passes ~horizontal); without it the overhead
 // beat-1 wind-up read as the arm hinging off a locked, dropped shoulder. Ramped by S.shRaiseR (0..1, from last frame's right-elbow elevation, see the arm solve).
-const SHOULDER={drop:.10,carryDrop:.06,carryBack:.10,carryTwist:20,raise:.24};
+const SHOULDER={drop:.10,dropR:.08,carryDrop:.06,carryBack:.10,carryTwist:20,raise:.24};   // dropR: extra idle drop for the RIGHT clavicle only (the right shoulder read higher/more shrugged than the left)
 function driveRealBones(real){
   _rlq.clear();
   for(const name in real.bind) real.bone[name].quaternion.copy(real.bind[name].q); // reset → no drift
@@ -751,7 +751,7 @@ function driveRealBones(real){
   for(const k in real.shAx){
     const o=real.shAx[k], carry=k==='Right'&&!S.act?S.walkAmt:0;
     const raise=k==='Right'?SHOULDER.raise*(S.shRaiseR||0):0;
-    o.b.quaternion.setFromAxisAngle(o.ax,o.sgn*(lerp(SHOULDER.drop,SHOULDER.carryDrop,carry)-raise));
+    o.b.quaternion.setFromAxisAngle(o.ax,o.sgn*(lerp(SHOULDER.drop+(k==='Right'?SHOULDER.dropR*(1-carry):0),SHOULDER.carryDrop,carry)-raise));
     if(carry) o.b.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(o.backAx,-SHOULDER.carryBack*carry));
     o.b.quaternion.multiply(real.bind[o.name].q);
   }
@@ -1047,7 +1047,7 @@ function rollToward(grip, qB, dir, f){
 // horizontal, not across the body. With GRIP_CFG.R.phi back at 40 (so the fingers can wrap the grip), hand G lowered/back to the thigh (hy -.42, hz .05 —
 // G is a palm-length below the wrist, so -.33 kept the elbow at ~105°) and blade by 0 / el -30: forearm ≈14° off vertical, elbow ≈163°, blade ≈59° off
 // vertical straight ahead, ≈20 cm off the legs.
-const IDLE={hx:-.22,hy:-.42,hz:.05, by:0, el:-30, hipY:-.01, hipYaw:0, chestYaw:0, lean:.03, headYaw:0, spin:0, spread:.10, step:0, two:0, eye:0, glint:0,
+const IDLE={hx:-.27,hy:-.44,hz:.05, by:0, el:-30, hipY:-.01, hipYaw:0, chestYaw:0, lean:.03, headYaw:0, spin:0, spread:.10, step:0, two:0, eye:0, glint:0,
   dual:0, hx2:.3, hy2:-.36, hz2:.14, by2:-30, el2:-30};   // dual = the left hand holds its OWN sword (hx2…el2: its grip point / blade direction, mirrored from the right's)
 // Ninja carry: extend the sword arm behind the shoulder, with a soft elbow.
 // The forearm and blade trail together, outside the right side of the body.
