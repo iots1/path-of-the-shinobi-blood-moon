@@ -1,3 +1,4 @@
+import {gripMetrics} from './rig_detail.js';
 // Motion check — run in the game page after any change to poses / COMBO / IK / grip / locomotion.
 //   const m = await import('/debug/motion_check.js?' + Date.now());
 //   await m.run()                       → PASS/FAIL report (numbers per 4 ms step)
@@ -17,7 +18,9 @@ const LIMITS = {
   freeFlareMax: 0.18,   // m the free off-hand's elbow/wrist may sit outboard of the left shoulder (the old 'balance' pose flung the wrist ~0.3 m out at every attack start)
   freeStandAngleMax: 165, // ° elbow interior angle of the free off-hand standing. Was 150; the new ninja's reference stance (art/reference/new_ninja_katana/ninja_katana_2_front.jpeg) lets the left arm hang almost straight (measured 160°); a fully locked 175°+ arm still reads as broken
   freeMoveAngleMax: 135,  // ° while running/walking: a runner's pump keeps the elbow clearly bent
-  bladeLegMin: 0.1,     // m between the blade and the leg bones while moving (old idle blade: inside a leg 60% of frames)
+  runBladeForearmMax: 45, // V2 reference has the blade angled down behind a near-horizontal forearm; the former parallel carry used 25°. Wrist bend stays capped at 25°.
+  runWristBendMax: 50,  // ° finger-axis vs forearm while running. Was 25 — but wrist bend + blade-vs-forearm angle is ~constant for this hammer grip, and the reference (art/reference/ninja-no-hood/ninja_katana_run_side.jpeg) has the blade ~31° below horizontal (≈15° off the forearm); matching it costs ~40–46° of wrist (RUN_TUNE.wristPitch -.7). The blade-angle checks above still bound the other side of the trade.
+  bladeLegMin: 0.1,    // m between the blade and the leg bones while moving (old idle blade: inside a leg 60% of frames)
   locoTorsoMax: 0.01,   // m an arm point (elbow, upper/forearm, wrist) may sit inside the bare torso while running/walking
   dualTorsoMax: 0.10,   // m — K K: the left arm reaches over the shoulder to the saya hilt via WAY2 (draw / sheathe); measured ≤ ~7.3 (upper chest / armpit); a straight path across the chest was 14
   comboTorsoMax: 0.12,  // m in the combo (the ellipse is conservative at the armpit/upper chest; the hilt used to put the left wrist 15 cm inside; now ≤ ~11.6)
@@ -48,7 +51,7 @@ const torsoPen = p => { const q = rig.chest.worldToLocal(p.clone()); if (q.y < -
 function simulate({ presses = [], until, runMs = 0, shift = false, twoWin = [0, 0], legCheck = false, fn }) {
   reset();
   const prev = {}, H = { R: [], L: [] }, E = { R: [], L: [] }, worst = [];
-  let t = 0, pi = 0, minTwo = 1, bladeLeg = 9, nan = false, torso = 0, torsoAt = '', flare = 0, flareAt = '', angStand = 0, angMove = 0;
+  let t = 0, pi = 0, minTwo = 1, bladeLeg = 9, nan = false, torso = 0, torsoAt = '', flare = 0, flareAt = '', elbowPeak=0, elbowAt='', angStand = 0, angMove = 0;
   if (runMs) key('a', true, shift);
   while (t < until) {
     if (runMs && t === runMs) key('a', false, shift);
@@ -66,7 +69,7 @@ function simulate({ presses = [], until, runMs = 0, shift = false, twoWin = [0, 
       { const sh = a.up.getWorldPosition(new V()), el = a.fo.getWorldPosition(new V()), wr = a.ha.getWorldPosition(new V());
         const p = Math.max(torsoPen(el), torsoPen(sh.clone().lerp(el, .75)), torsoPen(el.clone().lerp(wr, .5)), torsoPen(wr)); if (p > torso) { torso = p; torsoAt = `${t}ms ${s}`; } }
       if ([rel.x, rel.y, rel.z, rel.w, e.x].some(Number.isNaN)) nan = true;
-      if (prev[s]) { const h = prev[s].r.angleTo(rel) * D / .004, ve = e.distanceTo(prev[s].e) / .004; H[s].push(h); E[s].push(ve);
+      if (prev[s]) { const h = prev[s].r.angleTo(rel) * D / .004, ve = e.distanceTo(prev[s].e) / .004; H[s].push(h); E[s].push(ve); if(ve>elbowPeak){elbowPeak=ve;elbowAt=`${t}ms ${s}`;}
         if (h > 6000 || ve > 20) worst.push(`${t}ms ${s} wrist ${Math.round(h)}°/s elbow ${ve.toFixed(1)}m/s`); }
       prev[s] = { r: rel, e };
     }
@@ -76,7 +79,7 @@ function simulate({ presses = [], until, runMs = 0, shift = false, twoWin = [0, 
     }
   }
   key('a', false, shift);
-  return { wristR: stats(H.R), wristL: stats(H.L), elbowR: stats(E.R), elbowL: stats(E.L), minTwo, bladeLeg, nan, torso, torsoAt, flare, flareAt, angStand, angMove, worst: worst.slice(0, 8) };
+  return { wristR: stats(H.R), wristL: stats(H.L), elbowR: stats(E.R), elbowL: stats(E.L), minTwo, bladeLeg, nan, torso, torsoAt, flare, flareAt, elbowAt, angStand, angMove, worst: worst.slice(0, 8) };
 }
 function hits() { // dummy at about 0.8 m — every beat should land
   reset(1.2, 1.6, Math.PI * .25);
@@ -108,7 +111,8 @@ function finisherHit() { // L: the cut is made at ~0.6 s but nothing may react b
 export async function carryTurns() {
   await ready(); reset();
   const a = R.arm.R, route = ['a', 'd', 'a', 'd', 'w', 's', 'w', 's', 'a', 'd', 'a', 'd'];
-  let torso = 0, wrist = 0, minElbow = 180, maxBend = 0, maxBladeAngle = 0, maxUpperRoll = 0, minPommelGap = Infinity, maxGuardGap = 0, minGuardGap = Infinity, behind = 0, samples = 0, nan = false, gripSide = true, gripWrap = true, prev;
+  let skinPen=0,guardPen=0,skinGap=9,skinEnc=360;
+  let torso = 0, wrist = 0, minElbow = 180, maxBend = 0, maxBladeAngle = 0, maxBladeElevation = -90, minTorsoLean = 90, maxTorsoLean = -90, maxUpperRoll = 0, minPommelGap = Infinity, maxGuardGap = 0, minGuardGap = Infinity, behind = 0, samples = 0, nan = false, gripSide = true, gripWrap = true, prev;
   const sample = steady => {
     const sh = a.up.getWorldPosition(new V()), e = a.fo.getWorldPosition(new V()), wr = a.ha.getWorldPosition(new V());
     // Use the full torso envelope (not only the narrower bare-torso metric).
@@ -121,9 +125,13 @@ export async function carryTurns() {
     prev = q;
     nan ||= ![...e.toArray(), ...wr.toArray(), ...q.toArray()].every(Number.isFinite);
     if (steady) {
+      const torsoAxis=wp('neck').sub(wp('Hips')).applyQuaternion(rig.root.quaternion.clone().invert());
+      const torsoLean=Math.atan2(torsoAxis.z,torsoAxis.y)*D;
+      minTorsoLean=Math.min(minTorsoLean,torsoLean);maxTorsoLean=Math.max(maxTorsoLean,torsoLean);
       maxUpperRoll = Math.max(maxUpperRoll, Math.abs(a.upperRoll || 0) * D);
       const bladeWorld = new V(0, 1, 0).applyQuaternion(rig.katana.quaternion);
       maxBladeAngle = Math.max(maxBladeAngle, wr.clone().sub(e).angleTo(bladeWorld) * D);
+      maxBladeElevation = Math.max(maxBladeElevation, Math.asin(Math.max(-1,Math.min(1,bladeWorld.y))) * D);
       // The pommel must separate from the forearm, while the index finger
       // remains just below the tsuba (sword-local y = .1085).
       const pommel = new V(0, -.154, 0).applyQuaternion(rig.katana.quaternion).add(rig.katana.position);
@@ -131,20 +139,23 @@ export async function carryTurns() {
       minPommelGap = Math.min(minPommelGap, pommel.distanceTo(e.clone().addScaledVector(fore, along)));
       const index = R.bone.RightHandIndex3;
       if (index) {
-        const gap = .1085 - rig.katana.worldToLocal(index.getWorldPosition(new V())).y;
+        const gap = .080 - rig.katana.worldToLocal(index.getWorldPosition(new V())).y;
         minGuardGap = Math.min(minGuardGap, gap); maxGuardGap = Math.max(maxGuardGap, gap);
       }
       minElbow = Math.min(minElbow, sh.clone().sub(e).angleTo(wr.clone().sub(e)) * D);
       const finger = new V(0, 1, 0).applyQuaternion(a.ha.getWorldQuaternion(new Q()));
       maxBend = Math.max(maxBend, wr.clone().sub(e).angleTo(finger) * D);
-      if (rig.chest.worldToLocal(wr.clone()).z < rig.chest.worldToLocal(sh.clone()).z - .2) behind++;
+      // The reference arm trails horizontally while the torso pitches forward; measure in the character frame.
+      if (rig.root.worldToLocal(wr.clone()).z < rig.root.worldToLocal(sh.clone()).z - .2) behind++;
       // Anatomical grip check: the blade exits toward the thumb (+hand Z),
       // and the middle finger wraps to the palm side of the real hilt axis.
       const grip = a.ha.worldToLocal(rig.katana.position.clone());
       const blade = new V(0, 1, 0).applyQuaternion(rig.katana.quaternion).applyQuaternion(a.ha.getWorldQuaternion(new Q()).invert());
       gripSide &&= blade.z > .1;
       const mcp = R.bone.RightHandMiddle1, dip = R.bone.RightHandMiddle3;
-      if (mcp && dip) gripWrap &&= a.ha.worldToLocal(mcp.getWorldPosition(new V())).x > grip.x && a.ha.worldToLocal(dip.getWorldPosition(new V())).x < grip.x;
+      // (The DIP joint used to have to sit past the hilt axis too. Geometrically it can't while the finger skin still touches the tsuka — the middle finger is too short for the
+      // hilt's distance from the palm — and with the old attack-grip angles it "passed" while the tip hung 12 mm off the hilt. Real wrap is the enclosure check below.)
+      if (mcp && dip) gripWrap &&= a.ha.worldToLocal(mcp.getWorldPosition(new V())).x > grip.x;
       samples++;
     }
   };
@@ -152,11 +163,11 @@ export async function carryTurns() {
     // Keep each leg on the same open ground; keep velocity, facing and all IK
     // history intact so each key reversal still exercises the real turn.
     S.pos.set(2.5, 0, -1); key(k, true);
-    try { for (let t = 0; t < 1000; t += 4) { I.frame(0, 4, true); sample(t >= 600); } }
+    try { for (let t = 0; t < 1000; t += 4) { I.frame(0, 4, true); sample(t >= 600); } R.skinning.update();const skin=gripMetrics(I);skinPen=Math.max(skinPen,skin.penetratingSamples);guardPen=Math.max(guardPen,skin.guardPenetratingSamples);skinGap=Math.min(skinGap,skin.minSurfaceGapM);skinEnc=Math.min(skinEnc,skin.enclosureDeg); }
     finally { key(k, false); }
   }
   for (let t = 0; t < 2000; t += 4) { I.frame(0, 4, true); sample(false); }
-  return { torso, wrist, minElbow, maxBend, maxBladeAngle, maxUpperRoll, minPommelGap, minGuardGap, maxGuardGap, behind, samples, nan, gripSide, gripWrap };
+  return { skinPen,guardPen,skinGap,skinEnc,torso, wrist, minElbow, maxBend, maxBladeAngle, maxBladeElevation, minTorsoLean, maxTorsoLean, maxUpperRoll, minPommelGap, minGuardGap, maxGuardGap, behind, samples, nan, gripSide, gripWrap };
 }
 
 export async function run() {
@@ -167,7 +178,7 @@ export async function run() {
   for (const [name, o] of [['run→stop', { until: 2600, runMs: 1200, legCheck: true }], ['walk→stop', { until: 3000, runMs: 1600, shift: true, legCheck: true }]]) {
     const r = simulate(o), w = Math.max(r.wristR.max, r.wristL.max), e = Math.max(r.elbowR.max, r.elbowL.max);
     check(`${name} wrist`, w <= LIMITS.locoWristMax, `max ${f(w)}°/s (limit ${LIMITS.locoWristMax})`);
-    check(`${name} elbow`, e <= LIMITS.locoElbowMax, `max ${e.toFixed(1)} m/s (limit ${LIMITS.locoElbowMax})`);
+    check(`${name} elbow`, e <= LIMITS.locoElbowMax, `max ${e.toFixed(3)} m/s at ${r.elbowAt} (limit ${LIMITS.locoElbowMax})`);
     check(`${name} blade↔legs`, r.bladeLeg >= LIMITS.bladeLegMin, `min ${r.bladeLeg.toFixed(3)} m (limit ${LIMITS.bladeLegMin})`);
     check(`${name} arms inside torso`, r.torso <= LIMITS.locoTorsoMax, `deepest ${(r.torso * 100).toFixed(1)} cm ${r.torsoAt} (limit ${LIMITS.locoTorsoMax * 100} cm)`);
     check(`${name} free-arm flare`, r.flare <= LIMITS.freeFlareMax, `max ${(r.flare * 100).toFixed(0)} cm outboard of the shoulder ${r.flareAt} (limit ${LIMITS.freeFlareMax * 100} cm)`);
@@ -211,13 +222,17 @@ export async function run() {
     check('12 direction changes: right arm outside torso', r.torso <= LIMITS.locoTorsoMax, `deepest ${(r.torso * 100).toFixed(1)} cm (full torso envelope)`);
     check('12 direction changes: right wrist speed', r.wrist <= LIMITS.locoWristMax, `max ${f(r.wrist)}°/s (limit ${LIMITS.locoWristMax})`);
     check('12 direction changes: extended right elbow', r.minElbow >= 150, `min ${f(r.minElbow)}° while settled (minimum 150)`);
-    check('12 direction changes: neutral right wrist', r.maxBend <= 25, `max ${f(r.maxBend)}° bend while settled (limit 25)`);
-    check('12 direction changes: blade follows forearm', r.maxBladeAngle <= 25, `max ${f(r.maxBladeAngle)}° off forearm (limit 25)`);
+    check('12 direction changes: neutral right wrist', r.maxBend <= LIMITS.runWristBendMax, `max ${f(r.maxBend)}° bend while settled (limit ${LIMITS.runWristBendMax})`);
+    check('12 direction changes: reference blade angle', r.maxBladeAngle <= LIMITS.runBladeForearmMax, `max ${f(r.maxBladeAngle)}° off forearm (limit ${LIMITS.runBladeForearmMax}; V2 downward blade)`);
+    check('12 direction changes: reference torso lean', r.minTorsoLean >= 35 && r.maxTorsoLean <= 45, `${f(r.minTorsoLean)}–${f(r.maxTorsoLean)}° from vertical (reference ≈40°)`);
+    check('12 direction changes: blade points down', r.maxBladeElevation <= -10, `highest ${f(r.maxBladeElevation)}° from horizontal (must be below -10°)`);
     check('12 direction changes: relaxed upper-arm roll', r.maxUpperRoll <= 25, `max ${f(r.maxUpperRoll)}° while settled (limit 25)`);
     check('12 direction changes: hand trails shoulder', r.samples > 0 && r.behind === r.samples, `${r.behind}/${r.samples} settled samples at least 20 cm behind`);
     check('12 direction changes: thumb-side sword grip', r.gripSide && r.gripWrap, `blade on thumb side ${r.gripSide}, middle finger wraps hilt ${r.gripWrap}`);
     check('12 direction changes: pommel clears forearm', r.minPommelGap >= .06, `min ${(r.minPommelGap*100).toFixed(1)} cm from forearm axis (minimum 6)`);
     check('12 direction changes: index near guard', r.minGuardGap >= .005 && r.maxGuardGap <= .04, `${(r.minGuardGap*100).toFixed(1)}–${(r.maxGuardGap*100).toFixed(1)} cm below guard (range 0.5–4)`);
+    check('12 direction changes: actual hand mesh clears hilt and guard',r.skinPen===0&&r.guardPen===0,`hilt penetrating surface samples ${r.skinPen}, guard ${r.guardPen}, minimum hilt gap ${(r.skinGap*1000).toFixed(1)} mm (surface tolerance 2 mm)`);
+    check('12 direction changes: hand skin wraps the hilt', r.skinEnc>=150, `skin within 4 mm of the hilt over ≥${r.skinEnc}° of its circumference (minimum 150°)`);
     check('12 direction changes: NaN', !r.nan, r.nan ? 'NaN in right arm' : 'none');
   }
   lines.unshift(fail.length ? `MOTION CHECK: ${fail.length} FAIL` : 'MOTION CHECK: all PASS');

@@ -1,3 +1,22 @@
+# Codex setup (2026-10-20)
+
+Blender MCP is registered globally in `~/.codex/config.toml` as `blender`:
+
+```toml
+[mcp_servers.blender]
+command = "/Users/PEEPO/.local/bin/uvx"
+args = ["--offline", "mcp-for-blender"]
+```
+
+Blender's add-on listens on `127.0.0.1:9876`. A real MCP initialize, tool listing,
+`get_scene_info`, and `execute_blender_code` succeeded. New MCP configuration may
+require reopening Codex or starting a new chat before native Blender tools appear.
+The running add-on reports protocol 13; the cached server expects 14. These tested
+commands work through its compatibility fallback; the add-on was not replaced.
+
+`tools/build_run_v2.py` runs inside Blender via `execute_blender_code` and creates
+`assets/anim/run-v2.glb` without modifying the open scene. See `docs/RUN_V2.md`.
+
 # Working with Blender via Claude CLI
 
 ## Setup (one-time)

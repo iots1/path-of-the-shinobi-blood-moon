@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>Rig detail inspection</title>
+<style>body{margin:0;background:#222;color:#eee;font:14px system-ui}nav{padding:12px}button,input{margin:4px;padding:8px}iframe{position:fixed;left:-1100px;width:1024px;height:768px}canvas{width:100%;max-height:80vh;object-fit:contain}pre{white-space:pre-wrap}</style>
+<nav><button id="inspect" disabled>Inspect full rig + grip</button><button id="solve" disabled>Fit finger wrap</button><label>Capture name <input id="tag" value="after-detail"></label><a href="/debug/run-overlay.html">Overlay</a></nav><pre id="status">Loading model…</pre><canvas id="result"></canvas><iframe src="/?motionOverlay=1"></iframe>
+<script type="module">
+import {inspect,solve} from '/debug/rig_detail.js';
+const f=document.querySelector('iframe'),status=document.querySelector('#status');
+f.onload=async()=>{const style=f.contentDocument.createElement('style');style.textContent='.stage-wrap{position:fixed!important;inset:0!important;width:100%!important;height:100%!important;padding:0!important}#stage{width:100%!important;height:100%!important;box-shadow:none!important}';f.contentDocument.head.append(style);while(!f.contentWindow.__iso?.rig.real?.loco?.version)await new Promise(r=>setTimeout(r,100));for(const b of document.querySelectorAll('button'))b.disabled=false;status.textContent='Ready';};
+document.querySelector('#inspect').onclick=async()=>{status.textContent='Inspecting…';try{status.textContent=await inspect(f.contentWindow.__iso,document.querySelector('#result'),document.querySelector('#tag').value);}catch(e){status.textContent=e.stack;}};
+document.querySelector('#solve').onclick=async()=>{status.textContent='Fitting fingers…';try{status.textContent=await solve(f.contentWindow.__iso);}catch(e){status.textContent=e.stack;}};
+</script>

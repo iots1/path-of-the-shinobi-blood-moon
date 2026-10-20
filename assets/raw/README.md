@@ -1,5 +1,7 @@
 # Model versions
 
+Current locomotion (2026-10-20): `assets/anim/run-v2.glb:RunningV2` supplies running legs; walking uses `assets/ninja.glb:Walking`. The embedded `Running` is a fallback. Tables below describe historical versions; the old `backup-hood-v2-2026-10-18/anim/run.glb` is not loaded. See `docs/RUN_V2.md`.
+
 Every model Meshy produced for this project, kept so nothing has to be regenerated (or paid for) again.
 Meshy API task links expire after a few days, and tasks made through the API/MCP never show up in the
 Meshy web app — this folder is the only lasting copy. The live in-game file is `assets/ninja.glb` (the 2026-10-19 "no-hood ninja"; it carries its own Walking/Running clips).
