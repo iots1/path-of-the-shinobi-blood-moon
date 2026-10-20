@@ -27,3 +27,6 @@ dist/
 
 # Motion captures written by the "Capture 8" button (server POST /debug/save)
 out/
+
+# motion-guard stop counter (lets a session end after 3 blocked stops)
+.claude/.motion-stop-count

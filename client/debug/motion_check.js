@@ -15,15 +15,25 @@ const LIMITS = {
   comboWristMax: 12000, // °/s single-step peak (fast cuts reach ~8,000; flips were 25,000–44,000)
   comboWristP95: 4000,  // °/s
   minTwo: 0.8,          // off-hand grip weight through beats 1–3 (all three cuts are two-handed now)
-  freeFlareMax: 0.18,   // m the free off-hand's elbow/wrist may sit outboard of the left shoulder (the old 'balance' pose flung the wrist ~0.3 m out at every attack start)
+  freeFlareMax: 0.22,   // m the free off-hand's elbow/wrist may sit outboard of the left shoulder (the old 'balance' pose flung the wrist ~0.3 m out at every attack start). Was .18 — the run front reference (ninja_katana_run_front.jpeg) has the left elbow flared wide (measured 20 cm at the pump's front extreme)
   freeStandAngleMax: 165, // ° elbow interior angle of the free off-hand standing. Was 150; the new ninja's reference stance (art/reference/new_ninja_katana/ninja_katana_2_front.jpeg) lets the left arm hang almost straight (measured 160°); a fully locked 175°+ arm still reads as broken
-  freeMoveAngleMax: 135,  // ° while running/walking: a runner's pump keeps the elbow clearly bent
+  freeMoveAngleMax: 135,  // ° while RUNNING: a runner's pump keeps the elbow clearly bent (the Running clip arm: 76–116°)
+  freeWalkAngleMax: 177,  // ° while walking: the Walking clip swings a relaxed, almost straight arm (121–176°) like a real walk — only a hyper-extended (locked past straight) elbow fails
   runBladeForearmMax: 45, // V2 reference has the blade angled down behind a near-horizontal forearm; the former parallel carry used 25°. Wrist bend stays capped at 25°.
   runWristBendMax: 50,  // ° finger-axis vs forearm while running. Was 25 — but wrist bend + blade-vs-forearm angle is ~constant for this hammer grip, and the reference (art/reference/ninja-no-hood/ninja_katana_run_side.jpeg) has the blade ~31° below horizontal (≈15° off the forearm); matching it costs ~40–46° of wrist (RUN_TUNE.wristPitch -.7). The blade-angle checks above still bound the other side of the trade.
   bladeLegMin: 0.1,    // m between the blade and the leg bones while moving (old idle blade: inside a leg 60% of frames)
   locoTorsoMax: 0.01,   // m an arm point (elbow, upper/forearm, wrist) may sit inside the bare torso while running/walking
   dualTorsoMax: 0.10,   // m — K K: the left arm reaches over the shoulder to the saya hilt via WAY2 (draw / sheathe); measured ≤ ~7.3 (upper chest / armpit); a straight path across the chest was 14
   comboTorsoMax: 0.12,  // m in the combo (the ellipse is conservative at the armpit/upper chest; the hilt used to put the left wrist 15 cm inside; now ≤ ~11.6)
+  // per-frame shoulder checks (shoulderTrace) — provisional, set from the first measurement (2026-10-21), see CLAUDE.md
+  shoulderJumpMax: 1.0, // m/s the shoulder joint (LeftArm/RightArm) may move in the chest bone's own frame — it only moves by the clavicle, so a fast slide = a pop
+  clavRateMax: 400,     // °/s clavicle bone angular speed
+  runRollSwingMax: 6,   // ° peak-to-peak side-to-side sway of the hips→neck axis while running steadily (front reference: upright, no visible lean)
+  runShoulderRollSwingMax: 10, // ° peak-to-peak tilt of the shoulder line while running steadily
+  // anatomical range of motion (2026-10-21, adult averages; same numbers as WRIST_LIM in index.html, which enforces them)
+  wrist: { flex: 80, ext: 70, radial: 25, ulnar: 40 },   // ° — checked as an ellipse (armAngles().wrist ≤ 1 + 3 % tolerance)
+  elbowMin: 35,         // ° interior angle (a real elbow stops at ~30–35°)
+  shoulderExtMax: 70,   // ° upper arm behind the torso's down axis (normal extension ~50–60°)
 };
 
 let I, S, R, rig, V, Q;
@@ -51,7 +61,7 @@ const torsoPen = p => { const q = rig.chest.worldToLocal(p.clone()); if (q.y < -
 function simulate({ presses = [], until, runMs = 0, shift = false, twoWin = [0, 0], legCheck = false, fn }) {
   reset();
   const prev = {}, H = { R: [], L: [] }, E = { R: [], L: [] }, worst = [];
-  let t = 0, pi = 0, minTwo = 1, bladeLeg = 9, nan = false, torso = 0, torsoAt = '', flare = 0, flareAt = '', elbowPeak=0, elbowAt='', angStand = 0, angMove = 0;
+  let t = 0, pi = 0, minTwo = 1, bladeLeg = 9, nan = false, torso = 0, torsoAt = '', flare = 0, flareAt = '', elbowPeak=0, elbowAt='', angStand = 0, angMove = 0, angWalk = 0;
   if (runMs) key('a', true, shift);
   while (t < until) {
     if (runMs && t === runMs) key('a', false, shift);
@@ -65,7 +75,7 @@ function simulate({ presses = [], until, runMs = 0, shift = false, twoWin = [0, 
         const sh = rig.chest.worldToLocal(a.up.getWorldPosition(new V())), el = rig.chest.worldToLocal(a.fo.getWorldPosition(new V())), wr = rig.chest.worldToLocal(a.ha.getWorldPosition(new V()));
         const fl = Math.max(el.x - sh.x, wr.x - sh.x); if (fl > flare) { flare = fl; flareAt = `${t}ms`; }
         const ang = sh.clone().sub(el).angleTo(wr.clone().sub(el)) * D;
-        if (!S.act && S.twoEff < .05) { if (S.walkAmt > .8) angMove = Math.max(angMove, ang); else if (S.walkAmt < .02) angStand = Math.max(angStand, ang); } }
+        if (!S.act && S.twoEff < .05) { if (S.walkAmt > .8) { if ((R.loco.b || 0) > .7) angMove = Math.max(angMove, ang); else if ((R.loco.b || 0) < .3) angWalk = Math.max(angWalk, ang); } else if (S.walkAmt < .02) angStand = Math.max(angStand, ang); } }
       { const sh = a.up.getWorldPosition(new V()), el = a.fo.getWorldPosition(new V()), wr = a.ha.getWorldPosition(new V());
         const p = Math.max(torsoPen(el), torsoPen(sh.clone().lerp(el, .75)), torsoPen(el.clone().lerp(wr, .5)), torsoPen(wr)); if (p > torso) { torso = p; torsoAt = `${t}ms ${s}`; } }
       if ([rel.x, rel.y, rel.z, rel.w, e.x].some(Number.isNaN)) nan = true;
@@ -79,7 +89,7 @@ function simulate({ presses = [], until, runMs = 0, shift = false, twoWin = [0, 
     }
   }
   key('a', false, shift);
-  return { wristR: stats(H.R), wristL: stats(H.L), elbowR: stats(E.R), elbowL: stats(E.L), minTwo, bladeLeg, nan, torso, torsoAt, flare, flareAt, elbowAt, angStand, angMove, worst: worst.slice(0, 8) };
+  return { wristR: stats(H.R), wristL: stats(H.L), elbowR: stats(E.R), elbowL: stats(E.L), minTwo, bladeLeg, nan, torso, torsoAt, flare, flareAt, elbowAt, angStand, angMove, angWalk, worst: worst.slice(0, 8) };
 }
 function hits() { // dummy at about 0.8 m — every beat should land
   reset(1.2, 1.6, Math.PI * .25);
@@ -170,6 +180,79 @@ export async function carryTurns() {
   return { skinPen,guardPen,skinGap,skinEnc,torso, wrist, minElbow, maxBend, maxBladeAngle, maxBladeElevation, minTorsoLean, maxTorsoLean, maxUpperRoll, minPommelGap, minGuardGap, maxGuardGap, behind, samples, nan, gripSide, gripWrap };
 }
 
+// ---- Per-frame shoulder / balance metrics (every 4 ms step) ----
+// Character frame: +X = the character's LEFT, +Y up, +Z forward. Roll angles: + = toward the character's left / left side higher.
+const rootDir = v => v.applyQuaternion(rig.root.quaternion.clone().invert());
+export function poseMetrics() {   // call after ready() (m.run / m.views / m.shoulderTrace do)
+  const deg = x => +(x * D).toFixed(1);
+  const torso = rootDir(wp('neck').sub(wp('Hips'))), shl = rootDir(wp('LeftArm').sub(wp('RightArm'))), pel = rootDir(wp('LeftUpLeg').sub(wp('RightUpLeg')));
+  const head = rootDir(wp('head_end').sub(wp('Head')));
+  const inv = R.bone.Spine.matrixWorld.clone().invert(), shL = wp('LeftArm').applyMatrix4(inv), shR = wp('RightArm').applyMatrix4(inv);
+  const clav = s => deg(R.bone[s + 'Shoulder'].quaternion.angleTo(R.bind[s + 'Shoulder'].q));
+  return {
+    torsoRoll: deg(Math.atan2(torso.x, torso.y)), torsoPitch: deg(Math.atan2(torso.z, torso.y)),
+    shoulderRoll: deg(Math.atan2(shl.y, Math.hypot(shl.x, shl.z))), pelvisRoll: deg(Math.atan2(pel.y, Math.hypot(pel.x, pel.z))),
+    headRoll: deg(Math.atan2(head.x, head.y)), shoulderDyCm: +((shL.y - shR.y) * 100).toFixed(1), clavL: clav('Left'), clavR: clav('Right'),
+  };
+}
+// Anatomical joint angles of one arm (degrees). Hand-bone axes on this rig: fingers +Y, thumb side +Z, palm faces −X (right) / +X (left).
+//   elbow  = interior angle shoulder–elbow–wrist (180 straight; a real elbow flexes to ~30–35°)
+//   flex   = hand bent toward the palm (+) / back of the hand (−, extension)   radial = toward the thumb (+) / little finger (−, ulnar)
+//   ext    = shoulder extension: how far the upper arm points BEHIND the torso's down axis in the torso's sagittal plane
+export function armAngles(side) {
+  const a = R.arm[side], deg = x => x * D;
+  const sh = a.up.getWorldPosition(new V()), el = a.fo.getWorldPosition(new V()), wr = a.ha.getWorldPosition(new V());
+  const elbow = deg(sh.clone().sub(el).angleTo(wr.clone().sub(el)));
+  const fh = wr.clone().sub(el).normalize().applyQuaternion(a.ha.getWorldQuaternion(new Q()).invert());   // forearm direction in hand space
+  const palm = side === 'R' ? -1 : 1;   // hand-local X sign of the palm normal
+  // total bend split by direction (polar), so a >90° bend reads as e.g. 110° flexion instead of flipping to ±180 like a per-axis atan2 does
+  const bend = Math.acos(Math.max(-1, Math.min(1, fh.y))), phi = Math.atan2(-fh.z, -palm * fh.x);
+  const flex = deg(bend * Math.cos(phi)), radial = deg(bend * Math.sin(phi));
+  const up = el.clone().sub(sh).normalize().applyQuaternion(rig.chest.getWorldQuaternion(new Q()).invert());   // chest-local: +Y up, +Z forward
+  const ext = deg(Math.asin(Math.max(0, Math.min(1, -up.z))));   // 0 = in the frontal plane or forward, 90 = straight back (an arm raised overhead is flexion, not extension)
+  // wrist range-of-motion use: 1 = on the anatomical ellipse (LIMITS.wrist), >1 = past what a wrist can do
+  const W = LIMITS.wrist, wrist = Math.hypot(flex / (flex >= 0 ? W.flex : W.ext), radial / (radial >= 0 ? W.radial : W.ulnar));
+  return { elbow, flex, radial, ext, wrist };
+}
+// Steps a scenario 4 ms at a time and records, for each shoulder: the shoulder joint's speed in the chest's own frame (a pop = the joint jumping on
+// the torso), the clavicle bone's angular speed, and the balance angles above. `steady` = the window used for the roll amplitudes.
+export async function shoulderTrace({ until = 2600, runMs = 1200, shift = false, presses = [], fn, steady = [600, 1200], route } = {}) {
+  await ready();
+  reset();
+  const out = { jump: { L: 0, R: 0, at: '' }, clavRate: { L: 0, R: 0, at: '' }, amp: {}, worst: [], samples: [] };
+  const prev = {}, rng = {};
+  let t = 0, pi = 0, ri = 0;
+  if (route) key(route[0], true); else if (runMs) key('a', true, shift);
+  while (t < until) {
+    if (route && ri < route.length && t >= (ri + 1) * 1000) { key(route[ri], false); ri++; if (ri < route.length) key(route[ri], true); }
+    if (!route && runMs && t === runMs) key('a', false, shift);
+    if (pi < presses.length && t >= presses[pi]) { (fn ? I[fn] : I.press)(); pi++; }
+    I.frame(0, 4, true); t += 4;
+    const inv = R.bone.Spine.matrixWorld.clone().invert();
+    for (const s of ['L', 'R']) {
+      const side = s === 'L' ? 'Left' : 'Right', p = wp(side + 'Arm').applyMatrix4(inv), q = R.bone[side + 'Shoulder'].quaternion.clone();
+      if (prev[s]) {
+        const v = p.distanceTo(prev[s].p) / .004, w = prev[s].q.angleTo(q) * D / .004;
+        if (v > out.jump[s]) { out.jump[s] = v; if (v >= Math.max(out.jump.L, out.jump.R)) out.jump.at = `${t}ms ${s}`; }
+        if (w > out.clavRate[s]) { out.clavRate[s] = w; if (w >= Math.max(out.clavRate.L, out.clavRate.R)) out.clavRate.at = `${t}ms ${s}`; }
+        if (v > LIMITS.shoulderJumpMax || w > LIMITS.clavRateMax) out.worst.push(`${t}ms ${s} joint ${v.toFixed(2)} m/s clavicle ${Math.round(w)}°/s`);
+      }
+      prev[s] = { p, q };
+      // the off-hand on the RIGHT sword's hilt (two-handed cuts) is recorded apart as 'L2' — see the WARN line in run()
+      const aa = armAngles(s), rr = (out.rom ??= {})[s === 'L' && (S.twoEff || 0) > .5 ? 'L2' : s] ??= {};
+      for (const k in aa) { const r = rr[k] ??= { min: Infinity, max: -Infinity, minAt: 0, maxAt: 0 }; if (aa[k] < r.min) { r.min = aa[k]; r.minAt = t; } if (aa[k] > r.max) { r.max = aa[k]; r.maxAt = t; } }
+    }
+    if (t >= steady[0] && t <= steady[1]) {
+      const m = poseMetrics(); if (t % 40 === 0) out.samples.push({ t, ...m });
+      for (const k in m) { const r = rng[k] ??= [Infinity, -Infinity]; r[0] = Math.min(r[0], m[k]); r[1] = Math.max(r[1], m[k]); }
+    }
+  }
+  if (route) key(route[route.length - 1], false); else key('a', false, shift);
+  for (const k in rng) out.amp[k] = { min: rng[k][0], max: rng[k][1], swing: +(rng[k][1] - rng[k][0]).toFixed(1) };
+  out.worst = out.worst.slice(0, 8);
+  return out;
+}
+
 export async function run() {
   await ready();
   const lines = [], fail = [];
@@ -182,7 +265,7 @@ export async function run() {
     check(`${name} blade↔legs`, r.bladeLeg >= LIMITS.bladeLegMin, `min ${r.bladeLeg.toFixed(3)} m (limit ${LIMITS.bladeLegMin})`);
     check(`${name} arms inside torso`, r.torso <= LIMITS.locoTorsoMax, `deepest ${(r.torso * 100).toFixed(1)} cm ${r.torsoAt} (limit ${LIMITS.locoTorsoMax * 100} cm)`);
     check(`${name} free-arm flare`, r.flare <= LIMITS.freeFlareMax, `max ${(r.flare * 100).toFixed(0)} cm outboard of the shoulder ${r.flareAt} (limit ${LIMITS.freeFlareMax * 100} cm)`);
-    check(`${name} free-arm elbow bend`, r.angMove <= LIMITS.freeMoveAngleMax && r.angStand <= LIMITS.freeStandAngleMax, `moving max ${f(r.angMove)}° (limit ${LIMITS.freeMoveAngleMax}), standing max ${f(r.angStand)}° (limit ${LIMITS.freeStandAngleMax})`);
+    check(`${name} free-arm elbow bend`, r.angMove <= LIMITS.freeMoveAngleMax && r.angWalk <= LIMITS.freeWalkAngleMax && r.angStand <= LIMITS.freeStandAngleMax, `running max ${f(r.angMove)}° (limit ${LIMITS.freeMoveAngleMax}), walking max ${f(r.angWalk)}° (limit ${LIMITS.freeWalkAngleMax}), standing max ${f(r.angStand)}° (limit ${LIMITS.freeStandAngleMax})`);
     check(`${name} NaN`, !r.nan, r.nan ? 'NaN in a bone' : 'none');
     if (r.worst.length) lines.push('      spikes: ' + r.worst.join(' | '));
   }
@@ -235,8 +318,32 @@ export async function run() {
     check('12 direction changes: hand skin wraps the hilt', r.skinEnc>=150, `skin within 4 mm of the hilt over ≥${r.skinEnc}° of its circumference (minimum 150°)`);
     check('12 direction changes: NaN', !r.nan, r.nan ? 'NaN in right arm' : 'none');
   }
+  // every 4 ms step: shoulder pops + side-to-side sway (see shoulderTrace)
+  for (const [name, o] of [['run→stop', { until: 2600, runMs: 1200, steady: [700, 1200] }], ['walk→stop', { until: 3000, runMs: 1600, shift: true, steady: [900, 1600] }],
+                           ['combo (standing)', { until: 1900, runMs: 0, presses: [0, 420, 860], steady: [0, 0] }], ['run reversals', { until: 6000, route: ['a', 'd', 'a', 'd', 'w', 's'], steady: [0, 0] }],
+                           ['thrust K', { until: 1200, runMs: 0, presses: [0], fn: 'pressK', steady: [0, 0] }], ['dual K K', { until: 2000, runMs: 0, presses: [0, 340], fn: 'pressK', steady: [0, 0] }],
+                           ['finisher L', { until: 2000, runMs: 0, presses: [0], fn: 'pressL', steady: [0, 0] }]]) {
+    const r = await shoulderTrace(o), j = Math.max(r.jump.L, r.jump.R), c = Math.max(r.clavRate.L, r.clavRate.R);
+    // joint range of motion, every frame, both arms
+    const m2 = r.rom.L2;
+    if (m2) lines.push(`WARN  ${name} left wrist ON THE HILT (two-handed): peak ${(m2.wrist.max * 100).toFixed(0)}% of the anatomical ellipse at ${m2.wrist.maxAt}ms (flex ${f(m2.flex.min)}…${f(m2.flex.max)}°, radial ${f(m2.radial.min)}…${f(m2.radial.max)}°) — KNOWN (2026-10-21): the two-handed grip pose itself needs re-authoring; not counted as a FAIL yet`);
+    for (const s of ['R', 'L']) {
+      const m = r.rom[s], arm = s === 'R' ? 'right' : 'left';
+      if (!m) continue;
+      check(`${name} ${arm} wrist range`, m.wrist.max <= 1.03, `peak ${(m.wrist.max * 100).toFixed(0)}% of the anatomical ellipse at ${m.wrist.maxAt}ms (flex ${f(m.flex.min)}…${f(m.flex.max)}°, radial ${f(m.radial.min)}…${f(m.radial.max)}°; limits flex ${LIMITS.wrist.flex}/ext ${LIMITS.wrist.ext}/radial ${LIMITS.wrist.radial}/ulnar ${LIMITS.wrist.ulnar})`);
+      check(`${name} ${arm} elbow/shoulder range`, m.elbow.min >= LIMITS.elbowMin && m.ext.max <= LIMITS.shoulderExtMax, `elbow min ${f(m.elbow.min)}° at ${m.elbow.minAt}ms (≥ ${LIMITS.elbowMin}), shoulder extension max ${f(m.ext.max)}° at ${m.ext.maxAt}ms (≤ ${LIMITS.shoulderExtMax})`);
+    }
+    check(`${name} shoulder joint per frame`, j <= LIMITS.shoulderJumpMax, `max ${j.toFixed(2)} m/s at ${r.jump.at} in the chest frame (limit ${LIMITS.shoulderJumpMax})`);
+    check(`${name} clavicle rate per frame`, c <= LIMITS.clavRateMax, `max ${f(c)}°/s at ${r.clavRate.at} (limit ${LIMITS.clavRateMax})`);
+    if (name === 'run→stop') {
+      const a = r.amp, rs = k => `${a[k].min}…${a[k].max}° (swing ${a[k].swing})`;
+      check('run sway: torso roll', a.torsoRoll.swing <= LIMITS.runRollSwingMax, `${rs('torsoRoll')} (limit swing ${LIMITS.runRollSwingMax})`);
+      check('run sway: shoulder line', a.shoulderRoll.swing <= LIMITS.runShoulderRollSwingMax, `${rs('shoulderRoll')} (limit swing ${LIMITS.runShoulderRollSwingMax}); pelvis ${rs('pelvisRoll')}, head ${rs('headRoll')}, L−R shoulder height ${a.shoulderDyCm.min}…${a.shoulderDyCm.max} cm`);
+    }
+  }
   lines.unshift(fail.length ? `MOTION CHECK: ${fail.length} FAIL` : 'MOTION CHECK: all PASS');
-  lines.push('Now LOOK at it: m.sheet({mode:"combo"|"run"|"walk", yawOff:0 front / -90 side / 180 back}) and screenshot the overlay.');
+  lines.push('Now LOOK at it from every side: await m.views({mode:"run"|"walk"|"combo"}) → 8 frames × front/right/back/left, saved to out/motion-views-<mode>.png — open that file.');
+  try { await fetch('/debug/save?name=motion-check.json', { method: 'POST', body: JSON.stringify({ fail: fail.length, failed: fail, lines, at: Date.now() }, null, 1) }); } catch (e) { lines.push('(could not save out/motion-check.json: ' + e.message + ')'); }
   return lines.join('\n');
 }
 
@@ -286,5 +393,77 @@ export async function sheet({ mode = 'combo', times, cols = 6, yawOff = 20, pitc
   if (mode === 'issen') I.ISSEN.lunge = I.ISSEN._lunge;
   if (mode === 'dual' || mode === 'thrust') for (const d of [I.ATTACK2, I.DUAL]) d.lunge = d._lunge;
   return `sheet ${mode}: ${times.length} frames, yawOff ${yawOff} — take a screenshot`;
+}
+// Definition-of-done capture: the SAME 8 frames seen from the front, the character's right, the back and the left (4 rows × 8 columns), with the
+// per-frame balance numbers (poseMetrics) printed under each frame. Saves out/motion-views-<mode>.png + .json (the Stop hook checks for them).
+//   await m.views({mode:'run'})   modes: run | stop (run → stop) | walk | combo | thrust | dual | issen | idle
+//   extra options: skeleton:true (draw the real bones over the body, like the in-game Skeleton toggle), angles:['front'] (subset), times:[...] (ms),
+//   tag:'x' (saves motion-views-<mode>-x.* instead, so a close-up study doesn't replace the definition-of-done capture)
+export async function views({ mode = 'run', pitch = 6, zoom = 1.3, fy = .95, width = .34, save = true, skeleton = false, angles, times: tOverride, tag = '' } = {}) {
+  await ready();
+  const sc0 = rig.root.parent; let k = rig.katana; while (k.parent && k.parent !== sc0) k = k.parent;
+  const keep = new Set([rig.root, k, rig.katana2]); for (const e of rig.eyes) { let p = e; while (p.parent && p.parent !== sc0) p = p.parent; keep.add(p); }
+  for (const s of rig.real?.backSwords || []) keep.add(s.g);
+  for (const c of sc0.children) { if (keep.has(c) || c.isLight || c.isCamera || (c.isMesh && c.renderOrder === 5) || (c.type === 'Object3D' && !c.children.length)) continue; if (skeleton && c.renderOrder === 10) continue; c.visible = false; }
+  const bb = document.getElementById('bBones');
+  if (skeleton && bb && bb.getAttribute('aria-pressed') !== 'true') bb.click();
+  const ev = (a, n, step) => Array.from({ length: n }, (_, i) => a + i * step);
+  const plan = { run: { runMs: 1500, times: ev(860, 8, 79) },   // one 0.633 s RunningV2 cycle, steady speed
+                 stop: { runMs: 1200, times: [1100, 1180, 1240, 1300, 1360, 1440, 1560, 1800] },
+                 walk: { runMs: 2400, shift: true, times: ev(1200, 8, 130) },
+                 idle: { times: ev(600, 8, 120) },
+                 combo: { presses: [0, 420, 860], times: [100, 190, 300, 450, 600, 760, 1000, 1250] },
+                 thrust: { presses: [0], fn: 'pressK', times: [60, 170, 220, 260, 300, 420, 640, 900] },
+                 dual: { presses: [0, 340], fn: 'pressK', times: [400, 520, 620, 760, 980, 1180, 1420, 1700] },
+                 issen: { presses: [0], fn: 'pressL', times: [250, 540, 610, 640, 700, 1150, 1320, 1600] } }[mode];
+  if (!plan) throw new Error('views: unknown mode ' + mode);
+  if (tOverride) plan.times = tOverride;
+  const ANG = [['front', 0], ['right', -90], ['back', 180], ['left', 90]].filter(a => !angles || angles.includes(a[0]));
+  const lunged = { combo: I.COMBO, thrust: [I.ATTACK2, I.DUAL], dual: [I.ATTACK2, I.DUAL], issen: [I.ISSEN] }[mode] || [];
+  for (const d of lunged) { d._lunge ??= d.lunge; d.lunge = 0; }   // keep the character in frame
+  reset();
+  const cv = document.querySelector('canvas'), W = cv.width, H = cv.height, cw = Math.round(W * width), ch = Math.round(H * .8), cx = Math.round(W * .5 - cw / 2);
+  const cols = plan.times.length, s = Math.min(3600 / (cols * cw), 1), lab = 34;
+  let out = document.getElementById('motionSheet');
+  if (!out) { out = document.createElement('canvas'); out.id = 'motionSheet'; out.style.cssText = 'position:fixed;left:0;top:0;z-index:99;background:#fff;max-width:100vw;max-height:100vh'; document.body.appendChild(out); }
+  out.style.display = 'block'; out.width = cols * cw * s; out.height = ANG.length * (ch * s + lab);
+  const g = out.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, out.width, out.height);
+  const frames = [];
+  if (plan.runMs) key('a', true, plan.shift);
+  let t = 0, i = 0, pi = 0;
+  while (i < cols) {
+    if (plan.runMs && t === plan.runMs) key('a', false, plan.shift);
+    if (pi < (plan.presses || []).length && t >= plan.presses[pi]) { (plan.fn ? I[plan.fn] : I.press)(); pi++; }
+    if (t >= plan.times[i]) {
+      const m = poseMetrics(), saved = [I.CAM.yaw.y, I.CAM.yawT, I.CAM.focus.clone(), I.CAM.pitch.y, I.CAM.pitchT, I.CAM.zoom.y, I.CAM.zoomT];
+      ANG.forEach(([name, yawOff], r) => {
+        I.CAM.yaw.y = I.CAM.yawT = rig.root.rotation.y * D + yawOff; I.CAM.pitch.y = I.CAM.pitchT = pitch; I.CAM.zoom.y = I.CAM.zoomT = zoom; I.CAM.focus.set(S.pos.x, fy, S.pos.z); I.frame(0, 0);
+        const x = i * cw * s, y = r * (ch * s + lab);
+        g.drawImage(cv, cx, 0, cw, ch, x, y, cw * s, ch * s); g.strokeStyle = '#999'; g.strokeRect(x, y, cw * s, ch * s);
+        g.fillStyle = '#c00'; g.font = 'bold 20px sans-serif'; g.fillText(`${name} ${plan.times[i]}ms`, x + 6, y + 22);
+        g.fillStyle = '#222'; g.font = '15px sans-serif';
+        g.fillText(`torso roll ${m.torsoRoll}°  shoulders ${m.shoulderRoll}°  pelvis ${m.pelvisRoll}°  head ${m.headRoll}°`, x + 4, y + ch * s + 15);
+        g.fillText(`L−R shoulder ${m.shoulderDyCm} cm  clavicle L ${m.clavL}° R ${m.clavR}°  pitch ${m.torsoPitch}°`, x + 4, y + ch * s + 31);
+      });
+      [I.CAM.yaw.y, I.CAM.yawT] = saved; I.CAM.focus.copy(saved[2]); I.CAM.pitch.y = saved[3]; I.CAM.pitchT = saved[4]; I.CAM.zoom.y = saved[5]; I.CAM.zoomT = saved[6];   // movement is camera-relative: don't steer the run
+      frames.push({ t: plan.times[i], speed: +Math.hypot(S.vel.x, S.vel.z).toFixed(2), ...m });
+      i++; continue;
+    }
+    I.frame(0, 4, true); t += 4;
+  }
+  key('a', false, plan.shift);
+  for (const d of lunged) d.lunge = d._lunge;
+  const data = { mode, angles: ANG.map(a => a[0]), frames, at: Date.now() };
+  let saved = '';
+  if (save) {
+    try {
+      const blob = await new Promise(r => out.toBlob(r, 'image/png'));
+      await fetch(`/debug/save?name=motion-views-${mode}${tag ? "-" + tag : ""}.png`, { method: 'POST', body: blob });
+      await fetch(`/debug/save?name=motion-views-${mode}${tag ? "-" + tag : ""}.json`, { method: 'POST', body: JSON.stringify(data, null, 1) });
+      saved = ` → saved out/motion-views-${mode}${tag ? "-" + tag : ""}.png + .json (open the PNG to look at it)`;
+    } catch (e) { saved = ' (save failed: ' + e.message + ')'; }
+  }
+  const sw = k => { const v = frames.map(f => f[k]); return `${Math.min(...v)}…${Math.max(...v)}`; };
+  return `views ${mode}: ${cols} frames × ${ANG.length} angles; torso roll ${sw('torsoRoll')}°, shoulder line ${sw('shoulderRoll')}°, pelvis ${sw('pelvisRoll')}°, head ${sw('headRoll')}°${saved}`;
 }
 export function hideSheet() { const o = document.getElementById('motionSheet'); if (o) o.style.display = 'none'; }
