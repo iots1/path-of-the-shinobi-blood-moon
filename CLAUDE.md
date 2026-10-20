@@ -164,6 +164,7 @@ Known follow-ups:
 - Walking is improved but still FK-only (no real foot-plant IK) — fine for now, revisit if it still looks off from more angles
 
 ## Project rules
+- **three.js skills** (`.claude/skills/threejs-*`, from CloudAI-X/threejs-skills, see `.claude/skills/README.md`) are written for r186. This project is pinned to `three@0.160.0` with the r128 colour/light pipeline above — when a skill's advice disagrees (WebGPU/TSL, physical light units, colour management, newer addon APIs), these project rules win; check an API exists in 0.160 before using it.
 - **The Go side is the sole authority on outcomes** (whether a hit landed, how much health is lost) — never trust values sent by the client.
 - Do not commit `.glb/.blend/.fbx` files until `git lfs install` has been run.
 - Models from Meshy: record which plan was used to generate them in `docs/CREDITS.md` (free-tier plans = CC BY 4.0, credit required).
