@@ -733,7 +733,9 @@ function rlq(o){ // root-local quaternion of a glb node, built from the current 
 const BACK_GEAR={visible:false}; // temporarily hide back-mounted props while tuning the shoulder/grip
 // Clavicle drop/retraction in radians; carryTwist limits upper-arm roll in degrees.
 // Keep the shoulder close to its rest height and retract only ~6° during carry.
-const SHOULDER={drop:.10,carryDrop:.06,carryBack:.10,carryTwist:20};
+// raise (rad): the right clavicle lifts as the upper arm goes up (a real shoulder elevates once the arm passes ~horizontal); without it the overhead
+// beat-1 wind-up read as the arm hinging off a locked, dropped shoulder. Ramped by S.shRaiseR (0..1, from last frame's right-elbow elevation, see the arm solve).
+const SHOULDER={drop:.10,carryDrop:.06,carryBack:.10,carryTwist:20,raise:.24};
 function driveRealBones(real){
   _rlq.clear();
   for(const name in real.bind) real.bone[name].quaternion.copy(real.bind[name].q); // reset → no drift
@@ -748,7 +750,8 @@ function driveRealBones(real){
   }
   for(const k in real.shAx){
     const o=real.shAx[k], carry=k==='Right'&&!S.act?S.walkAmt:0;
-    o.b.quaternion.setFromAxisAngle(o.ax,o.sgn*lerp(SHOULDER.drop,SHOULDER.carryDrop,carry));
+    const raise=k==='Right'?SHOULDER.raise*(S.shRaiseR||0):0;
+    o.b.quaternion.setFromAxisAngle(o.ax,o.sgn*(lerp(SHOULDER.drop,SHOULDER.carryDrop,carry)-raise));
     if(carry) o.b.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(o.backAx,-SHOULDER.carryBack*carry));
     o.b.quaternion.multiply(real.bind[o.name].q);
   }
@@ -1071,11 +1074,19 @@ const COMBO=[
   // so once every key clamps to the same max distance, they all give the identical "locked straight" elbow — that's the stiff/robotic swing). Each key's
   // (hx,hy,hz) was rescaled toward the shoulder to ~.37 m so the elbow can actually flex through the cut; `lunge` raised 2.6→2.9 to make up the lost reach.
   { kanji:'一', lunge:2.9, impactMin:270, chain:410, end:1010, reach:2.0, hit:3, start:1,
-    keys:[ [100, P({hx:-.02,hy:.01,hz:.26, by:10, el:15, hipY:-.16, hipYaw:-.05, chestYaw:-.1, lean:.12, headYaw:0, two:1, spread:.26, step:-.2, glint:.2}),'out'],
-           [190, P({hx:-.05,hy:.42,hz:.11, by:45, el:128, hipY:-.12, hipYaw:-.3, chestYaw:-.5, lean:-.22, headYaw:.2, two:1, spread:.3, step:-.5, glint:.4}),'out'],
+    // 2026-10-20 raise re-shaped: key 0's blade was level (el 15), so at 100–130 ms the straight right arm read as a forward jab before the lift;
+    // it now already angles up (el 50) so the tip rises in one continuous motion. The wind-up (190) was hands at FACE height (G y .42, wrist only
+    // ~24 cm above the shoulder) with the right elbow ~1 cm below shoulder height and tucked to the centre line — a cramped lift, the hilt in front of
+    // the face. Now G sits above the forehead (hy .54, hz .14, hx -.04 — kept near the centre line, see the note above COMBO) with the blade back over the head (by 0 / el 135): right upper arm rises to
+    // ~+28° (was −6°), elbow ~130°, plus the clavicle lift (SHOULDER.raise). Picked from a static-hold scan of (hx,hy,hz,by,el) for upper-arm
+    // elevation with right wrist bend <50° and the off-hand still gripping.
+    keys:[ [100, P({hx:-.02,hy:.06,hz:.24, by:10, el:50, hipY:-.16, hipYaw:-.05, chestYaw:-.1, lean:.12, headYaw:0, two:1, spread:.26, step:-.2, glint:.2}),'out'],
+           [190, P({hx:-.04,hy:.54,hz:.14, by:0, el:135, hipY:-.12, hipYaw:-.3, chestYaw:-.5, lean:-.22, headYaw:.2, two:1, spread:.3, step:-.5, glint:.4}),'out'],
            [260, P({hx:-.05,hy:.20,hz:.28, by:35, el:60,  hipY:-.16, hipYaw:0, chestYaw:.04, lean:.12, headYaw:0, two:1, spread:.3, step:-.8, glint:.8}),'in'],
            [310, P({hx:-.01,hy:-.02,hz:.24, by:10, el:-22, hipY:-.24, hipYaw:.15, chestYaw:.3, lean:.38, headYaw:-.12, two:1, spread:.3, step:-1, glint:1}),'lin'],
-           [455, P({hx:-.01,hy:-.11,hz:.18, by:55, el:-55, hipY:-.26, hipYaw:.3, chestYaw:.5, lean:.42, headYaw:-.12, two:1, spread:.3, step:-1, glint:.6}),'out'] ],
+           // follow-through hx -.01 → .02 (2026-10-20): with the new wind-up above, beat 2 started with the left wrist ~1 cm past the crossL line and
+           // let go of the hilt for ~75 ms (530–610 ms) in EVERY combo; ending beat 1 3 cm further to the character's left keeps it gripped.
+           [455, P({hx:.02,hy:-.11,hz:.18, by:55, el:-55, hipY:-.26, hipYaw:.3, chestYaw:.5, lean:.42, headYaw:-.12, two:1, spread:.3, step:-1, glint:.6}),'out'] ],
     dyn:{hand:[4.6,.55,.7], blade:[3.3,.5,.4], body:[3.6,.6,.1], two:[7,1,0]} },   // hand 4.6 Hz: the sword hand has to cross from the right hip to the belly centre before the left hand may grip (crossL rule) — at 3.6 Hz the first J after a reload sometimes never gripped in the wind-up
   // 二 — the rising cut. Keys are authored so the hands actually travel (low-left → forward with the arms extended → up beside the right shoulder); the old
   // keys dwelt ~150 ms near the belly (key 0 ≈ the end of beat 1), then flicked the blade from level to vertical in ~40 ms around hands that had barely
@@ -1445,6 +1456,8 @@ function applySkeleton(p,T){
     const qBR=new THREE.Quaternion().setFromAxisAngle(dir,S.rho.R).multiply(qB0);
     const p2=gripPass(gR,aR,shR,G,qBR,poleR,true,T,carryR); aR.eRel=p2.eRel;
     G.copy(p2.G); eR=p2.E; wR=p2.W;
+    { const up=chest.worldToLocal(eR.clone()).sub(chest.worldToLocal(shR.clone())), elev=Math.asin(clamp(up.y/up.length(),-1,1))/D2R;   // upper-arm elevation (°, chest-local)
+      S.shRaiseR=lerp(S.shRaiseR||0, smooth(clamp((elev+15)/50,0,1)), 1-Math.exp(-T/.06)); }   // clavicle lift: none below −15°, full at +35° (driveRealBones applies it next frame)
     aimArm(aR,shR,eR,wR,lerp(Math.PI,SHOULDER.carryTwist*D2R,carryR),T); aimHand(aR,qBR,1,gR,T,carryR>0?GRIP_TUNE.carryRollRate*D2R:Infinity);
     // the sword is glued to the fist: blade = hand * K⁻¹, G = wrist + palm offset (≈ qBR/G; exact even where the IK/twist limits bite)
     const holdW=aR.carryBlend;
