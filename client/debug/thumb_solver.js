@@ -24,7 +24,7 @@ export function apply(I, qs) {
   ch.joints[0].b.updateMatrixWorld(true);
 }
 const segDist = (p, a, b) => { const ab = b.clone().sub(a), t = Math.max(0, Math.min(1, p.clone().sub(a).dot(ab) / ab.lengthSq())); return p.distanceTo(a.clone().addScaledVector(ab, t)); };
-function candidates(I, { fingerGap = .012, keep = 24 } = {}) {
+function candidates(I, { fingerGap = .012, keep = 24, target = 'mid' } = {}) {
   const { R, V, Q, M4, ha, K, ch } = ctx(I);
   const save = ch.joints.map(j => j.b.quaternion.clone());
   ch.joints.forEach(j => j.b.quaternion.copy(j.prevInv).multiply(j.bindH)); ch.joints[0].b.updateMatrixWorld(true);
@@ -33,7 +33,7 @@ function candidates(I, { fingerGap = .012, keep = 24 } = {}) {
   ch.joints.forEach((j, k) => j.b.quaternion.copy(save[k])); ch.joints[0].b.updateMatrixWorld(true);
   const seg = [0, 1, 2].map(i => bj[i + 1].clone().sub(bj[i]));
   const H2K = new M4().copy(K.matrixWorld).invert().multiply(ha.matrixWorld), toK = p => p.clone().applyMatrix4(H2K);
-  const idx = [2, 3].map(i => toK(HL(R.bone['RightHandIndex' + i])));
+  const idx = (target === 'pip' ? [1, 2, 3] : [2, 3]).map(i => toK(HL(R.bone['RightHandIndex' + i])));   // 'pip': proximal + middle phalanx (the index wraps further round with the ring grip)
   const others = []; for (const f of ['Index', 'Middle']) for (let i = 1; i < 4; i++) others.push([toK(HL(R.bone[`RightHand${f}${i}`])), toK(HL(R.bone[`RightHand${f}${i + 1}`]))]);
   const h = I.runCurlAxis('none', new V()).normalize(), list = [];
   for (const ax of fib(V, 80)) for (let a = 0; a <= 1.4; a += .1) {
@@ -46,7 +46,7 @@ function candidates(I, { fingerGap = .012, keep = 24 } = {}) {
       if (!ok) continue;
       for (const [a1, b1] of others) for (let s = 1; s < 3; s++) if (segDist(P[s].clone().lerp(P[s + 1], .5), a1, b1) < fingerGap) ok = false;
       if (!ok) continue;
-      const dTip = segDist(P[3], idx[0], idx[1]);
+      let dTip = 1; for (let s = 0; s + 1 < idx.length; s++) dTip = Math.min(dTip, segDist(P[3], idx[s], idx[s + 1]));
       // setFingers chains them: joint k's hand-relative rotation = qa1·…·qak (prevInv = inverse of the previous BIND), so store relative ones
       const r2 = q1.clone().invert().multiply(q2), r3 = q2.clone().invert().multiply(q3);
       list.push({ pre: -Math.abs(dTip - .017) * 400 - (a * a + b * b + c * c) * 1.5, dTip, q: [q1, r2, r3].map(q => q.toArray()) });
@@ -58,26 +58,28 @@ function candidates(I, { fingerGap = .012, keep = 24 } = {}) {
   for (const c of list) { if (out.length >= keep) break; if (out.every(o => Math.abs(o.dTip - c.dTip) > .001 || o.pre - c.pre > 2)) out.push(c); }
   return out;
 }
-function meshScore(I, maxPen) {
+function meshScore(I, maxPen, target = 'mid') {
   const { R, V, K, mesh } = ctx(I); R.skinning.update();
   const ids = mesh.geometry.attributes.skinIndex, w = mesh.geometry.attributes.skinWeight, names = mesh.skeleton.bones.map(b => b.name);
   const thumbV = [];
   for (let i = 0; i < ids.count; i++) { let best = null, bw = 0; for (let k = 0; k < 4; k++) if (w.array[i * 4 + k] > bw) { bw = w.array[i * 4 + k]; best = names[ids.array[i * 4 + k]]; } if (best && /RightHandThumb[23]/.test(best)) thumbV.push(i); }
-  const iw = [2, 3, 4].map(i => R.bone['RightHandIndex' + i].getWorldPosition(new V()));
+  const iw = [2, 3, 4].map(i => R.bone['RightHandIndex' + i].getWorldPosition(new V())), i0 = R.bone.RightHandIndex1.getWorldPosition(new V());
   let hiltMin = 1, idxMin = 1; const bins = new Set();
   for (const i of thumbV) {
     const pw = R.skinning.getVertexPosition(i, new V()).applyMatrix4(mesh.matrixWorld), p = K.worldToLocal(pw.clone());
     if (p.y >= -.172 && p.y <= .078) { const g = Math.hypot(p.x / 1.06, p.z / .86) - rad(p.y); hiltMin = Math.min(hiltMin, g); if (g < .004) bins.add(Math.floor(((Math.atan2(p.z, p.x) * 180 / Math.PI) + 360) % 360 / 10)); }
-    idxMin = Math.min(idxMin, segDist(pw, iw[0], iw[1]) - IR, segDist(pw, iw[1], iw[2]) - IR);
+    idxMin = Math.min(idxMin, segDist(pw, i0, iw[0]) - IR, segDist(pw, iw[0], iw[1]) - IR, segDist(pw, iw[1], iw[2]) - IR);
   }
-  const tip = R.bone.RightHandThumb4.getWorldPosition(new V()), dTip = segDist(tip, iw[0], iw[1]);
+  const tip = R.bone.RightHandThumb4.getWorldPosition(new V()), i1 = R.bone.RightHandIndex1.getWorldPosition(new V());
+  const dTip = target === 'pip' ? Math.min(segDist(tip, i1, iw[0]), segDist(tip, iw[0], iw[1])) : segDist(tip, iw[0], iw[1]);
   return { hiltMin, idxMin, cover: bins.size * 10, dTip, ok: hiltMin > -maxPen && idxMin > -.003 };
 }
-export function solve(I, { maxPen = .0015, fingerGap = .012, keep = 24 } = {}) {
-  const cands = candidates(I, { fingerGap, keep }); let best = null;
+export function solve(I, { maxPen = .0015, fingerGap = .012, keep = 24, target = 'mid', touch = false } = {}) {
+  const cands = candidates(I, { fingerGap, keep, target }); let best = null;
   for (const c of cands) {
-    apply(I, c.q); const m = meshScore(I, maxPen);
-    const sc = (m.ok ? 0 : -1000) - Math.abs(m.dTip - .017) * 400 + m.cover * .2 + Math.min(0, m.idxMin) * 2000;
+    apply(I, c.q); const m = meshScore(I, maxPen, target);
+    // touch: rank by how close the thumb SKIN comes to the index skin (want ~0–2 mm, not inside), instead of tip-to-bone distance
+    const sc = (m.ok ? 0 : -1000) + (touch ? -Math.abs(m.idxMin - .001) * 4000 : -Math.abs(m.dTip - .017) * 400) + m.cover * .2 + Math.min(0, m.idxMin) * 2000;
     if (!best || sc > best.sc) best = { sc, q: c.q, hiltMinMm: +(m.hiltMin * 1000).toFixed(1), indexMinMm: +(m.idxMin * 1000).toFixed(1), cover: m.cover, tipToIndexMidCm: +(m.dTip * 100).toFixed(2), ok: m.ok };
   }
   if (best) apply(I, best.q);
