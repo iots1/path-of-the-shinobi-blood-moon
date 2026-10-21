@@ -977,6 +977,12 @@ const FIST={carryCurl:{Index:.70,Middle:.73,Ring:.76,Pinky:.76}, carryThumb:[.40
   // per-finger curl axis (hilt axis tilted by runAxisOff) × 3 joint angles, triangle samples, nothing >1.5 mm inside the hilt; thumb = thumbPd axis × thumbAngR.
   runAng:{Index:[.6,1.2,.7],Middle:[.8,1,.9],Ring:[1,1,.9],Pinky:[1,.8,.7]}, runAxisHilt:1, hiltDev:-30, runAxisOff:{Index:[-30,0],Middle:[0,0],Ring:[-15,15],Pinky:[-30,0]},
   runThumbScale:1.4, thumbAngR:[.6,0,0], hiltGripAll:true,
+  // thumbQR: one hand-relative quaternion per right-thumb joint (chained like setFingers: joint k = qa1·…·qak), solved with client/debug/thumb_solver.js —
+  // metacarpal turned about a free axis, the phalanges flexed about the hilt axis so the thumb follows the hilt round to the index's middle phalanx
+  // (reference: thumb tip resting on it). Tip 1.7 cm from the index's bone line (skin touching), thumb skin 0.7 mm clear of the tsuka, 4 mm clear of the
+  // index skin. Replaces the single-axis thumbPd × thumbAngR curl, which stopped ~50° short (tip at 108° round the hilt, index middle phalanx at 26–67°).
+  // The left thumb on a hilt uses the mirror (x,−y,−z,w).
+  thumbQR:[[-.19184,.16716,-.22986,.93937],[0,0,0,1],[-.04429,.00316,.08942,.995]],
   // Thumb opposition for the standing seat (only used with hiltGripAll off; the attack/run thumb = thumbPd axis × runThumbScale: it lies on the grip).
   thumbGrip:{"idle":{"axis":[-0.301823,-0.71534,0.630231],"angles":[0.817914,1.05,0.329186]}},
   thumbPd:{R:[.7545,.5963,-.2742], L:[-.7545,.5963,-.2742]}, thumbScale:{R:1.2,L:.25}};   // L = the mirror (M·pd) of R: rebuilt hands are mirror images
@@ -1029,6 +1035,7 @@ function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (
       const hiltW=(!c.thumb&&c.side==='Right'&&FIST.runAxisHilt)?FIST.runAxisHilt*(all?1:w*(real.loco?.b||0)):0;
       const axis=hiltW?AX_T.copy(c.A).lerp(runCurlAxis(c.f,AX_H),hiltW).normalize():tilt?AX_T.copy(c.A).applyAxisAngle(AX_X,tilt):c.A;
       qa_.setFromAxisAngle(axis,lerp(wa?wa[i]*kk:ang[i]*k,hold,w));
+      if(c.thumb&&all&&FIST.thumbQR) qa_.fromArray(FIST.thumbQR[i]);   // per-joint thumb rotation (see thumbQR in FIST)
       // hiltDev (deg): before curling round the diagonal hilt, each right finger deviates at the knuckle (about the palm normal, hand X) so it lies ⟂ to
       // the hilt — a real hammer grip; curling alone about the hilt axis spiralled the fingers ALONG the hilt (seen in /debug/ref-overlay.html, palm view)
       if(hiltW&&FIST.hiltDev) qa_.multiply(_qd.setFromAxisAngle(AX_X,FIST.hiltDev*D2R*hiltW));
@@ -1038,7 +1045,7 @@ function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (
       // the mirrored solution is turned by the rotation that takes the seat's hilt axis onto the actual one this frame (leftAdj, set below per frame).
       if(c.side==='Left'&&FIST.hiltGripAll){ const g=Math.min(1,Math.max(S.twoEff||0,S.dualEff||0));
         if(g>0){
-          if(c.thumb){ _ql.setFromAxisAngle(c.A,FIST.thumbAngR[i]); if(leftAdj) _ql.premultiply(leftAdj); qa_.slerp(_ql,g); }
+          if(c.thumb){ if(FIST.thumbQR){ const q=FIST.thumbQR[i]; _ql.set(q[0],-q[1],-q[2],q[3]); } else _ql.setFromAxisAngle(c.A,FIST.thumbAngR[i]); if(leftAdj) _ql.premultiply(leftAdj); qa_.slerp(_ql,g); }   // mirror: (x,y,z,w) → (x,−y,−z,w)
           else (leftJobs[c.f]??={c,g,base:[]}).base[i]=qa_.clone();   // finished after the loop (adaptLeft): the curl is scaled per frame to meet the hilt
         } }
       if(c.thumb&&side==='R'&&FIST.thumbGrip&&!all){
