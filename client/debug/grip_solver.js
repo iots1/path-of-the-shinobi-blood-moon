@@ -10,7 +10,9 @@ const radius = y => { for (let k = 1; k < PROFILE.length; k++) if (y <= PROFILE[
 const FINGERS = ['Index', 'Middle', 'Ring', 'Pinky'];
 
 // the curl axis the game uses for this finger while running (FIST.runAxisTilt leans it toward the finger direction, see setFingers)
-const axisOf = (I, c, V) => c.A.clone().applyAxisAngle(new V(1, 0, 0), (I.FIST.runAxisTilt || 0) * Math.PI / 180);
+const axisOf = (I, c, V) => I.FIST.runAxisHilt
+  ? c.A.clone().lerp(new V(0, 1, 0).applyQuaternion(I.RUN_HOLD.K.clone().invert()), I.FIST.runAxisHilt).normalize()
+  : c.A.clone().applyAxisAngle(new V(1, 0, 0), (I.FIST.runAxisTilt || 0) * Math.PI / 180);
 function ctx(I) {
   if (I.__gs) return I.__gs;
   const R = I.rig.real, V = R.hipsPos.constructor, Q = R.arm.R.ha.quaternion.constructor;
@@ -63,6 +65,60 @@ export function solveFingers(I, { maxPen = .002, nat = 40, step = .1, limits = {
     c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), best.angles[k])).multiply(j.bindH)); R.skinning.update();
   }
   return out;
+}
+// Triangle-aware variant: the motion check (rig_detail.js gripMetrics) also samples triangle interiors, and a long finger triangle can cut through the
+// hilt while all three of its vertices stay outside. Per finger: no sample (vertices + barycentric points of that finger's triangles) deeper than maxPen,
+// maximise the arc of hilt within 3 mm of the finger's skin, prefer natural joint ratios.
+function fingerTris(I) {
+  const g = ctx(I); if (g.tris) return g.tris;
+  const { mesh, verts } = g, idx = mesh.geometry.index.array, sets = {}; g.tris = {};
+  for (const F of [...FINGERS, 'Thumb', 'Palm']) { sets[F] = new Set(verts[F]); g.tris[F] = []; }
+  const any = new Set(Object.values(verts).flat());
+  for (let i = 0; i < idx.length; i += 3) {
+    const t = [idx[i], idx[i + 1], idx[i + 2]]; if (!t.every(v => any.has(v))) continue;
+    for (const F of [...FINGERS, 'Thumb', 'Palm']) if (t.some(v => sets[F].has(v))) g.tris[F].push(t);
+  }
+  return g.tris;
+}
+function sampleTri(I, F, thr = .003) {
+  const { R, V, mesh } = ctx(I), tris = fingerTris(I)[F], cache = new Map(), bins = new Set(); let min = 9; const gaps = [];
+  const P = i => { let p = cache.get(i); if (!p) { p = R.skinning.getVertexPosition(i, new V()).applyMatrix4(mesh.matrixWorld); I.rig.katana.worldToLocal(p); cache.set(i, p); } return p; };
+  for (const [a, b, c] of tris) {
+    const pa = P(a), pb = P(b), pc = P(c);
+    for (let u = 0; u <= 4; u++) for (let v = 0; v <= 4 - u; v++) {
+      const p = pa.clone().multiplyScalar(u / 4).addScaledVector(pb, v / 4).addScaledVector(pc, 1 - (u + v) / 4);
+      if (p.y < -.172 || p.y > .078) continue;
+      const gap = Math.hypot(p.x / 1.06, p.z / .86) - radius(p.y); min = Math.min(min, gap); gaps.push(gap);
+      if (gap < thr) bins.add(Math.floor(((Math.atan2(p.z, p.x) * 180 / Math.PI) + 360) % 360 / 10));
+    }
+  }
+  gaps.sort((x, y) => x - y);
+  return { min, gaps, bins };
+}
+export function solveFingersTri(I, { maxPen = .0018, nat = 40, step = .1, limits = { a: [0, 1.6], b: [.1, 1.8], c: [.05, 1.3] } } = {}) {
+  const { chains, Q, R, V } = ctx(I), out = {};
+  for (const F of FINGERS) {
+    const c = chains[F]; let best = { score: -1e9 };
+    for (let a = limits.a[0]; a <= limits.a[1] + 1e-9; a += step) for (let b = limits.b[0]; b <= limits.b[1] + 1e-9; b += step) for (let d = limits.c[0]; d <= limits.c[1] + 1e-9; d += step) {
+      if (a + b + d > 3.4 || d > .9 * b + .3) continue;
+      c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), [a, b, d][k])).multiply(j.bindH));
+      R.skinning.update();
+      const { min, gaps, bins } = sampleTri(I, F); if (!gaps.length) continue;
+      if (min < -maxPen) continue;
+      const n = Math.max(3, Math.round(gaps.length * .1)), near = gaps.slice(0, n).reduce((s, g) => s + (g - .001) ** 2, 0) / n;
+      const score = bins.size * 10 - near * 2e4 - ((b - 1.2 * a) ** 2 + (d - .7 * b) ** 2) * nat;
+      if (score > best.score) best = { score, angles: [+a.toFixed(2), +b.toFixed(2), +d.toFixed(2)], cover: bins.size * 10, min: +(min * 1000).toFixed(1) };
+    }
+    out[F] = best;
+    if (best.angles) { c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), best.angles[k])).multiply(j.bindH)); R.skinning.update(); }
+  }
+  return out;
+}
+// per group (fingers, thumb, palm): deepest triangle sample (mm) and arc covered within 4 mm — what the motion check's gripMetrics sees
+export function reportTri(I) {
+  ctx(I).R.skinning.update(); const per = {};
+  for (const F of [...FINGERS, 'Thumb', 'Palm']) { const s = sampleTri(I, F, .004); per[F] = { cover: s.bins.size * 10, min: +(s.min * 1000).toFixed(1) }; }
+  return per;
 }
 export function report(I) {
   const { R } = ctx(I); R.skinning.update();

@@ -8,12 +8,12 @@ import * as THREE from 'three';
 //    shin folds up to horizontal behind, knee drives forward-high, shin reaches down to land).
 // Swing angles are joined to the stance's own angles at both ends, so the cycle is seamless.
 // The pelvis height is set every frame so the planted foot reaches the ground exactly.
-export const REFERENCE_RUN={amount:1,support:.40,zF:.30,zB:-.48,hMid:.71,hBob:.03,get stride(){ return (this.zF-this.zB)/this.support; }};
+export const REFERENCE_RUN={amount:1,support:.34,zF:.32,zB:-.48,hMid:.71,hBob:.04,get stride(){ return (this.zF-this.zB)/this.support; }};
 const TAU=Math.PI*2, RAD=Math.PI/180;
 // [p, thigh angle from vertical (+ forward), knee flexion] in degrees
-const SWING=[ [.46,-40,14],[.52,-44,22],[.60,-44,50],[.68,-30,72],[.75,-6,95],[.82,28,108],[.88,52,98],[.93,56,75],[.97,48,52] ];
+const SWING=[ [.40,-40,14],[.47,-44,22],[.56,-44,50],[.65,-30,72],[.73,-6,95],[.81,28,108],[.87,52,98],[.93,56,75],[.97,48,52] ];
 // foot pitch (+ toe down), degrees — stance: heel-first contact, flat, heel rises before toe-off
-const PITCH=[ [0,-8],[.06,0],[.22,0],[.40,50],[.48,62],[.56,75],[.64,82],[.72,75],[.80,50],[.88,20],[.95,-4],[1,-8] ];
+const PITCH=[ [0,-8],[.06,0],[.19,0],[.34,50],[.42,62],[.50,75],[.60,82],[.70,75],[.79,50],[.88,20],[.95,-4],[1,-8] ];
 const phase=u=>((u%1)+1)%1;
 function catmull(keys,u,idx){ // keys with keys[0][0] ≤ u ≤ keys[last][0]; one-sided tangents at the ends
   let i=1;while(i<keys.length-1&&u>keys[i][0])i++;
