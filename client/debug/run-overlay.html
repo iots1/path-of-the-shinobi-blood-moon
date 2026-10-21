@@ -1,7 +1,7 @@
 <!doctype html><html lang="th"><meta charset="utf-8"><title>Run — reference overlay</title>
 <style>*{box-sizing:border-box}body{margin:0;background:#17191d;color:#eee;font:14px system-ui}header{padding:12px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}h1{font-size:18px;margin:0 16px 0 0}button,select{background:#32363e;color:white;border:1px solid #69707d;border-radius:5px;padding:8px;cursor:pointer}label{display:flex;align-items:center;gap:5px}input{width:105px}#status{padding:8px 18px;line-height:1.7;background:#24272d}main{display:flex;justify-content:center}canvas{max-width:100%;max-height:calc(100vh - 190px);object-fit:contain}iframe{position:fixed;left:-1100px;top:0;width:1024px;height:768px;border:0}small{color:#aeb7c5}#measure{font-variant-numeric:tabular-nums}a{color:#8ddce9}</style>
 <header><h1>วิ่ง · ภาพซ้อนอ้างอิง</h1><button id="play">หยุด / Pause</button><button id="step">+ 1 เฟรม</button><button id="before">สลับเอียงน้อย / มาก</button><button id="match">จัดแนวลำตัว + เลือกเฟรมใกล้ ref</button><button id="save">แคป PNG + ข้อมูล</button><button id="compare">แคปก่อน / หลัง</button><a href="/">กลับเกม</a></header>
-<header><label>Ref โปร่งใส <input id="opacity" type="range" min="0" max="1" step=".05" value=".5"></label><label>เอียงตัว <input id="lean" type="range" min=".2" max="1.4" step=".01" value=".62"><output id="leanValue">.62</output></label><label>ความเร็ว <select id="speed"><option value=".25">¼×</option><option value=".5" selected>½×</option><option value="1">1×</option></select></label><label><input id="bones" type="checkbox" checked style="width:auto">แนวกระดูก</label><label><input id="volume" type="checkbox" checked style="width:auto">รักษาปริมาตรข้อ</label><label>น้ำหนักผิว <select id="weights"><option value="/assets/ninja-bodyfix-v2.glb">แก้ท้องยุบ</option><option value="/assets/raw/backup-before-rig-detail-2026-10-20/ninja.glb">ก่อนแก้รอบนี้ (v1)</option></select></label><label>มุมมอง <select id="angle"><option value="side">ด้านข้าง</option><option value="front">ด้านหน้า</option></select></label><label>แสดง <select id="view"><option value="overlay">ภาพซ้อน</option><option value="model">แอนิเมชันอย่างเดียว</option><option value="ref">Ref อย่างเดียว</option></select></label></header>
+<header><label>Ref โปร่งใส <input id="opacity" type="range" min="0" max="1" step=".05" value=".5"></label><label>เอียงตัว <input id="lean" type="range" min=".2" max="1.4" step=".01" value=".62"><output id="leanValue">.62</output></label><label>ความเร็ว <select id="speed"><option value=".25">¼×</option><option value=".5" selected>½×</option><option value="1">1×</option></select></label><label><input id="bones" type="checkbox" checked style="width:auto">แนวกระดูก</label><label><input id="volume" type="checkbox" checked style="width:auto">รักษาปริมาตรข้อ</label><label>น้ำหนักผิว <select id="weights"><option value="/assets/ninja-bodyfix-v2.glb">แก้ท้องยุบ</option><option value="/assets/raw/backup-before-rig-detail-2026-10-20/ninja.glb">ก่อนแก้รอบนี้ (v1)</option></select></label><label>มุมมอง <select id="angle"><option value="side">ด้านข้าง</option><option value="front">ด้านหน้า</option><option value="standFront">ยืน · หน้า</option><option value="standSide">ยืน · ข้าง</option></select></label><label>แสดง <select id="view"><option value="overlay">ภาพซ้อน</option><option value="model">แอนิเมชันอย่างเดียว</option><option value="ref">Ref อย่างเดียว</option></select></label></header>
 <div id="status"><div id="measure">กำลังโหลดโมเดล…</div><small>ชมพู = จุดบนภาพ ref · ฟ้า = กระดูกเกม · ยึดสะโพกจุดเดียวกันและใช้สเกลเดียวทั้งตัว ไม่มีการหมุนหรือยืดภาพเกมเพื่อให้ดูตรง</small></div>
 <main><canvas id="overlay" width="1024" height="768"></canvas></main><iframe src="/?motionOverlay=1&amp;model=/assets/ninja-bodyfix-v2.glb"></iframe>
 <script>
@@ -12,15 +12,29 @@ const REFS={
  // Front reference (ninja_katana_run_front.jpeg), read off its red skeleton. Image-left = the character's RIGHT (sword) side.
  front:{hips:[521,329],neck:[521,186],head:[521,130],rShoulder:[457,182],rElbow:[411,207],hand:[360,243],lShoulder:[589,191],lElbow:[676,268],lHand:[605,225],
   rHip:[487,368],rKnee:[480,480],rAnkle:[485,573],lHip:[559,376],lKnee:[566,527],lAnkle:[552,634]}};
-const YAWS={side:-90,front:0};
+/* Standing references (art/reference/new_ninja_katana/ninja_katana_2_front.jpeg 765×1024, ninja_katana_side_2.jpeg 1024×765), joints read off a 50 px grid,
+   in IMAGE pixels (converted to canvas pixels by fitRef()). Front: image-left = the character's RIGHT. Side: we see the character's right side. */
+REFS.standFront={img:'/assets/reference/ninja-stand-front.jpeg',w:765,h:1024,neck:[383,245],hips:[383,520],rShoulder:[262,285],rElbow:[222,400],rWrist:[214,478],lShoulder:[510,285],lElbow:[523,395],lWrist:[525,480],
+  rHip:[335,540],rKnee:[318,740],rAnkle:[300,900],lHip:[432,540],lKnee:[455,740],lAnkle:[470,905]};
+REFS.standSide={img:'/assets/reference/ninja-stand-side.jpeg',w:1024,h:765,neck:[540,172],hips:[527,420],rShoulder:[520,215],rElbow:[515,300],rWrist:[522,370],rHip:[527,420],rKnee:[530,550],rAnkle:[540,676],
+  guard:[548,397],tip:[828,555]};
+const STAND_JOINTS={rShoulder:'RightArm',rElbow:'RightForeArm',rWrist:'RightHand',lShoulder:'LeftArm',lElbow:'LeftForeArm',lWrist:'LeftHand',rHip:'RightUpLeg',rKnee:'RightLeg',rAnkle:'RightFoot',lHip:'LeftUpLeg',lKnee:'LeftLeg',lAnkle:'LeftFoot'};
+let refRect={x:0,y:0,w:1024,h:765};
+function fitRef(r){ if(!r.img){ refRect={x:0,y:0,w:1024,h:765}; return r; } const k=Math.min(1024/r.w,768/r.h); refRect={x:(1024-r.w*k)/2,y:(768-r.h*k)/2,w:r.w*k,h:r.h*k};
+ const o={}; for(const n in r) o[n]=Array.isArray(r[n])?[r[n][0]*k+refRect.x,r[n][1]*k+refRect.y]:r[n]; if(o.hand===undefined) o.hand=o.rWrist; return o; }
+const isStand=()=>viewAngle.startsWith('stand');
+const YAWS={side:-90,front:0,standFront:0,standSide:-90};
 let viewAngle='side',REF=REFS.side;
 let desired=Math.atan2(REF.neck[0]-REF.hips[0],REF.hips[1]-REF.neck[1])*180/Math.PI;
 let I,R,V,playing=true,last=0,ready=false,busy=false,transform,metrics={},phase=0,fitScale=null,rafStarted=false;
 const anchor=[2.5,0,-1];
-function advance(ms){const S=I.S;S.pos.set(...anchor);S.facing=0;S.moveTo=new V(anchor[0],0,anchor[2]+50);I.frame(0,ms,true);S.pos.set(...anchor);}
+function advance(ms){const S=I.S;S.pos.set(...anchor);S.facing=0;S.moveTo=isStand()?null:new V(anchor[0],0,anchor[2]+50);if(isStand())S.vel.set(0,0,0);I.frame(0,ms,true);S.pos.set(...anchor);}
 function world(name){return R.bone[name].getWorldPosition(new V());}
 function project(p){const q=p.clone().project(I.camera);return [(q.x+1)*512,(1-q.y)*384];}
 function alignment(){const h=project(world('Hips')),n=project(world('neck'));
+ if(isStand()){ /* standing: anchor the neck, scale by neck → mid-ankle height */
+  const a=project(world('RightFoot').add(world('LeftFoot')).multiplyScalar(.5)), ra=viewAngle==='standFront'?(REF.rAnkle[1]+REF.lAnkle[1])/2:REF.rAnkle[1];
+  const scale=fitScale??(fitScale=(ra-REF.neck[1])/(a[1]-n[1])); transform={scale,x:REF.neck[0]-n[0]*scale,y:REF.neck[1]-n[1]*scale}; return {h,n}; }
  if(viewAngle==='front'){ // the torso pitches ~40° toward the camera, so hip→neck is foreshortened: anchor on the neck and scale by shoulder width instead
   const a=project(world('RightArm')),b=project(world('LeftArm'));
   const scale=fitScale??(fitScale=Math.hypot(REF.rShoulder[0]-REF.lShoulder[0],REF.rShoulder[1]-REF.lShoulder[1])/Math.hypot(a[0]-b[0],a[1]-b[1]));
@@ -35,7 +49,7 @@ function render(){
  const C=I.CAM;C.yaw.y=C.yawT=YAWS[viewAngle];C.pitch.y=C.pitchT=0;C.zoom.y=C.zoomT=1.7;C.focus.set(anchor[0],.95,anchor[2]);I.frame(0,0);
  alignment();g.fillStyle='#aaa';g.fillRect(0,0,1024,768);
  const view=$('#view').value,alpha=+$('input#opacity').value;
- if(view!=='model'){g.globalAlpha=view==='ref'?1:alpha;g.drawImage(ref,0,0,1024,765);}
+ if(view!=='model'){g.globalAlpha=view==='ref'?1:alpha;g.drawImage(ref,refRect.x,refRect.y,refRect.w,refRect.h);}
  if(view!=='ref'){g.globalAlpha=view==='model'?1:1-alpha;g.save();g.translate(transform.x,transform.y);g.scale(transform.scale,transform.scale);g.drawImage(I.renderer.domElement,0,0,1024,768);g.restore();}g.globalAlpha=1;
  const hips=point('Hips'),neck=point('neck'),head=point('Head'),hand=point('RightHand');
  const angle=Math.atan2(neck[0]-hips[0],hips[1]-neck[1])*180/Math.PI;
@@ -45,6 +59,14 @@ function render(){
   const dot=(p,c,label)=>{g.fillStyle=c;g.beginPath();g.arc(...p,5,0,7);g.fill();g.font='bold 15px system-ui';g.fillText(label,p[0]+8,p[1]-7);};
   line(REF.hips,REF.neck,'#ff57b8');line(hips,neck,'#20edff');line(neck,head,'#20edff');
   for(const side of ['Left','Right']){let names=[side+'UpLeg',side+'Leg',side+'Foot'];for(let i=1;i<3;i++)line(point(names[i-1]),point(names[i]),'#20edff');}
+  if(isStand()){ /* both arms + every reference joint, with the per-joint error in cm */
+   for(const side of ['Left','Right']){const n=[side+'Arm',side+'ForeArm',side+'Hand'];for(let i=1;i<3;i++)line(point(n[i-1]),point(n[i]),'#20edff');}
+   for(const chain of [['rShoulder','rElbow','rWrist'],['lShoulder','lElbow','lWrist'],['rHip','rKnee','rAnkle'],['lHip','lKnee','lAnkle']])if(REF[chain[0]])for(let i=1;i<3;i++)line(REF[chain[i-1]],REF[chain[i]],'#ff57b8');
+   if(REF.guard){line(REF.guard,REF.tip,'#ff57b8');const k=I.rig.katana,gp=project(k.localToWorld(new V(0,.09,0))),tp=project(k.localToWorld(new V(0,.82,0)));line([gp[0]*transform.scale+transform.x,gp[1]*transform.scale+transform.y],[tp[0]*transform.scale+transform.x,tp[1]*transform.scale+transform.y],'#20edff');}
+   const cmPerPx=world('neck').distanceTo(world('RightFoot').add(world('LeftFoot')).multiplyScalar(.5))*100/Math.abs((viewAngle==='standFront'?(REF.rAnkle[1]+REF.lAnkle[1])/2:REF.rAnkle[1])-REF.neck[1]);
+   const errs={};for(const k in STAND_JOINTS)if(REF[k]){const p=point(STAND_JOINTS[k]);dot(REF[k],'#ff57b8','');errs[k]=[+((p[0]-REF[k][0])*cmPerPx).toFixed(1),+((p[1]-REF[k][1])*cmPerPx).toFixed(1)];}
+   window.__standErr=errs;
+  }
   if(viewAngle==='front'){
    for(const side of ['Left','Right']){const n=[side+'Arm',side+'ForeArm',side+'Hand'];for(let i=1;i<3;i++)line(point(n[i-1]),point(n[i]),'#20edff');}
    for(const chain of [['rShoulder','rElbow','hand'],['lShoulder','lElbow','lHand'],['rHip','rKnee','rAnkle'],['lHip','lKnee','lAnkle']])for(let i=1;i<3;i++)line(REF[chain[i-1]],REF[chain[i]],'#ff57b8');
@@ -77,8 +99,8 @@ window.addEventListener('error',e=>$('#measure').textContent=e.message);
 $('#before').onclick=()=>{I.RUN_TUNE.lean=I.RUN_TUNE.lean<.6?.65:.49;$('#lean').value=I.RUN_TUNE.lean;$('#leanValue').value=I.RUN_TUNE.lean.toFixed(3);advance(4);render();};
 $('#play').onclick=()=>{playing=!playing;};$('#step').onclick=()=>{playing=false;advance(16);render();};
 $('#lean').oninput=e=>{I.RUN_TUNE.lean=+e.target.value;$('#leanValue').value=e.target.value;advance(0);render();};
-$('#angle').onchange=e=>{viewAngle=e.target.value;REF=REFS[viewAngle];desired=Math.atan2(REF.neck[0]-REF.hips[0],REF.hips[1]-REF.neck[1])*180/Math.PI;ref.src=viewAngle==='front'?'/assets/reference/ninja-run-front.jpeg':'/assets/reference/ninja-run-side.jpeg';fitScale=null;};
-$('#match').onclick=async()=>{if(!ready||busy)return;busy=true;playing=false;let lo=.05,hi=1.2;
+$('#angle').onchange=e=>{viewAngle=e.target.value;REF=fitRef(REFS[viewAngle]);desired=Math.atan2(REF.neck[0]-REF.hips[0],REF.hips[1]-REF.neck[1])*180/Math.PI;ref.src=REFS[viewAngle].img||(viewAngle==='front'?'/assets/reference/ninja-run-front.jpeg':'/assets/reference/ninja-run-side.jpeg');fitScale=null;};
+$('#match').onclick=async()=>{if(!ready||busy||isStand())return;busy=true;playing=false;let lo=.05,hi=1.2;
  if(viewAngle==='front'){ // front: only the leg phase can be matched (no lean search — the pitch is invisible from the front)
   let best={score:Infinity};const dist=(a,b)=>(a[0]-b[0])**2+(a[1]-b[1])**2;
   for(let i=0;i<100;i++){advance(8);render();const s=dist(point('RightLeg'),REF.rKnee)+dist(point('RightFoot'),REF.rAnkle)+dist(point('LeftLeg'),REF.lKnee)+dist(point('LeftFoot'),REF.lAnkle)+2*dist(point('LeftHand'),REF.lHand); /* + the left fist: it pins the phase to "right leg forward / left arm forward" (legs alone match a mirrored phase too) */if(s<best.score)best={score:s,phase:R.loco.u};}
