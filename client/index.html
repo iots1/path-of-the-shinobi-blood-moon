@@ -604,6 +604,43 @@ async function embeddedImageTexture(buf, imageIndex){
   tex.flipY=false; tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.needsUpdate=true;
   return tex;
 }
+// Character detail shading (2026-10-21). Through the toon ramp the normal map's folds were flattened, so cloth and skin
+// read as one grey lump. On top of the toon result this adds, in view space against a fixed upper-left key (so the
+// folds read the same whatever the sun does):
+//  - fold relief: the normal map sampled with a mip bias (= its large folds) vs. the geometric normal, strong;
+//    the remaining fine detail (full-res minus blurred) weaker — fine-only relief turned the cloth into grain
+//  - crease darkening where the blurred normal is steep (ink in the folds), cloth only
+//  - a faint cool rim on the cloth silhouette, a faint sheen on skin
+//  - skin mask from the albedo (warm: r−b high and r bright); skin keeps its own tones instead of the dark-cloth gamma lift
+// Live-tune via __iso.rig.real.shade.<name>.value. Mip bias > 2 bleeds the flat atlas background in at UV seams (block artefacts).
+function applyBodyShading(mat){
+  const U={uFold:{value:2.4}, uFoldBias:{value:2.0}, uRelief:{value:.6}, uCrease:{value:.25}, uRim:{value:.1}, uSheen:{value:.04}, uSkinFold:{value:.5}};
+  mat.onBeforeCompile=s=>{ Object.assign(s.uniforms,U);
+    s.fragmentShader='uniform float uFold,uFoldBias,uRelief,uCrease,uRim,uSheen,uSkinFold;\n'+s.fragmentShader
+    .replace('#include <map_fragment>',`#include <map_fragment>
+      float skinM=smoothstep(.05,.13,sampledDiffuseColor.r-sampledDiffuseColor.b)*smoothstep(.22,.38,sampledDiffuseColor.r);
+      // dark cloth albedo is ~0: gamma lift + small floor so its folds can show; skin stays as painted
+      diffuseColor.rgb=mix(vec3(0.03)+0.97*pow(diffuseColor.rgb,vec3(0.68)), diffuseColor.rgb, skinM);`)
+    .replace('#include <normal_fragment_begin>','#include <normal_fragment_begin>\n vec3 geoN=normal;')
+    .replace('#include <normal_fragment_maps>',`#include <normal_fragment_maps>
+      #ifdef USE_NORMALMAP_TANGENTSPACE
+        vec3 nB=texture2D(normalMap,vNormalMapUv,uFoldBias).xyz*2.0-1.0; nB.xy*=normalScale; vec3 foldN=normalize(tbn*nB);
+      #else
+        vec3 nB=vec3(0,0,1); vec3 foldN=normal;
+      #endif`)
+    .replace('#include <opaque_fragment>',`
+      vec3 Ld=normalize(vec3(-0.45,0.6,0.65));
+      float cloth=1.0-skinM;
+      float bigF=dot(foldN,Ld)-dot(geoN,Ld), fineF=dot(normal,Ld)-dot(foldN,Ld);
+      outgoingLight*=max(0.0,1.0+mix(1.0,uSkinFold,skinM)*(uFold*bigF+uRelief*fineF));
+      outgoingLight*=1.0-uCrease*smoothstep(.03,.3,1.0-clamp(nB.z,0.0,1.0))*cloth;
+      outgoingLight+=uRim*pow(1.0-clamp(abs(geoN.z),0.0,1.0),3.0)*vec3(.85,.88,.95)*cloth;
+      outgoingLight+=skinM*uSheen*pow(max(dot(normal,normalize(Ld+vec3(0,0,1))),0.0),18.0);
+      #include <opaque_fragment>`);
+  };
+  mat.customProgramCacheKey=()=>'ninjaBodyDetail';
+  return U;
+}
 function loadNinja(){
   const requestedModel=new URLSearchParams(location.search).get('model')||'';
   const modelSource=motionOverlay && /^\/assets\/[a-zA-Z0-9_./-]+\.glb$/.test(requestedModel)?requestedModel:'assets/ninja.glb';
@@ -675,14 +712,16 @@ function loadNinja(){
     const baseColorTexIdx=gltf.parser.json.materials[0].pbrMetallicRoughness.baseColorTexture.index;
     const baseColorImgIdx=gltf.parser.json.textures[baseColorTexIdx].source;
     const bodyMap=await embeddedImageTexture(buf, baseColorImgIdx);   // decoded ourselves — see the comment above embeddedImageTexture
-    skinned.material=new THREE.MeshToonMaterial({color:0xffffff, map:bodyMap, normalMap:skinned.material.normalMap, gradientMap:bodyGrad, side:THREE.DoubleSide});
+    // the normal map holds ALL the cloth folds / leg wraps / facial relief (the base colour is almost flat dark grey) —
+    // decode it ourselves too, for the same GLTFLoader race as the base colour (the detail shader below needs it present)
+    const normalTexIdx=gltf.parser.json.materials[0].normalTexture?.index;
+    const bodyNormal=normalTexIdx!=null ? await embeddedImageTexture(buf, gltf.parser.json.textures[normalTexIdx].source) : skinned.material.normalMap;
+    skinned.material=new THREE.MeshToonMaterial({color:0xffffff, map:bodyMap, normalMap:bodyNormal, gradientMap:bodyGrad, side:THREE.DoubleSide});
     skinned.material.normalScale.set(1,1);
     // 4096² maps seen at a grazing iso angle: anisotropic filtering keeps the cloth/hair detail sharp instead of mip-blurred
     const aniso=renderer.capabilities.getMaxAnisotropy();
-    for(const t of [bodyMap, skinned.material.normalMap]) if(t){ t.anisotropy=aniso; t.needsUpdate=true; }
-    // the trousers/boots albedo is ~0, so gamma alone leaves them black: add a small floor (0.03) so their folds read
-    skinned.material.onBeforeCompile=s=>{ s.fragmentShader=s.fragmentShader.replace('#include <map_fragment>','#include <map_fragment>\n diffuseColor.rgb=vec3(0.03)+0.97*pow(diffuseColor.rgb,vec3(0.68));'); };
-    skinned.material.customProgramCacheKey=()=>'ninjaBodyLift';
+    for(const t of [bodyMap, bodyNormal]) if(t){ t.anisotropy=aniso; t.needsUpdate=true; }
+    real.shade=applyBodyShading(skinned.material);
     skinned.castShadow=true; skinned.receiveShadow=true; skinned.frustumCulled=false;
     // .014 (the old model's outline thickness) self-intersected across the right shoulder on this remeshed body (10,260 tris, low-poly — the outline hull is
     // extruded along vertex normals, and a sharp/concave crease there made the shell cross back over the surface instead of just sitting outside it), reading
