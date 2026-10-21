@@ -124,7 +124,7 @@
       <button id="bDown" title="Low angle (F)">Low angle</button>
       <span class="sep"></span>
       <button id="bBones" aria-pressed="false" title="Show skeleton (B)">Skeleton</button>
-      <button id="bPose" type="button" title="Compare updated motion with the original pose">ท่าใหม่ v3 · เทียบเดิม</button>
+      <button id="bPose" type="button" title="Compare updated motion with the original pose">ท่าวิ่งวิดีโอ v6 · เทียบเดิม</button>
       <button id="bSlow" aria-pressed="false" title="Slow-mo (T)">Slow-mo</button>
       <button id="bNight" aria-pressed="false" title="Day / night (N)">☾ Night</button>
       <select id="selLoop" title="Repeat a move (or run/walk) in place, for watching it continuously while tuning poses live (P cycles)">
@@ -161,6 +161,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { enableVolumeSkinning } from './rig/volume_skinning.js';
+import { REFERENCE_RUN,prepareReferenceRun,applyReferenceRun,referenceHipOffset } from './rig/reference_run.js';
 
 // r128 (this game's original target) never applied sRGB/gamma color management at
 // all — colors in, colors out. Three.js 0.160 defaults to physically-based color
@@ -683,6 +684,7 @@ function loadNinja(){
       const f=posRL(side+'ToeBase').sub(posRL(side+'Foot'));f.y=0;f.normalize();
       real.soleYaw[side]=new THREE.Quaternion().setFromAxisAngle(V(0,1,0),Math.atan2(f.x,f.z));
     }
+    prepareReferenceRun(real,posRL);
     for(const [side,S0] of [['R','Right'],['L','Left']]){
       const up=bone[`${S0}Arm`], fo=bone[`${S0}ForeArm`], ha=bone[`${S0}Hand`];
       real.arm[side]={ up, fo, ha,
@@ -916,6 +918,7 @@ function driveRealBones(real){
   const hipsRL=real.hipsPos.clone().add(rig.hips.position).sub(DRIVER_REST.hips.p);
   real.bone['Hips'].position.copy(hipsRL.applyMatrix4(real.hipsParentInv));
   real.model.updateMatrixWorld(true);
+  applyReferenceRun(real,rig.root,L?.u||0,S.runRefMix||0);
   const headM=real.bone.Head.matrixWorld, headQ=real.bone.Head.getWorldQuaternion(_q1);
   rig.eyes.forEach((e,i)=>{ e.position.copy(real.eyeLocal[i]).applyMatrix4(headM); e.quaternion.copy(headQ); e.rotateZ(real.eyeRot[i]); });
   for(const s of real.backSwords) _m4.multiplyMatrices(real.bone.Spine01.matrixWorld,s.M).decompose(s.g.position,s.g.quaternion,s.g.scale);
@@ -1550,11 +1553,13 @@ function applySkeleton(p,T){
   const real=r.real, L=real&&real.loco;
   if(L){ const sp=Math.hypot(S.vel.x,S.vel.z);
     L.b=smooth(clamp((sp-2)/1.4,0,1)); // walk below 2 m/s, run above 3.4 m/s
-    L.u=(L.u+T*sp/lerp(L.walk.stride,L.run.stride,L.b)*lerp(1,CADENCE_BOOST,L.b))%1; L.w=S.walkAmt; }
+    L.u=(L.u+T*sp/lerp(L.walk.stride,lerp(L.run.stride,REFERENCE_RUN.stride,REFERENCE_RUN.amount),L.b)*lerp(1,CADENCE_BOOST,L.b))%1; L.w=S.walkAmt; }
   const w=S.walkAmt, breathe=Math.sin(t*1.8);
+  S.runRefMix=lerp(S.runRefMix||0,(S.act?0:REFERENCE_RUN.amount)*(L?.b||0)*w,1-Math.exp(-T/.08));
   const ph=L ? 2*Math.PI*L.u : S.walkPhase;
   // run bounce: lowest at mid-stance (ph = 0, π), highest when the legs are spread mid-flight
   r.hips.position.y=HIP_Y+p.hipY+Math.abs(Math.sin(ph))*.025*w-.012*w+breathe*.002;
+  r.hips.position.y+=referenceHipOffset(L?.u||0)*(S.runRefMix||0);
   S.runPitch=lerp(S.runPitch||0,(L?L.b:0)*w*RUN_TUNE.lean,1-Math.exp(-T/.08));
   const pelvisPitch=S.runPitch*RUN_TUNE.pelvisShare;
   const twist=lerp(1,RUN_TUNE.twistScale,L?.b||0);
@@ -1597,6 +1602,7 @@ function applySkeleton(p,T){
     // down when standing; sinking below the floor is always corrected.
     let gap=Infinity; for(const [b,y0] of real.ground) gap=Math.min(gap, b.getWorldPosition(_v).y-y0);
     if(gap>0) gap*=1-.85*w;
+    gap*=1-(S.runRefMix||0);
     if(Math.abs(gap)>1e-4){ r.hips.position.y-=gap; r.root.updateMatrixWorld(true); driveRealBones(real); }
   }
   // ---- right arm + sword ----
@@ -2315,7 +2321,7 @@ function saveDevState(){ try{ sessionStorage.setItem(DEV_KEY, JSON.stringify({bo
     if(dv.loop && dv.loop!=='off') setLoop(dv.loop);
   }
 }
-window.__iso={S,step,frame,camera,renderer,shaderErrors,STAND_TUNE,RUN_TUNE,RUN_ARM,RUN_FREE,RUN_CLIP,makeGrip,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
+window.__iso={S,step,frame,camera,renderer,shaderErrors,REFERENCE_RUN,STAND_TUNE,RUN_TUNE,RUN_ARM,RUN_FREE,RUN_CLIP,makeGrip,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
   GRIP_CFG, GRIP_TUNE, CARRY_HOLD, RUN_HOLD, SHOULDER, BACK_GEAR, setBackGearVisible, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, RUN_V2, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real){ rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L), L2:gripL2()}; rig.real.carryHold=makeGrip(CARRY_HOLD); } },
   loop:setLoop};  // edit GRIP_CFG/IDLE/CARRY/COMBO/ATTACK2/ISSEN in the console; regrip() applies a GRIP_CFG edit; loop('atk2') etc. repeats a move in place so poses can be watched continuously while tuning ('off','run','run1','walk','walk1','atk1','atk2','dual','finisher' — the '1' modes run one-way instead of back and forth, e.g. into a wall)
 // Main-page A/B control: compare with the original animation at the same camera/zoom.
@@ -2323,11 +2329,12 @@ const poseUpdated={idle:IDLE.lean,ankle:STAND_TUNE.ankleLean,pelvis:RUN_TUNE.pel
 let poseUpdatedOn=true;
 document.getElementById('bPose').onclick=()=>{
   poseUpdatedOn=!poseUpdatedOn;
+  REFERENCE_RUN.amount=poseUpdatedOn?1:0;
   IDLE.lean=poseUpdatedOn?poseUpdated.idle:.03;STAND_TUNE.ankleLean=poseUpdatedOn?poseUpdated.ankle:0;
   RUN_TUNE.pelvisShare=poseUpdatedOn?poseUpdated.pelvis:1;RUN_TUNE.twistScale=poseUpdatedOn?poseUpdated.twist:1;
   RUN_CLIP.footCorrection=poseUpdatedOn?1:0;FIST.thumbGrip=poseUpdatedOn?poseUpdated.thumb:null;
   RUN_ARM.swing=poseUpdatedOn?poseUpdated.swing:0;SHOULDER.runPulse=poseUpdatedOn?poseUpdated.pulse:0;
-  document.getElementById('bPose').textContent=poseUpdatedOn?'ท่าใหม่ v3 · เทียบเดิม':'ท่าเดิม · ดูท่าใหม่ v3';
+  document.getElementById('bPose').textContent=poseUpdatedOn?'ท่าวิ่งวิดีโอ v6 · เทียบเดิม':'ท่าเดิม · ดูท่าวิ่งวิดีโอ v6';
 };
 loadNinja();
 </script>
