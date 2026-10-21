@@ -40,9 +40,10 @@ export function measureRunGrip(I,u=.25,n=150){
 }
 // Close-ups of the running sword hand: rows = camera yaws around the character, columns = leg phases.
 // usage: await c.handSheet(__iso,{tag:'grip-a'}) → out/run-hand-<tag>.png
-export async function handSheet(I,{tag='grip',phases=[0,.25,.5,.75],yaws=[-90,-30,30,90,180],zoom=.22,w=260,h=260}={}){
+export async function handSheet(I,{tag='grip',phases=[0,.25,.5,.75],yaws=[-90,-30,30,90,180],zoom=.22,w=260,h=260,stand=false}={}){
   I.stop();I.loop('off');const S=I.S,R=I.rig.real,V=R.hipsPos.constructor;
-  const pin=()=>{S.pos.set(2.5,0,-1);S.moveTo=new V(2.5,0,20);S.facing=0;};
+  // stand: the character stands still (idle grip) — phases then only label the columns
+  const pin=()=>{S.pos.set(2.5,0,-1);S.moveTo=stand?null:new V(2.5,0,20);S.facing=0;if(stand)S.vel.set(0,0,0);};
   S.act=null;S.phase='idle';S.speed=1;S.vel.set(0,0,0);
   for(let i=0;i<350;i++){pin();I.frame(0,4,true);}
   const scene=I.rig.root.parent,keep=new Set([I.rig.root,I.rig.katana,I.rig.katana2,...I.rig.eyes]);
@@ -50,13 +51,13 @@ export async function handSheet(I,{tag='grip',phases=[0,.25,.5,.75],yaws=[-90,-3
   const cv=I.renderer.domElement,out=document.createElement('canvas');out.width=w*phases.length;out.height=(h+20)*yaws.length;
   const g=out.getContext('2d');g.fillStyle='#e8e4dc';g.fillRect(0,0,out.width,out.height);
   for(let i=0;i<phases.length;i++){
-    for(let k=0;k<60;k++){pin();R.loco.u=(.25+phases[i]+1)%1;I.frame(0,4,true);}
+    for(let k=0;k<(stand?250:60);k++){pin();if(!stand)R.loco.u=(.25+phases[i]+1)%1;I.frame(0,4,true);}
     const hand=R.arm.R.ha.getWorldPosition(new V());
     for(let j=0;j<yaws.length;j++){
       I.CAM.yaw.y=I.CAM.yawT=S.facing*180/Math.PI+yaws[j];I.CAM.pitch.y=I.CAM.pitchT=0;I.CAM.zoom.y=I.CAM.zoomT=zoom;I.CAM.focus.copy(hand);
-      R.loco.u=(.25+phases[i]+1)%1;I.frame(0,0);
+      if(!stand)R.loco.u=(.25+phases[i]+1)%1;I.frame(0,0);
       const s=Math.min(cv.width,cv.height);g.drawImage(cv,(cv.width-s)/2,(cv.height-s)/2,s,s,i*w,j*(h+20)+20,w,h);
-      g.fillStyle='#222';g.font='13px sans-serif';g.fillText(`${tag} p${Math.round(phases[i]*100)} yaw${yaws[j]}`,i*w+4,j*(h+20)+14);
+      g.fillStyle='#222';g.font='13px sans-serif';g.fillText(`${tag} ${stand?'idle':'p'+Math.round(phases[i]*100)} yaw${yaws[j]}`,i*w+4,j*(h+20)+14);
     }
   }
   for(const o of hidden)o.visible=true;S.moveTo=null;

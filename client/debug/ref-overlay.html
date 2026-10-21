@@ -1,0 +1,92 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><title>Reference overlay</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#17191d;color:#eee;font:14px system-ui}header{padding:10px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+h1{font-size:17px;margin:0 12px 0 0}button,select{background:#32363e;color:#fff;border:1px solid #69707d;border-radius:5px;padding:7px;cursor:pointer}label{display:flex;align-items:center;gap:5px}
+input[type=range]{width:120px}output{min-width:34px;font-variant-numeric:tabular-nums}#status{padding:6px 16px;background:#24272d;font:13px ui-monospace,monospace;white-space:pre-wrap}
+main{display:flex;justify-content:center;padding:8px}canvas{max-width:100%;max-height:calc(100vh - 170px);object-fit:contain;background:#555}
+iframe{position:fixed;left:-1300px;top:0;width:1024px;height:768px;border:0}</style>
+<header><h1>เทียบภาพซ้อน · มือจับดาบ</h1>
+<label>มุมมอง <select id="view"><option value="top">TOP (หลังมือ)</option><option value="bottom" selected>BOTTOM (ฝ่ามือ)</option><option value="left">LEFT</option><option value="right">RIGHT</option></select></label>
+<label>ท่า <select id="pose"><option value="idle">ยืน</option><option value="run">วิ่ง</option></select></label>
+<label>เฟสวิ่ง <input id="phase" type="range" min="0" max="1" step=".01" value=".3"><output for="phase"></output></label>
+<label>Ref โปร่งใส <input id="opacity" type="range" min="0" max="1" step=".05" value=".5"><output for="opacity"></output></label>
+<label>หมุนรอบด้าม° <input id="spin" type="range" min="-180" max="180" step="1" value="0"><output for="spin"></output></label>
+<label>เอียง° <input id="tilt" type="range" min="-60" max="60" step="1" value="0"><output for="tilt"></output></label>
+<label>สเกล <input id="scale" type="range" min=".6" max="1.6" step=".01" value="1"><output for="scale"></output></label>
+<label>ตัดหน้า (ซม.) <input id="clip" type="range" min="3" max="40" step="1" value="7"><output for="clip"></output></label>
+<label>แสดง <select id="show"><option value="overlay">ซ้อน</option><option value="model">โมเดล</option><option value="ref">Ref</option><option value="side">คู่กัน</option></select></label>
+<button id="save">แคป PNG</button><a href="/" style="color:#8ddce9">กลับเกม</a></header>
+<div id="status">กำลังโหลดโมเดล…</div>
+<main><canvas id="out" width="1024" height="764"></canvas></main>
+<iframe></iframe>
+<script type="module">
+// Model vs art/reference/ninja-no-hood/ninja_katana_zoom_hand.jpeg (assets/reference/grip-4view.jpeg, 4 quadrants of 512×382).
+// The camera is aimed in the SWORD's frame: a = hilt axis (tsuba → kashira), n = back-of-hand normal, t = a × n; each view is anchored on the tsuba's
+// hand-side face and scaled so the hilt's diameter matches that quadrant's (the 4 reference views are not drawn at one zoom). spin/tilt fine-tune the view
+// (an AI-drawn sheet, the views are not exactly orthogonal).
+const VIEWS={ top:{q:[0,0],tsuba:[122,199],dia:42,L:'-n',R:'a'}, bottom:{q:[512,0],tsuba:[111,200],dia:63,L:'n',R:'a'},
+  left:{q:[0,382],tsuba:[402,195],dia:66,L:'t',R:'-a'}, right:{q:[512,382],tsuba:[119,200],dia:61,L:'n',R:'a'} };
+const HILT_D=.034, TSUBA_FACE=.08, K=2;   // hilt diameter (m), tsuba hand-side face (sword-local y), render scale vs. the reference quadrant
+const $=id=>document.getElementById(id), out=$('out'), g=out.getContext('2d'), f=document.querySelector('iframe'), status=$('status');
+const ref=new Image(); ref.src='/assets/reference/grip-4view.jpeg';
+f.src='/?refOverlay='+Date.now();   // the browser caches index.html — a fresh query string always loads the current game code
+let I,R,V,Q,cache={key:null,img:null};
+for(const el of document.querySelectorAll('input[type=range]')){ const o=document.querySelector(`output[for=${el.id}]`); const s=()=>o.textContent=el.value; el.addEventListener('input',s); s(); }
+f.onload=()=>{ const t=setInterval(()=>{ const w=f.contentWindow; if(w.__iso?.rig.real?.loco?.version==='v2'){ clearInterval(t); I=w.__iso; R=I.rig.real; V=R.hipsPos.constructor; Q=R.arm.R.ha.quaternion.constructor; I.stop(); I.loop('off'); draw(); } },150); };
+function settle(pose,phase){
+  const S=I.S; S.act=null; S.phase='idle'; S.speed=1;
+  const pin=()=>{ S.pos.set(2.5,0,-1); S.facing=0; if(pose==='run'){ S.moveTo=new V(2.5,0,20); R.loco.u=(.25+phase)%1; } else { S.moveTo=null; S.vel.set(0,0,0); } };
+  for(let i=0;i<(pose==='run'?180:300);i++){ pin(); I.frame(0,4,true); }
+  pin(); I.frame(0,0);
+}
+function renderModel(){
+  const v=VIEWS[$('view').value], pose=$('pose').value, phase=+$('phase').value;
+  const key=[pose,phase].join();
+  if(cache.key!==key){ settle(pose,phase); cache.key=key; }
+  const kat=I.rig.katana, ha=R.arm.R.ha;
+  kat.updateMatrixWorld(true);
+  const kq=kat.getWorldQuaternion(new Q()), a=new V(0,-1,0).applyQuaternion(kq).normalize();
+  const n=new V(1,0,0).applyQuaternion(ha.getWorldQuaternion(new Q())); n.addScaledVector(a,-n.dot(a)).normalize();
+  const t=new V().crossVectors(a,n);
+  const pick=s=>{ const m=s[0]==='-'?-1:1, k=s.replace('-',''); return ({a,n,t})[k].clone().multiplyScalar(m); };
+  let L=pick(v.L), Rt=pick(v.R);
+  L.applyAxisAngle(a,+$('spin').value*Math.PI/180);
+  const tiltAx=new V().crossVectors(L,a).normalize(); L.applyAxisAngle(tiltAx,+$('tilt').value*Math.PI/180); Rt.applyAxisAngle(tiltAx,+$('tilt').value*Math.PI/180);
+  Rt.addScaledVector(L,-Rt.dot(L)).normalize();
+  const U=new V().crossVectors(Rt,L).normalize();
+  const W=512*K,H=382*K, ppm=v.dia*K/HILT_D*(+$('scale').value), ax=v.tsuba[0]*K, ay=v.tsuba[1]*K;
+  const tsuba=kat.localToWorld(new V(0,TSUBA_FACE,0));
+  const T=tsuba.clone().addScaledVector(Rt,-(ax-W/2)/ppm).addScaledVector(U,-(H/2-ay)/ppm);
+  const cam=I.camera, ren=I.renderer, scene=I.rig.root.parent;
+  const saved={pos:cam.position.clone(),q:cam.quaternion.clone(),up:cam.up.clone(),l:cam.left,r:cam.right,t:cam.top,b:cam.bottom,near:cam.near,far:cam.far,zoom:cam.zoom,pr:ren.getPixelRatio()};
+  const keep=new Set([I.rig.root,I.rig.katana,...I.rig.eyes]), hidden=[];
+  for(const o of scene.children) if(!keep.has(o)&&!o.isLight&&o.visible){ o.visible=false; hidden.push(o); }
+  const cw=ren.domElement.width, ch=ren.domElement.height;
+  ren.setPixelRatio(1); ren.setSize(W,H,false);
+  // the camera sits `clip` cm in front of the hilt axis with near=0, so the body behind it (the thigh, seen from the palm side) is cut away
+  const clip=+$('clip').value/100; cam.position.copy(T).addScaledVector(L,-clip); cam.up.copy(U); cam.lookAt(T);
+  cam.left=-W/2/ppm; cam.right=W/2/ppm; cam.top=H/2/ppm; cam.bottom=-H/2/ppm; cam.near=0; cam.far=clip+.25; cam.zoom=1; cam.updateProjectionMatrix();
+  ren.render(scene,cam);
+  const img=document.createElement('canvas'); img.width=W; img.height=H; img.getContext('2d').drawImage(ren.domElement,0,0,W,H);
+  for(const o of hidden) o.visible=true;
+  ren.setPixelRatio(saved.pr); ren.setSize(cw/saved.pr,ch/saved.pr,false);
+  Object.assign(cam,{left:saved.l,right:saved.r,top:saved.t,bottom:saved.b,near:saved.near,far:saved.far,zoom:saved.zoom}); cam.position.copy(saved.pos); cam.quaternion.copy(saved.q); cam.up.copy(saved.up); cam.updateProjectionMatrix();
+  return {img,v};
+}
+function draw(){
+  if(!I||!ref.complete) return;
+  const {img,v}=renderModel(), show=$('show').value, W=img.width, H=img.height;
+  out.width=show==='side'?W*2:W; out.height=H;
+  const drawRef=(x=0)=>g.drawImage(ref,v.q[0],v.q[1],512,382,x,0,W,H);
+  g.globalAlpha=1; g.fillStyle='#555'; g.fillRect(0,0,out.width,out.height);
+  if(show==='side'){ g.drawImage(img,0,0); drawRef(W); }
+  else if(show==='model') g.drawImage(img,0,0);
+  else if(show==='ref') drawRef();
+  else { g.drawImage(img,0,0); g.globalAlpha=+$('opacity').value; drawRef(); g.globalAlpha=1; }
+  g.strokeStyle='#ff3b6b'; g.lineWidth=2; g.beginPath(); g.arc(v.tsuba[0]*K,v.tsuba[1]*K,8,0,7); g.stroke();
+  status.textContent=`มุม ${$('view').value} · ท่า ${$('pose').value}${$('pose').value==='run'?' เฟส '+$('phase').value:''} · วงชมพู = จุดยึด (หน้าสึบะ) · สเกลจากความหนาด้ามในรูปมุมนี้ (${v.dia}px)`;
+}
+for(const id of ['view','pose','phase','opacity','spin','tilt','scale','clip','show']) $(id).addEventListener(id==='phase'?'change':'input',draw);
+$('save').onclick=()=>out.toBlob(b=>fetch(`/debug/save?name=ref-overlay-${$('view').value}-${$('pose').value}.png`,{method:'POST',body:b}).then(()=>status.textContent+='\nบันทึกแล้ว → out/'));
+// console: refOverlay.I = the game's __iso; reset() re-settles the pose on the next draw (after editing FIST / GRIP_CFG live)
+window.refOverlay={draw,VIEWS,set:(o)=>{ for(const k in o) $(k).value=o[k]; draw(); },reset:()=>{ cache.key=null; },get I(){ return I; }};
+</script></html>

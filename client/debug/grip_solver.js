@@ -10,8 +10,9 @@ const radius = y => { for (let k = 1; k < PROFILE.length; k++) if (y <= PROFILE[
 const FINGERS = ['Index', 'Middle', 'Ring', 'Pinky'];
 
 // the curl axis the game uses for this finger while running (FIST.runAxisTilt leans it toward the finger direction, see setFingers)
+const jointQ = (I, c, V, Q, ang) => { const q = new Q().setFromAxisAngle(axisOf(I, c, V), ang); if (I.FIST.runAxisHilt && I.FIST.hiltDev) q.multiply(new Q().setFromAxisAngle(new V(1, 0, 0), I.FIST.hiltDev * Math.PI / 180)); return q; };
 const axisOf = (I, c, V) => I.FIST.runAxisHilt
-  ? c.A.clone().lerp(new V(0, 1, 0).applyQuaternion(I.RUN_HOLD.K.clone().invert()), I.FIST.runAxisHilt).normalize()
+  ? c.A.clone().lerp(I.runCurlAxis(c.f, new V()), I.FIST.runAxisHilt).normalize()
   : c.A.clone().applyAxisAngle(new V(1, 0, 0), (I.FIST.runAxisTilt || 0) * Math.PI / 180);
 function ctx(I) {
   if (I.__gs) return I.__gs;
@@ -43,7 +44,7 @@ function sample(I, group, thr = .003) {
 }
 export function apply(I, sol) {
   const { chains, Q, R, V } = ctx(I);
-  for (const F of FINGERS) { const a = sol[F].angles ?? sol[F], c = chains[F]; c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), a[k])).multiply(j.bindH)); }
+  for (const F of FINGERS) { const a = sol[F].angles ?? sol[F], c = chains[F]; c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(jointQ(I, c, V, Q, a[k])).multiply(j.bindH)); }
   R.skinning.update();
 }
 // per finger: no vertex deeper than `maxPen` into the hilt, maximise the arc of hilt its skin lies within 3 mm of (+ a little closeness)
@@ -53,7 +54,7 @@ export function solveFingers(I, { maxPen = .002, nat = 40, step = .1, limits = {
     const c = chains[F]; let best = { score: -1e9 };
     for (let a = limits.a[0]; a <= limits.a[1] + 1e-9; a += step) for (let b = limits.b[0]; b <= limits.b[1] + 1e-9; b += step) for (let d = limits.c[0]; d <= limits.c[1] + 1e-9; d += step) {
       if (a + b + d > 3.2 || d > .9 * b + .3) continue;
-      c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), [a, b, d][k])).multiply(j.bindH));
+      c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(jointQ(I, c, V, Q, [a, b, d][k])).multiply(j.bindH));
       R.skinning.update();
       const { gaps, bins } = sample(I, F); if (!gaps.length) continue;
       const pen = gaps.reduce((s, g) => s + Math.min(g + maxPen, 0) ** 2, 0) * 4e5;
@@ -62,7 +63,7 @@ export function solveFingers(I, { maxPen = .002, nat = 40, step = .1, limits = {
       if (score > best.score) best = { score, angles: [+a.toFixed(2), +b.toFixed(2), +d.toFixed(2)], cover: bins.size * 10, min: +(gaps[0] * 1000).toFixed(1) };
     }
     out[F] = best;
-    c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), best.angles[k])).multiply(j.bindH)); R.skinning.update();
+    c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(jointQ(I, c, V, Q, best.angles[k])).multiply(j.bindH)); R.skinning.update();
   }
   return out;
 }
@@ -101,7 +102,7 @@ export function solveFingersTri(I, { maxPen = .0018, nat = 40, step = .1, limits
     const c = chains[F]; let best = { score: -1e9 };
     for (let a = limits.a[0]; a <= limits.a[1] + 1e-9; a += step) for (let b = limits.b[0]; b <= limits.b[1] + 1e-9; b += step) for (let d = limits.c[0]; d <= limits.c[1] + 1e-9; d += step) {
       if (a + b + d > 3.4 || d > .9 * b + .3) continue;
-      c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), [a, b, d][k])).multiply(j.bindH));
+      c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(jointQ(I, c, V, Q, [a, b, d][k])).multiply(j.bindH));
       R.skinning.update();
       const { min, gaps, bins } = sampleTri(I, F); if (!gaps.length) continue;
       if (min < -maxPen) continue;
@@ -110,7 +111,7 @@ export function solveFingersTri(I, { maxPen = .0018, nat = 40, step = .1, limits
       if (score > best.score) best = { score, angles: [+a.toFixed(2), +b.toFixed(2), +d.toFixed(2)], cover: bins.size * 10, min: +(min * 1000).toFixed(1) };
     }
     out[F] = best;
-    if (best.angles) { c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), best.angles[k])).multiply(j.bindH)); R.skinning.update(); }
+    if (best.angles) { c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(jointQ(I, c, V, Q, best.angles[k])).multiply(j.bindH)); R.skinning.update(); }
   }
   return out;
 }

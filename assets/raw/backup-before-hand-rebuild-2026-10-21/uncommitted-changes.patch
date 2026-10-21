@@ -1,0 +1,204 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 4e64b7d..e058b23 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -81,7 +81,7 @@ Source: `blender-ninja/new_ninja_no_hood/Meshy_AI_Unmasked_Male_Ninja_T_All_Anim
+ - **Standing pose matched to `art/reference/new_ninja_katana` (2026-10-21).** `/debug/run-overlay.html` has two more views, **ยืน · หน้า / ยืน · ข้าง** (`ninja_katana_2_front` / `ninja_katana_side_2`, copied to `assets/reference/ninja-stand-*.jpeg`): the character stands still, the reference keeps its own aspect (`fitRef()`), scale = neck → mid-ankle, and `window.__standErr` holds every joint's offset from the reference in cm (landmarks in `REFS.standFront/standSide`, read off a 50 px grid; the reference's shoulders sit ~7 cm wider because of the bulky costume). Change: `IDLE` hz .05 → −.08, hx −.27 → −.31 — the sword arm now hangs straight down at the side with the hand beside the hip (wrist 14 → 2.6 cm off the side reference, 7.4 → 3.5 cm off the front); blade untouched (forward, ~32° down, on top of the side reference's blade). **The user explicitly wants the blade forward, not across the body** — the front reference's diagonal blade is not to be copied. `m.run()` 110/110 (watch: combo "arms inside torso" now 11.1 cm at 1680 ms, limit 12).
+ 
+ - **Video-reference run (2026-10-21, v6 — replaces codex's v4/v5 ankle-path version).** `client/rig/reference_run.js`. Measured from `art/reference/ninja-no-hood/ninja_run.mp4` itself (one cycle ≈ 1.0 s of video, t≈.25–1.25; the ChatGPT strip `ninja_run_frame.jpg` is 6 frames of it). **Frame-grab gotcha:** seeking a `<video>` (`currentTime` + `onseeked`) in Chrome returned the SAME frame every time for this file — capture while playing (`playbackRate .25` + `requestVideoFrameCallback`) instead. Per leg, phase p (0 = front-foot contact, left leg at `loco.u=.25`): **stance** p < `support` (.34; was .40, lowered 2026-10-21 on request for slower steps): ankle planted, sliding linearly zF .32 → zB −.48 m relative to the pelvis centre, solved with 2D IK → zero foot slip at `stride` = (zF−zB)/support = 2.35 m (a getter — the `L.u` advance reads it; cycle ≈ .59 s at 4 m/s); **swing**: `SWING` keys = [p, thigh angle from vertical, knee flexion] read off the video (rear leg stays long and low right after toe-off, shin folds to horizontal behind, knee drives forward-high, shin reaches down), joined to the stance's own angles at both ends (Catmull-Rom with the stance solution as the end keys → seamless). Foot pitch keys `PITCH` (heel-first contact, flat, heel rise before toe-off, foot hanging toe-down behind). The pelvis height is set INSIDE `applyReferenceRun` every frame (`hipHeight(u)`: thigh joints .71 m above the planted ankle at mid-stance, +.03 m in flight) by moving the real `Hips` bone, so `referenceHipOffset()` now returns 0. Things that can't match the video and why: the video has ~50 % double support (no flight) at a slow cadence; at the game's 4 m/s that would need a 1.6 m stride / 0.4 s cycle (codex's v5 scurry), so v6 keeps 34 % support with a short flight. Upper body left as is: sword arm already ≈ the video (arm 163°, blade 44° below horizontal vs ~37°, torso lean 38° vs ~30–35°). Compare tool: `client/debug/run-compare.js` (`sheet(__iso,{tag})` → `out/run-compare-<tag>.png`, side view at 12 leg phases). `reviewReferenceRun` (pose-review **Reference gait**): planted-foot slip 0.2 mm, no reach clamp. `m.run()` 110/110 PASS. Main-page marker: **ท่าวิ่งวิดีโอ v6 · เทียบเดิม**.
+-- **Running sword grip, 3rd pass (2026-10-21) — supersedes the `RUN_HOLD` phi 36 / tilt 12 seat, `runAng`, `runAxisTilt` and the `thumbGrip.run` pose of the two "Run grip" bullets above.** Close-ups (`client/debug/run-compare.js` `handSheet(__iso,{tag})` → `out/run-hand-<tag>.png`, 5 yaws × leg phases, camera focused on the hand) showed the old run seat put the hilt half-way along the fingers, so they lay ACROSS it like a flat hand. References: the video's hand (fist right behind the tsuba, tsuka lying along the top of the forearm, blade ~37° below horizontal / ~25° off the forearm) and `art/reference/ninja-no-hood/ninja_katana_zoom_hand.jpeg` (4 views of a katana grip with the finger skeleton: every finger wraps ⟂ to the hilt, fingertips back under it, thumb round to the index). Changes: (1) `RUN_HOLD` = the attack seat `GRIP_CFG.R` with the hilt 5.5 mm further off the palm (palm skin was 6 mm inside); (2) **new `FIST.runAxisHilt`** (1): while running, the right fingers curl about the HILT's own hand-local axis ((0,1,0)·RUN_HOLD.K⁻¹ = (.49,.44,.76)) instead of the hand's +Z — the Z-curl is 41° off a diagonal hilt, so fingers cut through it instead of wrapping (`grip_solver.js` `axisOf` follows it); (3) `FIST.runAng` re-solved with the new **`grip_solver.solveFingersTri`** (samples triangle interiors like `gripMetrics`/the motion check — a long finger triangle cut the hilt by 11 mm while its vertices were outside, which the vertex-only `solveFingers` can't see) + `reportTri` (per finger/thumb/palm); (4) new `FIST.runThumbScale` 1.4 (the running thumb = the attack thumb axis × this; a SMALLER scale pushes it INTO the hilt); (5) `RUN_TUNE.wristPitch/Yaw` −.8/−.25 → −.6/.3 (scan in the comment there; `measureRunGrip()` in run-compare.js). Result over the cycle: fist encloses 270–280° (was 200°), 0 samples >2 mm inside (min −1.8 mm), blade 32–36° below horizontal, 24° off the forearm, wrist 91% of its range (was pinned at 100% ulnar), and the blade now trails straighter back (sideways swing 45° vs 66°). `m.run()` all PASS; run/stop/walk/combo views checked. Not done: ring/pinky only cover ~70° each (the solver stops there to stay out of the hilt); the left (free) hand is untouched.
++- **Running sword grip, 3rd pass (2026-10-21) — supersedes the `RUN_HOLD` phi 36 / tilt 12 seat, `runAng`, `runAxisTilt` and the `thumbGrip.run` pose of the two "Run grip" bullets above.** Close-ups (`client/debug/run-compare.js` `handSheet(__iso,{tag})` → `out/run-hand-<tag>.png`, 5 yaws × leg phases, camera focused on the hand) showed the old run seat put the hilt half-way along the fingers, so they lay ACROSS it like a flat hand. References: the video's hand (fist right behind the tsuba, tsuka lying along the top of the forearm, blade ~37° below horizontal / ~25° off the forearm) and `art/reference/ninja-no-hood/ninja_katana_zoom_hand.jpeg` (4 views of a katana grip with the finger skeleton: every finger wraps ⟂ to the hilt, fingertips back under it, thumb round to the index). Changes: (1) `RUN_HOLD` = the attack seat `GRIP_CFG.R` with the hilt 5.5 mm further off the palm (palm skin was 6 mm inside); (2) **new `FIST.runAxisHilt`** (1): while running, the right fingers curl about the HILT's own hand-local axis ((0,1,0)·RUN_HOLD.K⁻¹ = (.49,.44,.76)) instead of the hand's +Z — the Z-curl is 41° off a diagonal hilt, so fingers cut through it instead of wrapping (`grip_solver.js` `axisOf` follows it); (3) `FIST.runAng` re-solved with the new **`grip_solver.solveFingersTri`** (samples triangle interiors like `gripMetrics`/the motion check — a long finger triangle cut the hilt by 11 mm while its vertices were outside, which the vertex-only `solveFingers` can't see) + `reportTri` (per finger/thumb/palm); (4) new `FIST.runThumbScale` 1.4 (the running thumb = the attack thumb axis × this; a SMALLER scale pushes it INTO the hilt); (5) `RUN_TUNE.wristPitch/Yaw` −.8/−.25 → −.6/.3 (scan in the comment there; `measureRunGrip()` in run-compare.js). Result over the cycle: fist encloses 270–280° (was 200°), 0 samples >2 mm inside (min −1.8 mm), blade 32–36° below horizontal, 24° off the forearm, wrist 91% of its range (was pinned at 100% ulnar), and the blade now trails straighter back (sideways swing 45° vs 66°). `m.run()` all PASS; run/stop/walk/combo views checked. **Same day, follow-ups:** (a) **ring/pinky tightened** — curling them about the plain hilt axis drove their tips INTO the hilt (their knuckles sit ~4.6 cm off the hilt axis, vs ~2.7 cm needed to wrap), so a search over each finger's curl AXIS (hilt axis ± 45° about two perpendicular directions) × its 3 angles, scored for total curl + arc touched with nothing >1.5 mm inside, gave ring axis tilt `FIST.runAxisOff.Ring` [−15,−15]° and full-fist angles for both (`runAng` Ring [1.6,1.6,1.3], Pinky [1.4,1.6,1.3]); the axis lives in `runCurlAxis()` (exposed on `__iso`, used by `grip_solver.js` `axisOf`). Fist now ~310°. (b) **Standing (and attack) grip fixed the same way** — it had the identical faults (palm 6 mm inside the hilt, index 9 mm OFF it, middle 3 mm off): `GRIP_CFG.R.pt` x −2.73 → −3.28 (so `RUN_HOLD = makeGrip(GRIP_CFG.R)`, one seat) and **`FIST.hiltGripAll`** makes the right hand use the run solution (runAng, hilt-axis curl, runThumbScale; `thumbGrip.idle` is skipped) whenever it is on that seat — idle, attacks and running; only walking (CARRY_HOLD) keeps its own Z-curls. Idle measured: 310°, 0 samples >2 mm in, min −1.5 mm, every finger touching. `m.run()` all PASS (combo grips 0.89, hits 1,2,3); idle/run/combo/stop views unchanged apart from the hand. Not done: the left (free / off-hand) hand is untouched; the hand close-up tool has `stand:true` for the idle grip (`handSheet(__iso,{stand:true})`).
+ 
+ ## Current model (2026-10-18 swap — read this first for everything else below; superseded by the no-hood swap above for the character asset itself)
+ Source: `blender-ninja/new_ninja_original/Meshy_AI_Ninja_Remeshed_for_Ri_All_Animations.glb` (remeshed 10k-tri body, one 4096² base-colour + 4096² metallic/roughness texture, no normal map) copied unchanged to `assets/ninja.glb`. Nothing was edited in Blender.
+diff --git a/client/debug/grip_solver.js b/client/debug/grip_solver.js
+index b3ae53b..84dd416 100644
+--- a/client/debug/grip_solver.js
++++ b/client/debug/grip_solver.js
+@@ -10,8 +10,9 @@ const radius = y => { for (let k = 1; k < PROFILE.length; k++) if (y <= PROFILE[
+ const FINGERS = ['Index', 'Middle', 'Ring', 'Pinky'];
+ 
+ // the curl axis the game uses for this finger while running (FIST.runAxisTilt leans it toward the finger direction, see setFingers)
++const jointQ = (I, c, V, Q, ang) => { const q = new Q().setFromAxisAngle(axisOf(I, c, V), ang); if (I.FIST.runAxisHilt && I.FIST.hiltDev) q.multiply(new Q().setFromAxisAngle(new V(1, 0, 0), I.FIST.hiltDev * Math.PI / 180)); return q; };
+ const axisOf = (I, c, V) => I.FIST.runAxisHilt
+-  ? c.A.clone().lerp(new V(0, 1, 0).applyQuaternion(I.RUN_HOLD.K.clone().invert()), I.FIST.runAxisHilt).normalize()
++  ? c.A.clone().lerp(I.runCurlAxis(c.f, new V()), I.FIST.runAxisHilt).normalize()
+   : c.A.clone().applyAxisAngle(new V(1, 0, 0), (I.FIST.runAxisTilt || 0) * Math.PI / 180);
+ function ctx(I) {
+   if (I.__gs) return I.__gs;
+@@ -43,7 +44,7 @@ function sample(I, group, thr = .003) {
+ }
+ export function apply(I, sol) {
+   const { chains, Q, R, V } = ctx(I);
+-  for (const F of FINGERS) { const a = sol[F].angles ?? sol[F], c = chains[F]; c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), a[k])).multiply(j.bindH)); }
++  for (const F of FINGERS) { const a = sol[F].angles ?? sol[F], c = chains[F]; c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(jointQ(I, c, V, Q, a[k])).multiply(j.bindH)); }
+   R.skinning.update();
+ }
+ // per finger: no vertex deeper than `maxPen` into the hilt, maximise the arc of hilt its skin lies within 3 mm of (+ a little closeness)
+@@ -53,7 +54,7 @@ export function solveFingers(I, { maxPen = .002, nat = 40, step = .1, limits = {
+     const c = chains[F]; let best = { score: -1e9 };
+     for (let a = limits.a[0]; a <= limits.a[1] + 1e-9; a += step) for (let b = limits.b[0]; b <= limits.b[1] + 1e-9; b += step) for (let d = limits.c[0]; d <= limits.c[1] + 1e-9; d += step) {
+       if (a + b + d > 3.2 || d > .9 * b + .3) continue;
+-      c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), [a, b, d][k])).multiply(j.bindH));
++      c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(jointQ(I, c, V, Q, [a, b, d][k])).multiply(j.bindH));
+       R.skinning.update();
+       const { gaps, bins } = sample(I, F); if (!gaps.length) continue;
+       const pen = gaps.reduce((s, g) => s + Math.min(g + maxPen, 0) ** 2, 0) * 4e5;
+@@ -62,7 +63,7 @@ export function solveFingers(I, { maxPen = .002, nat = 40, step = .1, limits = {
+       if (score > best.score) best = { score, angles: [+a.toFixed(2), +b.toFixed(2), +d.toFixed(2)], cover: bins.size * 10, min: +(gaps[0] * 1000).toFixed(1) };
+     }
+     out[F] = best;
+-    c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), best.angles[k])).multiply(j.bindH)); R.skinning.update();
++    c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(jointQ(I, c, V, Q, best.angles[k])).multiply(j.bindH)); R.skinning.update();
+   }
+   return out;
+ }
+@@ -101,7 +102,7 @@ export function solveFingersTri(I, { maxPen = .0018, nat = 40, step = .1, limits
+     const c = chains[F]; let best = { score: -1e9 };
+     for (let a = limits.a[0]; a <= limits.a[1] + 1e-9; a += step) for (let b = limits.b[0]; b <= limits.b[1] + 1e-9; b += step) for (let d = limits.c[0]; d <= limits.c[1] + 1e-9; d += step) {
+       if (a + b + d > 3.4 || d > .9 * b + .3) continue;
+-      c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), [a, b, d][k])).multiply(j.bindH));
++      c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(jointQ(I, c, V, Q, [a, b, d][k])).multiply(j.bindH));
+       R.skinning.update();
+       const { min, gaps, bins } = sampleTri(I, F); if (!gaps.length) continue;
+       if (min < -maxPen) continue;
+@@ -110,7 +111,7 @@ export function solveFingersTri(I, { maxPen = .0018, nat = 40, step = .1, limits
+       if (score > best.score) best = { score, angles: [+a.toFixed(2), +b.toFixed(2), +d.toFixed(2)], cover: bins.size * 10, min: +(min * 1000).toFixed(1) };
+     }
+     out[F] = best;
+-    if (best.angles) { c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(new Q().setFromAxisAngle(axisOf(I, c, V), best.angles[k])).multiply(j.bindH)); R.skinning.update(); }
++    if (best.angles) { c.joints.forEach((j, k) => j.b.quaternion.copy(j.prevInv).multiply(jointQ(I, c, V, Q, best.angles[k])).multiply(j.bindH)); R.skinning.update(); }
+   }
+   return out;
+ }
+diff --git a/client/debug/run-compare.js b/client/debug/run-compare.js
+index 77e669d..e3055dd 100644
+--- a/client/debug/run-compare.js
++++ b/client/debug/run-compare.js
+@@ -40,9 +40,10 @@ export function measureRunGrip(I,u=.25,n=150){
+ }
+ // Close-ups of the running sword hand: rows = camera yaws around the character, columns = leg phases.
+ // usage: await c.handSheet(__iso,{tag:'grip-a'}) → out/run-hand-<tag>.png
+-export async function handSheet(I,{tag='grip',phases=[0,.25,.5,.75],yaws=[-90,-30,30,90,180],zoom=.22,w=260,h=260}={}){
++export async function handSheet(I,{tag='grip',phases=[0,.25,.5,.75],yaws=[-90,-30,30,90,180],zoom=.22,w=260,h=260,stand=false}={}){
+   I.stop();I.loop('off');const S=I.S,R=I.rig.real,V=R.hipsPos.constructor;
+-  const pin=()=>{S.pos.set(2.5,0,-1);S.moveTo=new V(2.5,0,20);S.facing=0;};
++  // stand: the character stands still (idle grip) — phases then only label the columns
++  const pin=()=>{S.pos.set(2.5,0,-1);S.moveTo=stand?null:new V(2.5,0,20);S.facing=0;if(stand)S.vel.set(0,0,0);};
+   S.act=null;S.phase='idle';S.speed=1;S.vel.set(0,0,0);
+   for(let i=0;i<350;i++){pin();I.frame(0,4,true);}
+   const scene=I.rig.root.parent,keep=new Set([I.rig.root,I.rig.katana,I.rig.katana2,...I.rig.eyes]);
+@@ -50,13 +51,13 @@ export async function handSheet(I,{tag='grip',phases=[0,.25,.5,.75],yaws=[-90,-3
+   const cv=I.renderer.domElement,out=document.createElement('canvas');out.width=w*phases.length;out.height=(h+20)*yaws.length;
+   const g=out.getContext('2d');g.fillStyle='#e8e4dc';g.fillRect(0,0,out.width,out.height);
+   for(let i=0;i<phases.length;i++){
+-    for(let k=0;k<60;k++){pin();R.loco.u=(.25+phases[i]+1)%1;I.frame(0,4,true);}
++    for(let k=0;k<(stand?250:60);k++){pin();if(!stand)R.loco.u=(.25+phases[i]+1)%1;I.frame(0,4,true);}
+     const hand=R.arm.R.ha.getWorldPosition(new V());
+     for(let j=0;j<yaws.length;j++){
+       I.CAM.yaw.y=I.CAM.yawT=S.facing*180/Math.PI+yaws[j];I.CAM.pitch.y=I.CAM.pitchT=0;I.CAM.zoom.y=I.CAM.zoomT=zoom;I.CAM.focus.copy(hand);
+-      R.loco.u=(.25+phases[i]+1)%1;I.frame(0,0);
++      if(!stand)R.loco.u=(.25+phases[i]+1)%1;I.frame(0,0);
+       const s=Math.min(cv.width,cv.height);g.drawImage(cv,(cv.width-s)/2,(cv.height-s)/2,s,s,i*w,j*(h+20)+20,w,h);
+-      g.fillStyle='#222';g.font='13px sans-serif';g.fillText(`${tag} p${Math.round(phases[i]*100)} yaw${yaws[j]}`,i*w+4,j*(h+20)+14);
++      g.fillStyle='#222';g.font='13px sans-serif';g.fillText(`${tag} ${stand?'idle':'p'+Math.round(phases[i]*100)} yaw${yaws[j]}`,i*w+4,j*(h+20)+14);
+     }
+   }
+   for(const o of hidden)o.visible=true;S.moveTo=null;
+diff --git a/client/index.html b/client/index.html
+index e7e6bfd..8ca077c 100644
+--- a/client/index.html
++++ b/client/index.html
+@@ -963,8 +963,17 @@ const FIST={carryCurl:{Index:.70,Middle:.73,Ring:.76,Pinky:.76}, carryThumb:[.40
+   // 3rd pass 2026-10-21 (video ninja_run.mp4 + art/reference/ninja-no-hood/ninja_katana_zoom_hand.jpeg): the run now uses the ATTACK seat (GRIP_CFG.R, hilt
+   // 5.5 mm further off the palm — RUN_HOLD) and the fingers curl about the hilt's own axis (runAxisHilt) so each finger wraps round it ⟂ to the hilt like the
+   // reference. Solved with grip_solver.solveFingersTri (triangle samples, the same test as the motion check): fist encloses ~280°, nothing >1.8 mm inside.
+-  runAng:{Index:[.9,1,1.15],Middle:[.7,1.1,.75],Ring:[.4,.7,.25],Pinky:[.5,.4,.25]}, runAxisHilt:1, runThumbScale:1.4,
+-  // Thumb opposition for the standing seat (the running thumb uses the attack thumb axis × runThumbScale: it lies on the grip).
++  // Ring/pinky tightened (2026-10-21, user: wrap them tighter): a search over each finger's curl AXIS (hilt axis ± 45° both ways) × its 3 angles, scored for
++  // total curl + arc touched with nothing >1.5 mm inside → ring needs its axis tilted [-15,-15]° (runAxisOff), pinky the plain hilt axis; both now curl to a
++  // full fist (were ~.4–.7 rad) and the fist encloses ~310° of the hilt (was ~280°).
++  // hiltGripAll (2026-10-21): the standing/attack grip had the same faults (palm 6 mm inside the hilt, index 9 mm OFF it — Z-curls can't wrap the diagonal
++  // hilt), and its seat is now the same as the run's (GRIP_CFG.R.pt moved 5.5 mm off the palm), so the RIGHT hand uses this one solution — runAng, the
++  // hilt-axis curl and runThumbScale — whenever it is on the attack/run seat; only the walking carry seat (CARRY_HOLD) keeps its own Z-curls.
++  // hiltDev −30 (2026-10-21, /debug/ref-overlay.html palm view vs ninja_katana_zoom_hand.jpeg): the knuckle deviation puts the four fingers side by side ⟂ to
++  // the hilt like the reference; angles re-solved for it (solveFingersTri). Fully curled variants clumped the fingers into one blob — this Meshy hand's
++  // fingers are short (~7 cm) and low-poly; the real fix is a rebuilt hand mesh (see CLAUDE.md).
++  runAng:{Index:[1.1,1.5,.75],Middle:[1,1.4,.85],Ring:[.7,.7,.35],Pinky:[.7,.4,.15]}, runAxisHilt:1, hiltDev:-30, runThumbScale:1.4, hiltGripAll:true,
++  // Thumb opposition for the standing seat (only used with hiltGripAll off; the attack/run thumb = thumbPd axis × runThumbScale: it lies on the grip).
+   thumbGrip:{"idle":{"axis":[-0.301823,-0.71534,0.630231],"angles":[0.817914,1.05,0.329186]}},
+   thumbPd:{R:[-.776,.58,-.248], L:[.117,.278,.953]}, thumbScale:{R:1.2,L:.25}};
+ function prepFingers(real){
+@@ -992,7 +1001,8 @@ function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (
+     const side=c.side==='Right'?'R':'L';
+     const ang=c.thumb?FIST.thumb:FIST.curl;
+     const wrap=c.thumb?FIST.thumbScale[side]:FIST.wrapCurl[side][c.f];   // per-finger/per-side hilt-radius match, see the comment above FIST
+-    const k=(c.side==='Right'?kR:kL)*wrap, kk=c.side==='Right'?kR:kL, wa=!c.thumb&&FIST.wrapAng[side]&&FIST.wrapAng[side][c.f];
++    const all=c.side==='Right'&&FIST.hiltGripAll;   // the right hand's attack/stand grip = the run solution (see hiltGripAll above)
++    const k=(c.side==='Right'?kR:kL)*(all&&c.thumb?FIST.runThumbScale:wrap), kk=c.side==='Right'?kR:kL, wa=!c.thumb&&(all?FIST.runAng[c.f]:FIST.wrapAng[side]&&FIST.wrapAng[side][c.f]);
+     const w=c.side==='Right'?carry:0;
+     c.joints.forEach((j,i)=>{
+       const carryHold=c.thumb?FIST.carryThumb[i]:ang[i]*FIST.carryCurl[c.f];
+@@ -1003,10 +1013,13 @@ function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (
+       const tilt=(!c.thumb&&c.side==='Right'&&FIST.runAxisTilt)?FIST.runAxisTilt*D2R*w*(real.loco?.b||0):0;
+       // runAxisHilt (0..1): while running, the right fingers curl about the HILT's own axis (hand-local, from RUN_HOLD.K) instead of the hand's +Z, so
+       // they wrap round a hilt that lies diagonally across the palm (art/reference/ninja-no-hood/ninja_katana_zoom_hand.jpeg: each finger ⟂ the hilt)
+-      const hiltW=(!c.thumb&&c.side==='Right'&&FIST.runAxisHilt)?FIST.runAxisHilt*w*(real.loco?.b||0):0;
+-      const axis=hiltW?AX_T.copy(c.A).lerp(AX_H.set(0,1,0).applyQuaternion(_qh.copy(RUN_HOLD.K).invert()),hiltW).normalize():tilt?AX_T.copy(c.A).applyAxisAngle(AX_X,tilt):c.A;
++      const hiltW=(!c.thumb&&c.side==='Right'&&FIST.runAxisHilt)?FIST.runAxisHilt*(all?(1-w)+w*(real.loco?.b||0):w*(real.loco?.b||0)):0;   // walking (carry seat) stays on +Z
++      const axis=hiltW?AX_T.copy(c.A).lerp(runCurlAxis(c.f,AX_H),hiltW).normalize():tilt?AX_T.copy(c.A).applyAxisAngle(AX_X,tilt):c.A;
+       qa_.setFromAxisAngle(axis,lerp(wa?wa[i]*kk:ang[i]*k,hold,w));
+-      if(c.thumb&&side==='R'&&FIST.thumbGrip){
++      // hiltDev (deg): before curling round the diagonal hilt, each right finger deviates at the knuckle (about the palm normal, hand X) so it lies ⟂ to
++      // the hilt — a real hammer grip; curling alone about the hilt axis spiralled the fingers ALONG the hilt (seen in /debug/ref-overlay.html, palm view)
++      if(hiltW&&FIST.hiltDev) qa_.multiply(_qd.setFromAxisAngle(AX_X,FIST.hiltDev*D2R*hiltW));
++      if(c.thumb&&side==='R'&&FIST.thumbGrip&&!all){
+         const pose=FIST.thumbGrip, q=new THREE.Quaternion();
+         if(pose.idle)qa_.slerp(q.setFromAxisAngle(V(...pose.idle.axis).normalize(),pose.idle.angles[i]),(S.thumbRest||0)*(1-w));
+         if(pose.run)qa_.slerp(q.setFromAxisAngle(V(...pose.run.axis).normalize(),pose.run.angles[i]),w*(real.loco?.b||0));
+@@ -1015,7 +1028,16 @@ function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (
+     });
+   }
+ }
+-const qa_=new THREE.Quaternion(), AX_X=new THREE.Vector3(1,0,0), AX_T=new THREE.Vector3(), AX_H=new THREE.Vector3(), _qh=new THREE.Quaternion();
++const qa_=new THREE.Quaternion(), _qd=new THREE.Quaternion(), AX_X=new THREE.Vector3(1,0,0), AX_T=new THREE.Vector3(), AX_H=new THREE.Vector3(), _qh=new THREE.Quaternion(), _e1=new THREE.Vector3(), _e2=new THREE.Vector3();
++// The running curl axis of one right finger (hand-local): the hilt's own axis, tilted by FIST.runAxisOff[finger] = [p, q] degrees about two directions
++// perpendicular to it (e1 = hand +Y × hilt, e2 = hilt × e1). Ring/pinky need their own tilt: their knuckles sit ~4.6 cm off the hilt axis, so curling
++// about the plain hilt axis drove their tips INTO the hilt instead of round it (grip_solver.js axisOf uses the same function via __iso.runCurlAxis).
++function runCurlAxis(f, out=new THREE.Vector3()){
++  out.set(0,1,0).applyQuaternion(_qh.copy(RUN_HOLD.K).invert());
++  const off=FIST.runAxisOff?.[f]; if(!off) return out;
++  _e1.set(0,1,0).cross(out).normalize(); _e2.copy(out).cross(_e1).normalize();
++  return out.applyAxisAngle(_e1,off[0]*D2R).applyAxisAngle(_e2,off[1]*D2R).normalize();
++}
+ // Anatomical wrist range (°, adult averages): flexion toward the palm / extension / radial (thumb side) / ulnar (little-finger side) deviation.
+ // limitWrist() pulls the hand back onto that ellipse if the solve asked for more (twist stays with the forearm, see aimHand's rollMax).
+ // Hand-bone axes on this rig: fingers +Y, thumb side +Z, palm −X (right) / +X (left). client/debug/motion_check.js armAngles() measures the same thing.
+@@ -1105,7 +1127,8 @@ const GRIP_CFG={
+   // wrist) is 10 cm away and can't touch the grip; the line was moved toward the palm until the thumb lies on it too (pt, then slid along the line so the
+   // index sits under the fuchi). Result: fingers ≈0.2–0.75 cm off the grip surface, thumb ≈0.4, fist enclosing ≈210–255° of the grip, ~30 palm vertices
+   // pressed ≤0.6 cm into it (flesh under the grip — invisible).
+-  R:{palmSign:-1, P:[.7071,0,-.7071], phi:30, tilt:29, carryPhi:80, carryP:[1,0,0], carryPt:[-3.1,4.2,-.7], pt:[-2.73,7.97,-.19]},
++  // pt x −2.73 → −3.28 (2026-10-21): measured with triangle samples the palm skin sat 6 mm inside the hilt; 5.5 mm further off the palm it is ≤1.5 mm (see FIST.hiltGripAll).
++  R:{palmSign:-1, P:[.7071,0,-.7071], phi:30, tilt:29, carryPhi:80, carryP:[1,0,0], carryPt:[-3.1,4.2,-.7], pt:[-3.28,7.97,-.19]},
+   // twoRoll (deg, 2026-10-20): the off-hand's grip on the RIGHT's sword is this one rolled about the blade axis (≡ P rotated by twoRoll — real.grip.L2).
+   // After R.phi 75→40 the off-hand's roll relative to the right (S.rho.L) sat pinned at its +90° limit (GRIP_TUNE.handRollMax) through the whole combo,
+   // the left wrist landed past the crossL line at beat 2 and let go for ~150–260 ms. 35° fixed the standing combo but not "combo (from a run)" (another
+@@ -1126,7 +1149,7 @@ const CARRY_HOLD={palmSign:-1,P:[1,0,0],phi:60,pt:[-3.1,5.5,-3.4],wristFlex:5};
+ // 2026-10-21: the separate oblique run seat (phi 36 / tilt 12, pt [-3.335,9.59,1.412]) sat the hilt half-way along the fingers, so they lay ACROSS it instead of
+ // gripping (enclosure ~200°). The run now uses the attack seat, moved 5.5 mm off the palm (palm skin was 6 mm inside the hilt), with the wrist re-aimed
+ // (RUN_TUNE.wristPitch/Yaw) so the blade still trails like the video (36° below horizontal, 24° off the forearm).
+-const RUN_HOLD=makeGrip({...GRIP_CFG.R,pt:[GRIP_CFG.R.pt[0]-.55,GRIP_CFG.R.pt[1],GRIP_CFG.R.pt[2]]});
++const RUN_HOLD=makeGrip(GRIP_CFG.R);   // = the attack seat (its pt already carries the 5.5 mm move off the palm)
+ // Grip point seats the index ~2.4 cm below the guard; fitted to actual skinned hand vertices.
+ function makeGrip(c){
+   const eX=new THREE.Vector3(...c.P).multiplyScalar(c.palmSign), eZ0=new THREE.Vector3(0,1,0), eY0=new THREE.Vector3().crossVectors(eZ0,eX), f=c.phi*D2R;
+@@ -2331,7 +2354,7 @@ function saveDevState(){ try{ sessionStorage.setItem(DEV_KEY, JSON.stringify({bo
+     if(dv.loop && dv.loop!=='off') setLoop(dv.loop);
+   }
+ }
+-window.__iso={S,step,frame,camera,renderer,shaderErrors,REFERENCE_RUN,STAND_TUNE,RUN_TUNE,RUN_ARM,RUN_FREE,RUN_CLIP,makeGrip,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
++window.__iso={S,step,frame,runCurlAxis,camera,renderer,shaderErrors,REFERENCE_RUN,STAND_TUNE,RUN_TUNE,RUN_ARM,RUN_FREE,RUN_CLIP,makeGrip,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
+   GRIP_CFG, GRIP_TUNE, CARRY_HOLD, RUN_HOLD, SHOULDER, BACK_GEAR, setBackGearVisible, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, RUN_V2, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real){ rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L), L2:gripL2()}; rig.real.carryHold=makeGrip(CARRY_HOLD); } },
+   loop:setLoop};  // edit GRIP_CFG/IDLE/CARRY/COMBO/ATTACK2/ISSEN in the console; regrip() applies a GRIP_CFG edit; loop('atk2') etc. repeats a move in place so poses can be watched continuously while tuning ('off','run','run1','walk','walk1','atk1','atk2','dual','finisher' — the '1' modes run one-way instead of back and forth, e.g. into a wall)
+ // Main-page A/B control: compare with the original animation at the same camera/zoom.
