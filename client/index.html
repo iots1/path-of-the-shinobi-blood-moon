@@ -1138,7 +1138,10 @@ function rollToward(grip, qB, dir, f){
 // horizontal, not across the body. With GRIP_CFG.R.phi back at 40 (so the fingers can wrap the grip), hand G lowered/back to the thigh (hy -.42, hz .05 —
 // G is a palm-length below the wrist, so -.33 kept the elbow at ~105°) and blade by 0 / el -30: forearm ≈14° off vertical, elbow ≈163°, blade ≈59° off
 // vertical straight ahead, ≈20 cm off the legs.
-const IDLE={hx:-.27,hy:-.44,hz:.05, by:0, el:-30, hipY:-.01, hipYaw:0, chestYaw:0, lean:.03, headYaw:0, spin:0, spread:.10, step:0, two:0, eye:0, glint:0,
+// 2026-10-21: hz .05 → -.08, hx -.27 → -.31 — measured in /debug/run-overlay.html "ยืน · ข้าง/หน้า" against ninja_katana_side_2 / _2_front: the arm now hangs
+// straight down at the side with the hand beside the hip (wrist 14 → 2.6 cm off the reference from the side, 7.4 → 3.5 cm from the front); blade unchanged
+// (forward, ~32° below horizontal — the user asked for forward, not across the body, so the front reference's diagonal blade is deliberately not copied).
+const IDLE={hx:-.31,hy:-.44,hz:-.08, by:0, el:-30, hipY:-.01, hipYaw:0, chestYaw:0, lean:.03, headYaw:0, spin:0, spread:.10, step:0, two:0, eye:0, glint:0,
   dual:0, hx2:.3, hy2:-.36, hz2:.14, by2:-30, el2:-30};   // dual = the left hand holds its OWN sword (hx2…el2: its grip point / blade direction, mirrored from the right's)
 // Ninja carry: extend the sword arm behind the shoulder, with a soft elbow.
 // The forearm and blade trail together, outside the right side of the body.
