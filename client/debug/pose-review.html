@@ -1,0 +1,46 @@
+<!doctype html>
+<meta charset="utf-8"><title>Pose review</title>
+<style>body{margin:0;background:#eee;font:14px system-ui}nav{padding:8px}button{padding:8px}pre{white-space:pre-wrap;max-height:160px;overflow:auto}iframe{width:100%;height:850px;border:0}</style>
+<nav>
+<button data-mode="detail">Feet + thumb</button><button data-mode="check">Motion check</button>
+<button data-mode="all">All views</button><button data-mode="run">Run</button>
+<button data-mode="idle">Idle</button><button data-mode="combo">Combo</button>
+<button data-mode="walk">Walk</button><button data-mode="stop">Stop</button>
+<label>Tag <input id="tag" value="ankle-thumb-after"></label></nav>
+<pre id="report">Ready</pre><iframe title="Pose preview"></iframe>
+<script>
+const f=document.querySelector('iframe'),report=document.querySelector('#report');
+let queue=[];
+const buttons=disabled=>document.querySelectorAll('button').forEach(b=>b.disabled=disabled);
+window.reviewNext=result=>{
+  if(result)report.textContent+='\n'+result;
+  if(!queue.length){buttons(false);return;}
+  const mode=queue.shift(),tag=document.querySelector('#tag').value;
+  report.textContent+='\nLoading '+mode+'…';
+  f.onload=()=>{
+    const script=f.contentDocument.createElement('script');script.type='module';
+    script.textContent=`
+      import * as m from '/debug/motion_check.js';
+      import {inspect} from '/debug/foot-grip-review.js';
+      await new Promise(resolve=>{const timer=setInterval(()=>{
+        if(window.__iso?.rig.real?.loco?.version==='v2'){clearInterval(timer);resolve();}
+      },100);});
+      try{
+        const mode=${JSON.stringify(mode)},tag=${JSON.stringify(tag)};
+        let result;
+        if(mode==='detail')result=await inspect(window.__iso,tag);
+        else if(mode==='check')result=(await m.run()).split('\\n')[0];
+        else result=await m.views({mode,tag,zoom:1.7,width:.65});
+        parent.reviewNext(result);
+      }catch(e){parent.reviewNext(e.stack);}
+    `;
+    f.contentDocument.body.append(script);
+  };
+  f.src='/?pose-review='+Date.now();
+};
+for(const b of document.querySelectorAll('button'))b.onclick=()=>{
+  buttons(true);report.textContent='Checking poses';
+  queue=b.dataset.mode==='all'?['check','run','idle','combo','walk','stop','detail']:[b.dataset.mode];
+  reviewNext();
+};
+</script>
