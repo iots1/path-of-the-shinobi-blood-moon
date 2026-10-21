@@ -14,7 +14,7 @@ export async function inspect(I,tag='before'){
  const data={idle:thumb(),feet:[],solutions};palmShot('Idle',0);
  I.CAM.yaw.y=I.CAM.yawT=45;key(true);
  for(let i=0;i<380;i++){I.frame(0,4,true);if(i<180)continue;
-  const feet={phase:R.loco.u};for(const side of ['Left','Right']){const f=R.bone[side+'Foot'],toe=R.bone[side+'ToeBase'],q=I.rig.root.getWorldQuaternion(new Q()).invert().multiply(f.getWorldQuaternion(new Q())).multiply(R.bind[side+'Foot'].rl.clone().invert()),e=new E().setFromQuaternion(q,'YXZ');feet[side]={pitch:e.x*180/Math.PI,bank:e.z*180/Math.PI,yaw:e.y*180/Math.PI,q:q.toArray(),footY:f.getWorldPosition(new V()).y,toeY:toe.getWorldPosition(new V()).y};}data.feet.push(feet);
+  const feet={phase:R.loco.u};for(const side of ['Left','Right']){const f=R.bone[side+'Foot'],toe=R.bone[side+'ToeBase'],q=I.rig.root.getWorldQuaternion(new Q()).invert().multiply(f.getWorldQuaternion(new Q())).multiply(R.bind[side+'Foot'].rl.clone().invert()).multiply(R.soleYaw[side]),e=new E().setFromQuaternion(q,'YXZ');feet[side]={pitch:e.x*180/Math.PI,bank:e.z*180/Math.PI,yaw:e.y*180/Math.PI,q:q.toArray(),footY:f.getWorldPosition(new V()).y,toeY:toe.getWorldPosition(new V()).y};}data.feet.push(feet);
  }
  key(false);if(tag.includes('solve'))solutions.run=await solveThumb(I);data.run=thumb();palmShot('Run',600);
  data.checks={};for(const side of ['Left','Right']){
@@ -22,7 +22,7 @@ export async function inspect(I,tag='before'){
  let rate=0;for(let i=1;i<data.feet.length;i++)rate=Math.max(rate,new Q(...data.feet[i-1][side].q).angleTo(new Q(...data.feet[i][side].q))*180/Math.PI/.004);
  data.checks[side]={supportSamples:low.length,maxBank:Math.max(...low.map(f=>Math.abs(f.bank))),maxPitch:Math.max(...low.map(f=>Math.abs(f.pitch))),maxAngularRate:rate};
  }
- data.pass=Object.values(data.checks).every(c=>c.supportSamples>0&&c.maxBank<=10&&c.maxPitch<=40);
+ data.pass=Object.values(data.checks).every(c=>c.supportSamples>0&&c.maxBank<=9&&c.maxPitch<=40);
  await save('foot-grip-'+tag+'.json',data);await save('foot-grip-'+tag+'.png',await new Promise(r=>canvas.toBlob(r)));await feetSheet(I,tag);return (data.pass?'PASS ':'FAIL ')+'Saved foot-grip-'+tag+' '+JSON.stringify(data.checks);
 }
 
