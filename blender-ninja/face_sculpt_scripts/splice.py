@@ -41,6 +41,9 @@ remap = np.array([jo_names.index(n) for n in jn_names])
 A = {k: acc(jn, bn, i).copy() for k, i in pn['attributes'].items()}
 idx = acc(jn, bn, pn['indices']).copy()
 O = {k: acc(jo, bo, i) for k, i in po['attributes'].items()}
+for k in set(O) - set(A):   # attributes the Blender export can't carry (e.g. _OUTLINE_NORMAL): new verts get NORMAL;
+    print('note: new mesh lacks', k, '- filled from NORMAL for appended verts (re-run add_outline_normals.py)')
+    A[k] = A['NORMAL'].astype(O[k].dtype).copy()
 assert set(A) == set(O), (A.keys(), O.keys())
 A['JOINTS_0'] = remap[A['JOINTS_0'].astype(int)].astype(O['JOINTS_0'].dtype)
 
@@ -68,10 +71,13 @@ for i in range(len(P)):
     npid[i] = opid[cs[0]]
     cs = [k for k in cs if np.abs(O['TEXCOORD_0'][k] - UV[i]).max() < 2e-4]
     if cs: vmatch[i] = max(cs, key=lambda k: float(np.dot(O['NORMAL'][k], NN[i])))
-okeys = set(frozenset(opid[t]) for t in oidx)
-nkeys = set(frozenset(npid[t]) for t in nidx)
-keep = np.array([frozenset(opid[t]) in nkeys for t in oidx])
-add = np.array([frozenset(npid[t]) not in okeys for t in nidx])
+ouv = np.round(O['TEXCOORD_0'] * 4096).astype(np.int64); nuv = np.round(UV * 4096).astype(np.int64)
+okey = lambda t: frozenset((int(opid[i]), int(ouv[i, 0]), int(ouv[i, 1])) for i in t)
+nkey = lambda t: frozenset((int(npid[i]), int(nuv[i, 0]), int(nuv[i, 1])) for i in t)
+okeys = set(okey(t) for t in oidx)
+nkeys = set(nkey(t) for t in nidx)
+keep = np.array([okey(t) in nkeys for t in oidx])
+add = np.array([nkey(t) not in okeys for t in nidx])
 newv = {}
 def vid(i):
     if vmatch[i] >= 0: return int(vmatch[i])

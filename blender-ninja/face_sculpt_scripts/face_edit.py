@@ -259,6 +259,76 @@ if not RAW:
                 v.co.z += dz; moved += 1; mx = max(mx, abs(dz)); disp[v] = Vector((0, 0, dz))
         bm.normal_update()
         log['stretch_moved'] = moved; log['stretch_max_mm'] = mx * 1000
+    # crisp jawline: the jaw border is a polyline in SIDE projection (y -> z). Skin below it (d = z_line - z > 0) is pushed
+    # inward along its normal (shadow under the jaw, flatter under-chin), peaking at `peak` below the line and fading by
+    # `fade`; a small ridge just above the line makes the edge itself read.  Fades out behind the jaw angle (yfade).
+    if '--jawline' in argv:
+        JL = json.load(open(argv[argv.index('--jawline') + 1]))
+        ly = np.array([p[0] for p in JL['line']]); lz = np.array([p[1] for p in JL['line']])
+        def zline(y): return float(np.interp(y, ly, lz))
+        nmov = 0; mx = 0
+        for v in bm.verts:
+            p = v.co
+            if not headish(v) or p.z < JL.get('zmin', 1.44) or p.y < ly[0] - 0.02 or p.y > ly[-1] + JL['yfade'][1]: continue
+            zl = zline(min(max(p.y, ly[0]), ly[-1]))
+            if 'xcurve' in JL:   # at the front the border curves up toward the jaw corners (rounded chin from the front)
+                xc = JL['xcurve']; zl += xc[0] * (min(abs(p.x), xc[1]) / xc[1]) ** 2 * (1 - ss(xc[2], xc[3], p.y))
+            d = zl - p.z
+            wy = 1 - ss(ly[-1] + JL['yfade'][0], ly[-1] + JL['yfade'][1], p.y)
+            wy *= ss(ly[0] - 0.02, ly[0], p.y)
+            if wy <= 0: continue
+            under = ss(0, JL['peak'], d) * (1 - ss(JL['peak'], JL['fade'], d)) if d > 0 else 0
+            ridge = math.exp(-0.5 * ((d + JL['ridge_w']) / (JL['ridge_w'] * 0.6)) ** 2) if d < 0.002 else 0
+            a = (-JL['push'] * under + JL['ridge'] * ridge) * 0.001 * wy
+            if abs(a) < 1e-6: continue
+            dv = v.normal * a
+            v.co += dv; disp[v] = disp.get(v, Vector()) + dv; nmov += 1; mx = max(mx, abs(a))
+        bm.normal_update()
+        log['jaw_moved'] = nmov; log['jaw_max_mm'] = mx * 1000
+    # new UV island for the face front: planar projection from slightly below the front (so the nose underside also gets
+    # resolution) into free atlas space.  Faces: inside the box, normal facing the projection direction > `facing`,
+    # largest connected piece.  UVs only — positions untouched.
+    if '--face-island' in argv:
+        FI = json.load(open(argv[argv.index('--face-island') + 1]))
+        a = math.radians(FI.get('tilt', 20))
+        L = Vector((0, math.cos(a), math.sin(a)))          # camera -> face (camera in front, below)
+        Uv = Vector((0, -math.sin(a), math.cos(a)))        # image up
+        bx = FI['box']
+        cand = set(f for f in bm.faces if all(headish(v) for v in f.verts)
+                   and all(abs(v.co.x) < bx['x'] and bx['z'][0] < v.co.z < bx['z'][1] and v.co.y < bx['y'] for v in f.verts)
+                   and f.normal.dot(-L) > FI.get('facing', 0.3))
+        # only faces VISIBLE from the projection direction: a planar map of hidden surfaces (the hair shell in front of the
+        # forehead) would land on the same pixels as the skin behind it
+        bvh_vis = BVHTree.FromBMesh(bm); hidden = 0
+        for f in list(cand):
+            c = f.calc_center_median() + f.normal * 2e-5
+            h = bvh_vis.ray_cast(c, -L, 0.4)
+            if h[0] is not None and h[3] > 1e-4:
+                cand.discard(f); hidden += 1
+        log['island_hidden_dropped'] = hidden
+        seen = set(); best = []
+        for f in cand:   # largest edge-connected component
+            if f in seen: continue
+            st = [f]; comp = []; seen.add(f)
+            while st:
+                g = st.pop(); comp.append(g)
+                for e in g.edges:
+                    for h in e.link_faces:
+                        if h in cand and h not in seen: seen.add(h); st.append(h)
+            if len(comp) > len(best): best = comp
+        vs = set(v for f in best for v in f.verts)
+        xs = [v.co.x for v in vs]; us = [v.co.dot(Uv) for v in vs]
+        x0, x1, u0, u1 = min(xs), max(xs), min(us), max(us)
+        R = FI['rect']   # [px0, py0, w, h] in glTF pixel coords (rows down), with a margin inside
+        m = FI.get('margin', 12)
+        s = min((R[2] - 2 * m) / (x1 - x0), (R[3] - 2 * m) / (u1 - u0))
+        cx = R[0] + R[2] / 2; cy = R[1] + R[3] / 2; xm = (x0 + x1) / 2; um = (u0 + u1) / 2
+        for f in best:
+            for l in f.loops:
+                px = cx + (l.vert.co.x - xm) * s; py = cy - (l.vert.co.dot(Uv) - um) * s
+                l[uvl].uv = (px / 4096, 1 - py / 4096)
+        log['island_faces'] = len(best); log['island_px_per_mm'] = s / 1000
+        log['island_extent_px'] = [round((x1 - x0) * s), round((u1 - u0) * s)]
     # local relax (ears / temples): Taubin lambda|mu on positions inside spheres {c, r, it}, smooth falloff to the rim
     if '--relax' in argv:
         RX = json.load(open(argv[argv.index('--relax') + 1]))
@@ -331,7 +401,9 @@ cd.clip_start = 0.005
 sc.render.film_transparent = False
 sc.view_settings.view_transform = 'Standard'
 sh = sc.display.shading
-VIEWS = [('earR', (-1, -0.02, 1.6), (90, 0, -90)), ('earRb', (-0.75, 0.75, 1.62), (90, 0, -135)), ('earL', (1, -0.02, 1.6), (90, 0, 90)), ('earLb', (0.75, 0.75, 1.62), (90, 0, 135))] if '--ears' in argv else \
+VIEWS = [('mf', (0.0, -1, 1.540), (90, 0, 0)), ('mq', (0.573, -0.919, 1.540), (90, 0, 35)), ('mqr', (-0.573, -0.919, 1.540), (90, 0, -35)), ('mlo', (0.0, -0.95, 1.30), (104, 0, 0))] if '--mouth' in argv else \
+    [('jf', (0.0, -1, 1.53), (90, 0, 0)), ('js', (1, -0.06, 1.53), (90, 0, 90)), ('j75', (0.966, -0.259-0.06, 1.53), (90, 0, 75)), ('jlo', (0.45, -0.9, 1.25), (106, 0, 27))] if '--jaw' in argv else \
+    [('earR', (-1, -0.02, 1.6), (90, 0, -90)), ('earRb', (-0.75, 0.75, 1.62), (90, 0, -135)), ('earL', (1, -0.02, 1.6), (90, 0, 90)), ('earLb', (0.75, 0.75, 1.62), (90, 0, 135))] if '--ears' in argv else \
     [('zoom', (0.0, -1, 1.635), (90, 0, 0)), ('zoomq', (0.5, -0.86, 1.64), (90, 0, 30)), ] if '--zoom' in argv else \
     [('nf', (0.0, -1, 1.592), (90, 0, 0)), ('nq', (0.15, -0.31, 1.585), (93, 0, 37)), ('ns', (1, -0.105, 1.588), (90, 0, 90)), ('nb', (0.0, -1, 1.40), (100.8, 0, 0)), ('nu', (0.0, -0.929, 1.001), (125, 0, 0)), ('nu2', (0.35, -0.85, 1.05), (122, 0, 25))] if '--nose' in argv else [('front', (0.0, -1, 1.585), (90, 0, 0)), ('side', (1, -0.04, 1.585), (90, 0, 90)),
          ('q3', (0.70, -0.72, 1.585), (90, 0, 44)), ('low', (0.0, -1, 1.40), (100.5, 0, 0))]
@@ -342,7 +414,7 @@ for mode in ('tex', 'clay'):
         sh.light = 'STUDIO'; sh.color_type = 'SINGLE'; sh.single_color = (0.8, 0.72, 0.65)
         sh.show_cavity = False
     for name, loc, rot in VIEWS:
-        cd.ortho_scale = 0.16 if name.startswith('ear') else 0.08 if name.startswith('zoom') else (0.07 if name[0] == 'n' and len(name) == 2 else 0.26)
+        cd.ortho_scale = 0.08 if name[0] == 'm' and len(name) <= 3 else 0.2 if name[0] == 'j' and len(name) <= 3 else 0.16 if name.startswith('ear') else 0.08 if name.startswith('zoom') else (0.07 if name[0] == 'n' and len(name) == 2 else 0.26)
         cam.location = loc; cam.rotation_euler = [math.radians(a) for a in rot]
         sc.render.filepath = f'{OUT}_{mode}_{name}.png'
         bpy.ops.render.render(write_still=True)

@@ -31,18 +31,25 @@ def blob(q, e, s):
     return np.exp(-0.5 * d)
 def sides(e): return (1, -1) if e.get('mirror', True) and e.get('x', 0) else (1,)
 def sstep(e0, e1, x): t = np.clip((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t)
-def factor(q, n=None):  # q: (n,3) Blender-frame points -> multiply factor (n,); 'down': only where the normal points down
+def gates(e, n):   # 'down': only where the normal points down; 'front': only where it faces the front (-y)
+    g = 1
+    if n is None: return g
+    if 'down' in e: g = g * sstep(*e['down'], -n[:, 2])
+    if 'front' in e: g = g * sstep(*e['front'], -n[:, 1])
+    if 'side' in e: g = g * sstep(*e['side'], np.abs(n[:, 0]))
+    return g
+def factor(q, n=None):  # q: (n,3) Blender-frame points -> multiply factor (n,)
     f = np.ones(len(q), np.float32)
     for e in FE:
         if 'mul' not in e: continue
-        gate = sstep(*e['down'], -n[:, 2]) if ('down' in e and n is not None) else 1
+        gate = gates(e, n)
         for s in sides(e):
             f *= 1 - (1 - e['mul']) * blob(q, e, s) * gate
     return f
 
 # face triangles only (front of the head)
 tp = BP[T]
-sel = (tp[:, :, 2] > 1.54).all(1) & (tp[:, :, 2] < 1.64).all(1) & (np.abs(tp[:, :, 0]) < 0.045).all(1) & (tp[:, :, 1] < -0.07).all(1)
+sel = (tp[:, :, 2] > 1.50).all(1) & (tp[:, :, 2] < 1.64).all(1) & (np.abs(tp[:, :, 0]) < 0.06).all(1) & (tp[:, :, 1] < -0.05).all(1)
 out = alb.copy(); done = np.zeros((H, W), bool); npx = 0
 QY, QX, QP, QN = [], [], [], []
 for t in T[sel]:
@@ -57,7 +64,7 @@ for t in T[sel]:
     l1 = ((c[1] - a[1]) * (gx - c[0]) + (a[0] - c[0]) * (gy - c[1])) / d
     l2 = 1 - l0 - l1
     e = -1.5 / max(np.linalg.norm(px - np.roll(px, 1, 0), axis=1).max(), 1)
-    m = (l0 >= e) & (l1 >= e) & (l2 >= e) & ~done[y0:y1 + 1, x0:x1 + 1]
+    m = (l0 >= e) & (l1 >= e) & (l2 >= e)
     if not m.any(): continue
     q = l0[m, None] * BP[t[0]] + l1[m, None] * BP[t[1]] + l2[m, None] * BP[t[2]]
     yy, xx = np.nonzero(m); yy += y0; xx += x0
@@ -70,12 +77,24 @@ col = alb[QY, QX]
 # skin reference = median colour of the nose bridge sides
 ref = np.median(col[(np.abs(QP[:, 0]) > 0.004) & (np.abs(QP[:, 0]) < 0.013) & (QP[:, 2] > 1.596) & (QP[:, 2] < 1.612)], 0)
 print('skin ref', ref.round(1))
-w = np.zeros(len(QP), np.float32)
+# 'clean' blends toward skin: the global ref, or (with 'ref': [x,y,z] Blender m, 'ref_r') the median colour of the
+# texels around that point — local skin tone (stubble/cheek), so a cleaned patch doesn't read as a lighter blob
+# a texel shared by several triangles (squashed UV areas) is cleaned/darkened if ANY of its triangles is inside the blob
+tid = QY.astype(np.int64) * W + QX
+ut, inv = np.unique(tid, return_inverse=True)
+col0 = alb[ut // W, ut % W].astype(np.float32); col = col0.copy()
 for e in [x for x in FE if 'clean' in x]:
-    for sg in sides(e): w = np.maximum(w, e['clean'] * blob(QP, e, sg))
-col = col * (1 - w[:, None]) + ref * w[:, None]
-f = factor(QP, QN)
-out[QY, QX] = col * f[:, None]
+    for sg in sides(e):
+        if 'ref' in e:
+            rp = np.array(e['ref']) * [sg, 1, 1]
+            near = np.linalg.norm(QP - rp, axis=1) < e.get('ref_r', 0.004)
+            rc = np.median(alb[QY[near], QX[near]], 0) if near.sum() > 20 else ref
+        else: rc = ref
+        wc = e['clean'] * blob(QP, e, sg) * gates(e, QN)
+        wb = np.zeros(len(ut), np.float32); np.maximum.at(wb, inv, wc)
+        col = col * (1 - wb[:, None]) + rc * wb[:, None]
+fc = factor(QP, QN); f = np.ones(len(ut), np.float32); np.minimum.at(f, inv, fc)
+out[ut // W, ut % W] = col * f[:, None]
 print('painted px', npx)
 buf = io.BytesIO(); Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(buf, 'PNG', compress_level=6)
 newpng = buf.getvalue()

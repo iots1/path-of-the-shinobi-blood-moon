@@ -10,7 +10,7 @@ exec(open(__file__.replace('add_outline_normals.py', 'splice.py')).read().split(
 src, dst = sys.argv[1:3]
 j, b = load(src)
 pr = j['meshes'][0]['primitives'][0]
-pr['attributes'].pop('_OUTLINE_NORMAL', None)
+old_acc = pr['attributes'].pop('_OUTLINE_NORMAL', None)
 P = acc(j, b, pr['attributes']['POSITION']).astype(np.float64)
 N = acc(j, b, pr['attributes']['NORMAL']).astype(np.float64)
 T = acc(j, b, pr['indices']).astype(np.int64).reshape(-1, 3)
@@ -45,12 +45,25 @@ dev = np.degrees(np.arccos(np.clip((ON * N).sum(1), -1, 1)))
 print(f'verts {len(P)}, welded positions {wid.max() + 1}, normal change p50 {np.percentile(dev, 50):.1f} p99 {np.percentile(dev, 99):.1f} max {dev.max():.1f} deg')
 ON = ON.astype(np.float32)
 
-out = bytearray(b)
+# rebuild the binary without bufferViews nothing references any more (e.g. the previous _OUTLINE_NORMAL)
+if old_acc is not None:
+    j['accessors'][old_acc] = {'bufferView': None, 'componentType': 5126, 'count': len(ON), 'type': 'VEC3'}
+used = set(a_['bufferView'] for a_ in j['accessors'] if a_.get('bufferView') is not None) | set(im['bufferView'] for im in j['images'])
+out = bytearray(); views = []; vmap = {}
+for vi, bv in enumerate(j['bufferViews']):
+    if vi not in used: continue
+    while len(out) % 4: out.append(0)
+    s0 = bv.get('byteOffset', 0); nb = dict(bv); nb['byteOffset'] = len(out); out.extend(b[s0:s0 + bv['byteLength']])
+    vmap[vi] = len(views); views.append(nb)
+for a_ in j['accessors']:
+    if a_.get('bufferView') is not None: a_['bufferView'] = vmap[a_['bufferView']]
+for im in j['images']: im['bufferView'] = vmap[im['bufferView']]
 while len(out) % 4: out.append(0)
-j['bufferViews'].append({'buffer': 0, 'byteOffset': len(out), 'byteLength': ON.nbytes, 'target': 34962})
-out.extend(ON.tobytes())
-j['accessors'].append({'bufferView': len(j['bufferViews']) - 1, 'componentType': 5126, 'count': len(ON), 'type': 'VEC3'})
-pr['attributes']['_OUTLINE_NORMAL'] = len(j['accessors']) - 1
+views.append({'buffer': 0, 'byteOffset': len(out), 'byteLength': ON.nbytes, 'target': 34962}); out.extend(ON.tobytes())
+j['bufferViews'] = views
+acc_new = {'bufferView': len(views) - 1, 'componentType': 5126, 'count': len(ON), 'type': 'VEC3'}
+if old_acc is not None: j['accessors'][old_acc] = acc_new; pr['attributes']['_OUTLINE_NORMAL'] = old_acc
+else: j['accessors'].append(acc_new); pr['attributes']['_OUTLINE_NORMAL'] = len(j['accessors']) - 1
 j['buffers'] = [{'byteLength': len(out)}]
 js = json.dumps(j, separators=(',', ':')).encode()
 while len(js) % 4: js += b' '

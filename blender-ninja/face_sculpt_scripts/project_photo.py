@@ -61,6 +61,9 @@ def sample(arr, u, v):
 # --- rasterise the face triangles in UV, keep texel -> 3D point + normal
 tp = BP[T]
 sel = (tp[:, :, 2] > 1.45).all(1) & (tp[:, :, 2] < 1.68).all(1) & (np.abs(tp[:, :, 0]) < 0.08).all(1) & (tp[:, :, 1] < -0.01).all(1)
+if 'rect' in C:   # only triangles whose UVs lie in this atlas rect [px0, py0, w, h] (e.g. the face island)
+    Rc = C['rect']; tuv = UV[T] * [W, H]
+    sel &= ((tuv[:, :, 0] >= Rc[0]) & (tuv[:, :, 0] <= Rc[0] + Rc[2]) & (tuv[:, :, 1] >= Rc[1]) & (tuv[:, :, 1] <= Rc[1] + Rc[3])).all(1)
 done = np.zeros((H, W), bool); QY, QX, QP, QN = [], [], [], []
 for t in T[sel]:
     px = UV[t] * [W, H]
