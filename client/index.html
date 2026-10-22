@@ -1032,7 +1032,7 @@ const FIST={carryCurl:{Index:.70,Middle:.73,Ring:.76,Pinky:.76}, carryThumb:[.40
   // (reference: thumb tip resting on it). Tip 1.7 cm from the index's bone line (skin touching), thumb skin 0.7 mm clear of the tsuka, 4 mm clear of the
   // index skin. Replaces the single-axis thumbPd × thumbAngR curl, which stopped ~50° short (tip at 108° round the hilt, index middle phalanx at 26–67°).
   // The left thumb on a hilt uses the mirror (x,−y,−z,w).
-  thumbQR:[[-.53036,.1341,.13986,.82534],[.02393,.02939,-.03258,.99875],[.27036,.33199,-.36811,.82534]],   // 2026-10-22 3rd: comes over the top of the hilt toward the index (thumb_solver leans: phalanges flex about a leaned hilt axis = diagonal wrap)   // re-solved for the ring grip (thumb_solver touch:true): thumb skin 1.7 mm off the index skin, 0.6 mm into the tsuka at most
+  thumbQR:[[-.1581,-.11518,.05036,.97939],[.01753,.20368,.04431,.97788],[-.0699,.04382,-.16128,.98345]],   // 2026-10-22 4th (user screenshot of /debug/ref-overlay.html bottom view: thumb leftmost beside the index, along the hilt top, tip bent down beside the index tip near the tsuba — solved with client/debug/thumb_landmark_solver.js: tip/IP fitted to the reference's 2D landmarks in the user's bottom view, spin 38 / tilt 2 / scale 1.36); previous (thumb pointed down across middle/ring, tip on the index) was: [[-.53036,.1341,.13986,.82534],[.02393,.02939,-.03258,.99875],[.27036,.33199,-.36811,.82534]]; 2026-10-22 3rd: comes over the top of the hilt toward the index (thumb_solver leans: phalanges flex about a leaned hilt axis = diagonal wrap)   // re-solved for the ring grip (thumb_solver touch:true): thumb skin 1.7 mm off the index skin, 0.6 mm into the tsuka at most
   // ringAng: per-joint flexion increments (rad) of the ring grip (see ringQ), solved with client/debug/ring_solver.js — every finger's centreline on a circle of
   // tsuka radius + finger radius round the hilt (rms 0.8–1.7 mm), fingers side by side ⟂ the hilt like the reference. Overrides runAng/runAxisOff/hiltDev.
   ringAng:{Index:[.4,1.1,.9],Middle:[.9,1.3,1.1],Ring:[1,1.25,1.05],Pinky:[1.1,.85,1.1]},   // re-solved 2026-10-22 for TSUKA_S .85 + the lengthened fingers + the seat 1.5 cm toward the tsuba
@@ -1483,7 +1483,7 @@ const RUN_ARM={back:.44,drop:.14,out:.26,swing:.012};   // drop .08→.14: the f
 const RUN_FREE={back:[.20,-.13,.04], fwd:[.22,.22,.18], pole:[1.8,.3,-.2], poleBack:[.15,-.1,-1]};
 const RUN_V2={...CARRY, hy:-.19, hz:-.62, el:-36}; // raised rear hand; blade trails down behind the extended forearm
 function movingPose(){
-  const speed=Math.hypot(S.vel.x,S.vel.z), run=smooth(clamp((speed-2)/1.4,0,1));
+  const speed=Math.hypot(S.vel.x,S.vel.z), run=S.armRun??smooth(clamp((speed-2)/1.4,0,1));   // S.armRun: see applySkeleton (slow decay on a stop)
   return mix(IDLE,mix(CARRY,RUN_V2,run),S.walkAmt);
 }
 const P=o=>Object.assign({},IDLE,o);   // (the attack poses used to set eye:1 — a white eye glow during slashes; removed on request. `eye` still drives rig.eyeMat if a pose sets it)
@@ -1754,6 +1754,14 @@ function applySkeleton(p,T){
   const real=r.real, L=real&&real.loco;
   if(L){ const sp=Math.hypot(S.vel.x,S.vel.z);
     L.b=smooth(clamp((sp-2)/1.4,0,1)); // walk below 2 m/s, run above 3.4 m/s
+    // S.armRun: the sword arm's run blend. It rises with L.b but DECAYS slowly (τ .25 s): on a stop L.b fell 1→0 in ~80 ms while walkAmt was still 1, so the arm
+    // passed through the walking CARRY pose (blade raised behind the shoulder) — the tip rose ~54 cm for ~150 ms before settling. Now it goes run → idle directly.
+    // While STOPPING (walkAmt falling) it is held, so the arm blends run → idle by walkAmt alone (no walking-carry detour); reset once standing.
+    // "Stopping" = speed falling with no movement input (keys or click target); slowing to a WALK (Shift) still blends to the walking carry.
+    { const ar=S.armRun||0, input=!!S.moveTo||['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].some(k=>keys[k]);
+      const stopping=!input&&(sp<(S.armRunSp??sp)-1e-4||S.walkAmt<.97);
+      S.armRun=L.b>=ar?lerp(ar,L.b,1-Math.exp(-T/.06)):stopping?ar:lerp(ar,L.b,1-Math.exp(-T/.25));
+      if(S.walkAmt<.02) S.armRun=L.b; S.armRunSp=sp; }
     L.u=(L.u+T*sp/lerp(L.walk.stride,lerp(L.run.stride,REFERENCE_RUN.stride,REFERENCE_RUN.amount),L.b)*lerp(1,CADENCE_BOOST,L.b))%1; L.w=S.walkAmt; }
   const w=S.walkAmt, breathe=Math.sin(t*1.8);
   S.runRefMix=lerp(S.runRefMix||0,(S.act?0:REFERENCE_RUN.amount)*(L?.b||0)*w,1-Math.exp(-T/.08));
@@ -1811,7 +1819,7 @@ function applySkeleton(p,T){
   const shR=real ? real.arm.R.up.getWorldPosition(V()) : chest.localToWorld(V(-.2,.1,0));
   const shL=real ? real.arm.L.up.getWorldPosition(V()) : chest.localToWorld(V(.2,.1,0));
   // The armed hand has a restrained pump; the free hand keeps its full runner swing.
-  const run=L?L.b:0, uR=(Math.sin(ph)+1)/2, duR=(uR-.5)*w;
+  const run=L?(S.armRun??L.b):0, uR=(Math.sin(ph)+1)/2, duR=(uR-.5)*w;
   const swingY=duR*lerp(.012,.02,run), swingZ=duR*lerp(.018,.03,run);
   const armK=real?real.armK:1, armKs=real?real.armKSword:1;
   const shMid=chest.worldToLocal(shR.clone().add(shL).multiplyScalar(.5));
