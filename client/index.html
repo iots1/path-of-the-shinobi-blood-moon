@@ -744,6 +744,22 @@ function loadNinja(){
     // line is still clearly visible at play distance). Root cause is almost certainly a normals/crease issue in that one spot of the mesh — fixable properly
     // in Blender (recalculate normals / add an edge split there) if it's still visible after this; .008 is a quick mitigation, not a real fix.
     const bodyOutline=outlineMat(.008).clone();bodyOutline.onBeforeCompile=outlineMat(.008).onBeforeCompile;bodyOutline.customProgramCacheKey=()=>'ninja-anatomy-outline';
+    // _OUTLINE_NORMAL (blender-ninja/face_sculpt_scripts/add_outline_normals.py): one normal per position, shared by the UV-seam/hard-edge
+    // copies of a vertex — extruding along the split NORMAL tore the hull into black flaps at seams (ears, hairline, nostrils).
+    // GLTFLoader names it `_outline_normal`; renamed so `outline_normal * 0.0080` still matches volume_skinning.js's per-vertex outline scale.
+    const olN=skinned.geometry.getAttribute('_outline_normal');
+    if(olN){ skinned.geometry.setAttribute('outline_normal',olN); skinned.geometry.deleteAttribute('_outline_normal');
+      const base=bodyOutline.onBeforeCompile;
+      bodyOutline.onBeforeCompile=(s,r)=>{ base.call(bodyOutline,s,r); s.vertexShader='attribute vec3 outline_normal;\n'+s.vertexShader.replace('position + normal *','position + outline_normal *'); };
+      bodyOutline.customProgramCacheKey=()=>'ninja-anatomy-outline-sn'; }
+    // Depth bias: draw the hull a few mm further from the camera so it only shows past the silhouette — at concave spots
+    // (nostrils, where the hair meets the forehead, ear folds) the extruded hull otherwise poked through the surface in
+    // front of it as black ticks/flaps. Live-tune: __iso.rig.real.outlineBias.value (m, view space; 0 = old look).
+    real.outlineBias={value:.006};
+    { const prev=bodyOutline.onBeforeCompile, key=bodyOutline.customProgramCacheKey();
+      bodyOutline.onBeforeCompile=(s,r)=>{ prev.call(bodyOutline,s,r); s.uniforms.uOutlineBias=real.outlineBias;
+        s.vertexShader='uniform float uOutlineBias;\n'+s.vertexShader.replace('#include <project_vertex>','#include <project_vertex>\n  gl_Position = projectionMatrix * (mvPosition - vec4(0.0, 0.0, uOutlineBias, 0.0));'); };
+      bodyOutline.customProgramCacheKey=()=>key+'-zb'; }
     const ol=new THREE.SkinnedMesh(skinned.geometry, bodyOutline);
     ol.bind(skinned.skeleton, skinned.bindMatrix); ol.frustumCulled=false;
     ol.position.copy(skinned.position); ol.quaternion.copy(skinned.quaternion); ol.scale.copy(skinned.scale);

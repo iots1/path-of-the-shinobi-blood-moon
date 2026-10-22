@@ -46,6 +46,19 @@ if not RAW:
     r = bmesh.ops.remove_doubles(bm, verts=hv, dist=1e-5)
     log['welded'] = nv0 - len(bm.verts)
     bm.normal_update()
+    if '--del-islands' in argv:   # small loose pieces on the head (Meshy shards), by connected faces
+        lim = int(argv[argv.index('--del-islands') + 1]); seen = set(); kill = []
+        for f in bm.faces:
+            if f in seen: continue
+            st = [f]; comp = []; seen.add(f)
+            while st:
+                g = st.pop(); comp.append(g)
+                for e in g.edges:
+                    for h in e.link_faces:
+                        if h not in seen: seen.add(h); st.append(h)
+            if len(comp) < lim and all(headish(v) for g in comp for v in g.verts): kill += comp
+        bmesh.ops.delete(bm, geom=kill, context='FACES'); log['islands_deleted_faces'] = len(kill)
+        bm.normal_update()
     from mathutils.bvhtree import BVHTree
     BVH0 = BVHTree.FromBMesh(bm)
 
@@ -246,6 +259,31 @@ if not RAW:
                 v.co.z += dz; moved += 1; mx = max(mx, abs(dz)); disp[v] = Vector((0, 0, dz))
         bm.normal_update()
         log['stretch_moved'] = moved; log['stretch_max_mm'] = mx * 1000
+    # local relax (ears / temples): Taubin lambda|mu on positions inside spheres {c, r, it}, smooth falloff to the rim
+    if '--relax' in argv:
+        RX = json.load(open(argv[argv.index('--relax') + 1]))
+        bm.verts.ensure_lookup_table()
+        orig_co = {}
+        for z in RX:
+            c = Vector(z['c']); r = z['r']
+            vs = [v for v in bm.verts if (v.co - c).length < r and headish(v)]
+            w = {v: ss(r, r * 0.45, (v.co - c).length) for v in vs}
+            for v in vs: orig_co.setdefault(v, v.co.copy())
+            for it in range(z.get('it', 12)):
+                for lam in (0.55, -0.58):
+                    new = {}
+                    for v in vs:
+                        nb = [e.other_vert(v).co for e in v.link_edges]
+                        if not nb or (v.is_boundary and not z.get('boundary')): continue
+                        avg = sum(nb, Vector()) / len(nb)
+                        new[v] = v.co + (avg - v.co) * lam * w[v]
+                    for v, p in new.items(): v.co = p
+        for v, p0 in orig_co.items():
+            d = v.co - p0
+            if d.length > 1e-7: disp[v] = disp.get(v, Vector()) + d
+        bm.normal_update()
+        log['relax_moved'] = sum(1 for v, p0 in orig_co.items() if (v.co - p0).length > 1e-7)
+        log['relax_max_mm'] = max(((v.co - p0).length for v, p0 in orig_co.items()), default=0) * 1000
     log['displaced'] = len(disp)
     log['maxdisp_mm'] = max((d.length for d in disp.values()), default=0) * 1000
     touched = set(disp) | new_verts
@@ -293,7 +331,8 @@ cd.clip_start = 0.005
 sc.render.film_transparent = False
 sc.view_settings.view_transform = 'Standard'
 sh = sc.display.shading
-VIEWS = [('zoom', (0.0, -1, 1.635), (90, 0, 0)), ('zoomq', (0.5, -0.86, 1.64), (90, 0, 30)), ] if '--zoom' in argv else \
+VIEWS = [('earR', (-1, -0.02, 1.6), (90, 0, -90)), ('earRb', (-0.75, 0.75, 1.62), (90, 0, -135)), ('earL', (1, -0.02, 1.6), (90, 0, 90)), ('earLb', (0.75, 0.75, 1.62), (90, 0, 135))] if '--ears' in argv else \
+    [('zoom', (0.0, -1, 1.635), (90, 0, 0)), ('zoomq', (0.5, -0.86, 1.64), (90, 0, 30)), ] if '--zoom' in argv else \
     [('nf', (0.0, -1, 1.592), (90, 0, 0)), ('nq', (0.15, -0.31, 1.585), (93, 0, 37)), ('ns', (1, -0.105, 1.588), (90, 0, 90)), ('nb', (0.0, -1, 1.40), (100.8, 0, 0)), ('nu', (0.0, -0.929, 1.001), (125, 0, 0)), ('nu2', (0.35, -0.85, 1.05), (122, 0, 25))] if '--nose' in argv else [('front', (0.0, -1, 1.585), (90, 0, 0)), ('side', (1, -0.04, 1.585), (90, 0, 90)),
          ('q3', (0.70, -0.72, 1.585), (90, 0, 44)), ('low', (0.0, -1, 1.40), (100.5, 0, 0))]
 for mode in ('tex', 'clay'):
@@ -303,7 +342,7 @@ for mode in ('tex', 'clay'):
         sh.light = 'STUDIO'; sh.color_type = 'SINGLE'; sh.single_color = (0.8, 0.72, 0.65)
         sh.show_cavity = False
     for name, loc, rot in VIEWS:
-        cd.ortho_scale = 0.08 if name.startswith('zoom') else (0.07 if name[0] == 'n' and len(name) == 2 else 0.26)
+        cd.ortho_scale = 0.16 if name.startswith('ear') else 0.08 if name.startswith('zoom') else (0.07 if name[0] == 'n' and len(name) == 2 else 0.26)
         cam.location = loc; cam.rotation_euler = [math.radians(a) for a in rot]
         sc.render.filepath = f'{OUT}_{mode}_{name}.png'
         bpy.ops.render.render(write_still=True)
