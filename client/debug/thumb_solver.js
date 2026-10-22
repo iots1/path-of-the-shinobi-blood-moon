@@ -24,7 +24,7 @@ export function apply(I, qs) {
   ch.joints[0].b.updateMatrixWorld(true);
 }
 const segDist = (p, a, b) => { const ab = b.clone().sub(a), t = Math.max(0, Math.min(1, p.clone().sub(a).dot(ab) / ab.lengthSq())); return p.distanceTo(a.clone().addScaledVector(ab, t)); };
-function candidates(I, { fingerGap = .012, keep = 24, target = 'mid' } = {}) {
+function candidates(I, { fingerGap = .012, keep = 24, target = 'mid', leans = [0], curl = 0 } = {}) {
   const { R, V, Q, M4, ha, K, ch } = ctx(I);
   const save = ch.joints.map(j => j.b.quaternion.clone());
   ch.joints.forEach(j => j.b.quaternion.copy(j.prevInv).multiply(j.bindH)); ch.joints[0].b.updateMatrixWorld(true);
@@ -38,8 +38,12 @@ function candidates(I, { fingerGap = .012, keep = 24, target = 'mid' } = {}) {
   const h = I.runCurlAxis('none', new V()).normalize(), list = [];
   for (const ax of fib(V, 80)) for (let a = 0; a <= 1.4; a += .1) {
     const q1 = new Q().setFromAxisAngle(ax, a), j2 = bj[0].clone().add(seg[0].clone().applyQuaternion(q1));
+    // leans (deg): the phalanges flex about the hilt axis leaned about the proximal phalanx's direction, so the thumb can wrap DIAGONALLY toward the tsuba
+    // (reference: tip on the index's middle phalanx) instead of only round the hilt
+    const pdir = seg[1].clone().applyQuaternion(q1).normalize();
+    for (const lean of leans) { const hl = h.clone().applyAxisAngle(pdir, lean * Math.PI / 180);
     for (const sgn of [1, -1]) for (let b = 0; b <= 1.4; b += .1) for (let c = 0; c <= 1.4; c += .1) {
-      const q2 = new Q().setFromAxisAngle(h, sgn * b).multiply(q1), q3 = new Q().setFromAxisAngle(h, sgn * (b + c)).multiply(q1);
+      const q2 = new Q().setFromAxisAngle(hl, sgn * b).multiply(q1), q3 = new Q().setFromAxisAngle(hl, sgn * (b + c)).multiply(q1);
       const j3 = j2.clone().add(seg[1].clone().applyQuaternion(q2)), j4 = j3.clone().add(seg[2].clone().applyQuaternion(q3));
       const P = [bj[0], j2, j3, j4].map(toK); let ok = true;
       for (let s = 0; s < 3 && ok; s++) for (let t = 0; t <= 1; t += .25) { const p = P[s].clone().lerp(P[s + 1], t); if (p.y < -.172 || p.y > .078) continue; if (Math.hypot(p.x / 1.06, p.z / .86) - rad(p.y) - (TR[s] * .85 - .0012) < 0) { ok = false; break; } }
@@ -49,8 +53,9 @@ function candidates(I, { fingerGap = .012, keep = 24, target = 'mid' } = {}) {
       let dTip = 1; for (let s = 0; s + 1 < idx.length; s++) dTip = Math.min(dTip, segDist(P[3], idx[s], idx[s + 1]));
       // setFingers chains them: joint k's hand-relative rotation = qa1·…·qak (prevInv = inverse of the previous BIND), so store relative ones
       const r2 = q1.clone().invert().multiply(q2), r3 = q2.clone().invert().multiply(q3);
-      list.push({ pre: -Math.abs(dTip - .017) * 400 - (a * a + b * b + c * c) * 1.5, dTip, q: [q1, r2, r3].map(q => q.toArray()) });
-    }
+      // curl: reward bending the IP joint (c) — the reference thumb's distal phalanx curls down over the index instead of lying straight
+      list.push({ pre: -Math.abs(dTip - .017) * 400 - (a * a + b * b + c * c) * 1.5 + curl * Math.min(c, .9), dTip, c, q: [q1, r2, r3].map(q => q.toArray()) });
+    } }
   }
   list.sort((x, y) => y.pre - x.pre);
   // spread the kept candidates: skip near-duplicates (tip within 4 mm of one already kept)
@@ -74,13 +79,13 @@ function meshScore(I, maxPen, target = 'mid') {
   const dTip = target === 'pip' ? Math.min(segDist(tip, i1, iw[0]), segDist(tip, iw[0], iw[1])) : segDist(tip, iw[0], iw[1]);
   return { hiltMin, idxMin, cover: bins.size * 10, dTip, ok: hiltMin > -maxPen && idxMin > -.003 };
 }
-export function solve(I, { maxPen = .0015, fingerGap = .012, keep = 24, target = 'mid', touch = false } = {}) {
-  const cands = candidates(I, { fingerGap, keep, target }); let best = null;
+export function solve(I, { maxPen = .0015, fingerGap = .012, keep = 24, target = 'mid', touch = false, leans = [0], curl = 0 } = {}) {
+  const cands = candidates(I, { fingerGap, keep, target, leans, curl }); let best = null;
   for (const c of cands) {
     apply(I, c.q); const m = meshScore(I, maxPen, target);
     // touch: rank by how close the thumb SKIN comes to the index skin (want ~0–2 mm, not inside), instead of tip-to-bone distance
-    const sc = (m.ok ? 0 : -1000) + (touch ? -Math.abs(m.idxMin - .001) * 4000 : -Math.abs(m.dTip - .017) * 400) + m.cover * .2 + Math.min(0, m.idxMin) * 2000;
-    if (!best || sc > best.sc) best = { sc, q: c.q, hiltMinMm: +(m.hiltMin * 1000).toFixed(1), indexMinMm: +(m.idxMin * 1000).toFixed(1), cover: m.cover, tipToIndexMidCm: +(m.dTip * 100).toFixed(2), ok: m.ok };
+    const sc = (m.ok ? 0 : -1000) + (touch ? -Math.abs(m.idxMin - .001) * 4000 : -Math.abs(m.dTip - .017) * 400) + m.cover * .2 + Math.min(0, m.idxMin) * 2000 + curl * Math.min(c.c, .9);
+    if (!best || sc > best.sc) best = { sc, q: c.q, ipFlex: +c.c.toFixed(2), hiltMinMm: +(m.hiltMin * 1000).toFixed(1), indexMinMm: +(m.idxMin * 1000).toFixed(1), cover: m.cover, tipToIndexMidCm: +(m.dTip * 100).toFixed(2), ok: m.ok };
   }
   if (best) apply(I, best.q);
   return { best, tried: cands.length };

@@ -7,12 +7,12 @@
 const PROFILE = [[-.172, 0.01343], [-.15, 0.01428], [-.06, 0.01496], [.03, 0.01428], [.054, 0.01377], [.06, 0.01572], [.076, 0.01488], [.078, 0.01488]];   // = index.html TSUKA_PROFILE (TSUKA_S .85)
 const rad = y => { for (let k = 1; k < PROFILE.length; k++) if (y <= PROFILE[k][0]) { const a = PROFILE[k - 1], b = PROFILE[k]; return a[1] + (b[1] - a[1]) * (y - a[0]) / (b[0] - a[0]); } return 0.01462; };
 const FR = { Index: [.0094, .0085, .0076], Middle: [.0097, .0088, .0078], Ring: [.0092, .0083, .0073], Pinky: [.0080, .0072, .0064] };   // bone line → skin (mesh build radii ×1.07 × ~.9 for the oval section)
-export function solve(I, { k = .92, slack = .0012, step = .05 } = {}) {
+export function solve(I, { k = .92, slack = .0012, step = .05, only = null } = {}) {
   const R = I.rig.real, V = R.hipsPos.constructor, Q = R.arm.R.ha.quaternion.constructor, M4 = R.arm.R.ha.matrixWorld.constructor;
   const ha = R.arm.R.ha, K = I.rig.katana; ha.updateMatrixWorld(true); K.updateMatrixWorld(true);
   const H2K = new M4().copy(K.matrixWorld).invert().multiply(ha.matrixWorld), toK = p => p.clone().applyMatrix4(H2K);
   const h = I.runCurlAxis('none', new V()).normalize(), ang = {}, report = {};
-  for (const f of ['Index', 'Middle', 'Ring', 'Pinky']) {
+  for (const f of (only || ['Index', 'Middle', 'Ring', 'Pinky'])) {
     const c = R.fingers.find(x => x.side === 'Right' && x.f === f);
     // bind joints in hand-local: pose the chain at bind (qa = identity) and read positions
     const save = c.joints.map(j => j.b.quaternion.clone());
@@ -21,14 +21,16 @@ export function solve(I, { k = .92, slack = .0012, step = .05 } = {}) {
     const J = [...c.joints.map(j => HL(j.b)), HL(R.bone[`RightHand${f}4`])];
     c.joints.forEach((j, n) => j.b.quaternion.copy(save[n])); c.joints[0].b.updateMatrixWorld(true);
     const seg = [0, 1, 2].map(n => J[n + 1].clone().sub(J[n]));
+    // same frame as index.html ringData (incl. FIST.ringLean): D turns the finger ⟂ the hilt, the ring plane's normal hf is the hilt axis leaned about the knuckle direction
     const d = seg[0].clone().normalize(), dp = d.clone().addScaledVector(h, -d.dot(h)).normalize(), D = new Q().setFromUnitVectors(d, dp);
-    const sgn = dp.clone().applyAxisAngle(h, .2).x < dp.x ? 1 : -1;
+    const hf = h.clone().applyAxisAngle(dp, (I.FIST.ringLean?.[f] || 0) * Math.PI / 180);
+    const sgn = dp.clone().applyAxisAngle(hf, .2).x < dp.x ? 1 : -1;
     let best = { sc: Infinity };
     for (let a = 0; a <= 1.6; a += step) for (let b = 0; b <= 1.8; b += step) for (let cc = 0; cc <= 1.4; cc += step) {
       if (cc > b + .3) continue;
       const th = [a, a + b, a + b + cc]; let p = J[0].clone(), err = 0, bad = false;
       for (let n = 0; n < 3 && !bad; n++) {
-        const q = new Q().setFromAxisAngle(h, sgn * th[n]).multiply(D), e = seg[n].clone().applyQuaternion(q), p2 = p.clone().add(e);
+        const q = new Q().setFromAxisAngle(hf, sgn * th[n]).multiply(D), e = seg[n].clone().applyQuaternion(q), p2 = p.clone().add(e);
         for (let t = .25; t <= 1.001; t += .25) {
           const s = toK(p.clone().lerp(p2, t)); if (s.y < -.172 || s.y > .078) continue;
           const r = Math.hypot(s.x / 1.06, s.z / .86), target = rad(s.y) + FR[f][n] * k;

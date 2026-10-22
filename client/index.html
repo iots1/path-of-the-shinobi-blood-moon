@@ -1004,10 +1004,17 @@ const FIST={carryCurl:{Index:.70,Middle:.73,Ring:.76,Pinky:.76}, carryThumb:[.40
   // (reference: thumb tip resting on it). Tip 1.7 cm from the index's bone line (skin touching), thumb skin 0.7 mm clear of the tsuka, 4 mm clear of the
   // index skin. Replaces the single-axis thumbPd × thumbAngR curl, which stopped ~50° short (tip at 108° round the hilt, index middle phalanx at 26–67°).
   // The left thumb on a hilt uses the mirror (x,−y,−z,w).
-  thumbQR:[[-.09934,.00374,-.00919,.995],[0,0,0,1],[-.00072,.01593,.04737,.99875]],   // 2026-10-22 re-solved after TSUKA_S .85 + longer fingers (glb hand proportions): lies along the grip toward the tsuba   // re-solved for the ring grip (thumb_solver touch:true): thumb skin 1.7 mm off the index skin, 0.6 mm into the tsuka at most
+  thumbQR:[[-.53036,.1341,.13986,.82534],[.02393,.02939,-.03258,.99875],[.27036,.33199,-.36811,.82534]],   // 2026-10-22 3rd: comes over the top of the hilt toward the index (thumb_solver leans: phalanges flex about a leaned hilt axis = diagonal wrap)   // re-solved for the ring grip (thumb_solver touch:true): thumb skin 1.7 mm off the index skin, 0.6 mm into the tsuka at most
   // ringAng: per-joint flexion increments (rad) of the ring grip (see ringQ), solved with client/debug/ring_solver.js — every finger's centreline on a circle of
   // tsuka radius + finger radius round the hilt (rms 0.8–1.7 mm), fingers side by side ⟂ the hilt like the reference. Overrides runAng/runAxisOff/hiltDev.
-  ringAng:{Index:[.45,1.1,1],Middle:[.9,1.25,1.2],Ring:[1.05,1.15,1.2],Pinky:[1.1,.85,1.1]},   // re-solved 2026-10-22 for TSUKA_S .85 + the lengthened fingers; seat pt moved 1 mm off the palm, 3 mm toward the pinky
+  ringAng:{Index:[.4,1.1,.9],Middle:[.9,1.3,1.1],Ring:[1,1.25,1.05],Pinky:[1.1,.85,1.1]},   // re-solved 2026-10-22 for TSUKA_S .85 + the lengthened fingers + the seat 1.5 cm toward the tsuba
+  // ringLean (deg, see ringData): fingertips converge like a real fist — measured gaps between neighbouring fingers' bone lines (minus finger radii) went from
+  // 0.3–3.2 mm to within ±1 mm (touching). Positive = toward the tsuba.
+  ringLean:{Index:-7,Middle:0,Ring:2,Pinky:8},
+  // thumbRelaxL (2026-10-22, user: thumbs looked abnormally long): the FREE left thumb used to stay almost at its abducted bind pose (thumbScale.L .25) and
+  // stuck straight out. Now relaxed beside the index's proximal phalanx (tip target 1.8 cm to the thumb side, 0.8 cm palmar; solved per joint, no overlap
+  // with the index). Also: glb thumbs ×1.2 thicker, distal ×.9 shorter (blender-ninja/new_ninja_thumb.blend).
+  thumbRelaxL:[[.05586,.0164,.0811,.995],[-.1422,.00825,.20229,.96891],[-.08589,.00498,.12219,.98877]],
   // Palm arch (ninja.glb 70 joints, 2026-10-22: Ring0/Pinky0 metacarpal bones). cup = flexion while ON a hilt; searched jointly with the seat offset off the
   // palm and the ring re-solve: every non-zero cup either pushed the hypothenar skin into the tsuka (cup 6°: 320 samples, 10°: 856) or, with the hilt moved
   // off the palm to clear it, lost enclosure (230–240° vs 250°) — this hilt already sits deep in the palm, so 0. cupFree = relaxed arch of a FREE hand.
@@ -1076,6 +1083,7 @@ function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (
       const axis=hiltW?AX_T.copy(c.A).lerp(runCurlAxis(c.f,AX_H),hiltW).normalize():tilt?AX_T.copy(c.A).applyAxisAngle(AX_X,tilt):c.A;
       qa_.setFromAxisAngle(axis,lerp(wa?wa[i]*kk:ang[i]*k,hold,w));
       if(c.thumb&&all&&FIST.thumbQR) qa_.fromArray(FIST.thumbQR[i]);   // per-joint thumb rotation (see thumbQR in FIST)
+      if(c.thumb&&c.side==='Left'&&FIST.thumbRelaxL) qa_.fromArray(FIST.thumbRelaxL[i]);   // free off-hand: relaxed thumb (see thumbRelaxL); the hilt grip below slerps from it
       const ringOn=!c.thumb&&all&&FIST.ringAng;   // ring grip (see ringQ): replaces the curl-axis/hiltDev path below for the right fingers
       // hiltDev (deg): before curling round the diagonal hilt, each right finger deviates at the knuckle (about the palm normal, hand X) so it lies ⟂ to
       // the hilt — a real hammer grip; curling alone about the hilt axis spiralled the fingers ALONG the hilt (seen in /debug/ref-overlay.html, palm view)
@@ -1088,7 +1096,8 @@ function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (
       if(c.side==='Left'&&FIST.hiltGripAll){ const g=Math.min(1,Math.max(S.twoEff||0,S.dualEff||0));
         if(g>0){
           // mirror: (x,y,z,w) → (x,−y,−z,w). leftAdj turns the WHOLE finger, so only its first joint takes it (rotations are chained: joint k = qa1·…·qak)
-          if(c.thumb){ if(FIST.thumbQR){ const q=FIST.thumbQR[i]; _ql.set(q[0],-q[1],-q[2],q[3]); } else _ql.setFromAxisAngle(c.A,FIST.thumbAngR[i]); if(leftAdj&&i===0) _ql.premultiply(leftAdj); qa_.slerp(_ql,g); }
+          if(c.thumb&&FIST.thumbQR) (leftJobs.Thumb??={c,g,base:[],thumb:true}).base[i]=qa_.clone();   // adapted after the loop like the fingers (adaptLeft)
+          else if(c.thumb){ _ql.setFromAxisAngle(c.A,FIST.thumbAngR[i]); if(leftAdj&&i===0) _ql.premultiply(leftAdj); qa_.slerp(_ql,g); }
           else (leftJobs[c.f]??={c,g,base:[]}).base[i]=qa_.clone();   // finished after the loop (adaptLeft): the curl is scaled per frame to meet the hilt
         } }
       if(c.thumb&&side==='R'&&FIST.thumbGrip&&!all){
@@ -1107,13 +1116,18 @@ function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (
 const _pa=new THREE.Vector3(), _pb=new THREE.Vector3(), _pc=new THREE.Vector3(), _qs=new THREE.Quaternion();
 const TSUKA_PROFILE=[[-.172,.0158],[-.15,.0168],[-.06,.0176],[.03,.0168],[.054,.0162],[.06,.0185],[.076,.0175],[.078,.0175]].map(([y,r])=>[y,r*TSUKA_S]);   // = rig_detail.js gripMetrics (×TSUKA_S)
 function tsukaR(y){ for(let k=1;k<TSUKA_PROFILE.length;k++) if(y<=TSUKA_PROFILE[k][0]){ const a=TSUKA_PROFILE[k-1],b=TSUKA_PROFILE[k]; return a[1]+(b[1]-a[1])*(y-a[0])/(b[0]-a[0]); } return .0172*TSUKA_S; }
-const FINGER_R={Index:.0098,Middle:.0101,Ring:.0096,Pinky:.0084};
+const FINGER_R={Index:.0098,Middle:.0101,Ring:.0096,Pinky:.0084,Thumb:.0118};   // Thumb: the 2026-10-22 thicker thumb (≈2.4 cm at the IP joint)
 function adaptLeft(real,job,leftAdj){
   const {c,g,base}=job, kat=S.dualEff>S.twoEff&&rig.katana2?.visible?rig.katana2:rig.katana; kat.updateMatrixWorld(true); real.arm.L.ha.updateMatrixWorld(true);
   const inv=_m4.copy(kat.matrixWorld).invert();
   runCurlAxis(c.f,AX_H); AX_H.set(AX_H.x,-AX_H.y,-AX_H.z);
   const tip=real.bone[`LeftHand${c.f}4`], pose=s=>{
-    c.joints.forEach((j,i)=>{ if(FIST.ringAng){ ringQ(real,c.f,i,s,_ql); _ql.set(_ql.x,-_ql.y,-_ql.z,_ql.w); } else { _ql.setFromAxisAngle(AX_H,FIST.runAng[c.f][i]*s); if(FIST.hiltDev) _ql.multiply(_qd.setFromAxisAngle(AX_X,FIST.hiltDev*D2R)); }
+    c.joints.forEach((j,i)=>{ if(job.thumb){   // thumb: from its relaxed pose toward the mirrored right-hand grip thumb (thumbQR), by g·s — s limited by the tsuka like a finger
+        const q=FIST.thumbQR[i]; _ql.set(q[0],-q[1],-q[2],q[3]); if(leftAdj&&i===0) _ql.premultiply(leftAdj);
+        // start from the OPEN thumb (identity = abducted bind pose — the relaxed pose itself lies where the hilt is), then wrap toward the grip by s
+        // s<0 extrapolates AWAY from the grip (thumb opens further) — used when the hilt runs across the thumb base (seatFlex turns the off-hand on the hilt)
+        _qs.copy(base[i]).slerp(_qI,g).slerp(_ql,g*Math.min(1,s)); j.b.quaternion.copy(j.prevInv).multiply(_qs).multiply(j.bindH); return; }
+      if(FIST.ringAng){ ringQ(real,c.f,i,s,_ql); _ql.set(_ql.x,-_ql.y,-_ql.z,_ql.w); } else { _ql.setFromAxisAngle(AX_H,FIST.runAng[c.f][i]*s); if(FIST.hiltDev) _ql.multiply(_qd.setFromAxisAngle(AX_X,FIST.hiltDev*D2R)); }
       if(leftAdj&&(i===0||!FIST.ringAng)) _ql.premultiply(leftAdj);
       _qs.copy(base[i]).slerp(_ql,g); j.b.quaternion.copy(j.prevInv).multiply(_qs).multiply(j.bindH); });
     c.joints[0].b.updateMatrixWorld(true); };
@@ -1121,22 +1135,26 @@ function adaptLeft(real,job,leftAdj){
     for(let k=1;k<pts.length;k++){ _pa.setFromMatrixPosition(pts[k-1].matrixWorld).applyMatrix4(inv); _pb.setFromMatrixPosition(pts[k].matrixWorld).applyMatrix4(inv);
       for(let t=0;t<=1;t+=.25){ _pc.lerpVectors(_pa,_pb,t); if(_pc.y<-.172||_pc.y>.078) continue; m=Math.min(m,Math.hypot(_pc.x/1.06,_pc.z/.86)-tsukaR(_pc.y)); } }
     return m-(FINGER_R[c.f]*.85-.0015); };
-  let lo=.25, hi=1.4;
-  if(clear(hi)>=0) lo=hi; else for(let n=0;n<7;n++){ const mid=(lo+hi)/2; if(clear(mid)>=0) lo=mid; else hi=mid; }
+  let lo=job.thumb?0:.25, hi=job.thumb?1:1.4;
+  if(job.thumb&&clear(0)<0){ let bs=0,bc=-1; for(const t of [0,-.3,.3,-.6,.6,-.9,-1.2,-1.6,-2]){ const cl=clear(t); if(cl>bc){ bc=cl; bs=t; } if(cl>=0) break; } lo=bs; }   // no clear wrap: open the thumb as far as needed (or as far as it helps)
+  else if(clear(hi)>=0) lo=hi; else for(let n=0;n<7;n++){ const mid=(lo+hi)/2; if(clear(mid)>=0) lo=mid; else hi=mid; }
   pose(lo);
   (real.leftCurlS??={})[c.f]=lo;   // debug: last curl scale per off-hand finger
 }
-const AX_Z=new THREE.Vector3(0,0,1), qa_=new THREE.Quaternion(), _qd=new THREE.Quaternion(), _ql=new THREE.Quaternion(), _qk=new THREE.Quaternion(), _qk2=new THREE.Quaternion(), _qadj=new THREE.Quaternion(), AX_X=new THREE.Vector3(1,0,0), AX_T=new THREE.Vector3(), AX_H=new THREE.Vector3(), _qh=new THREE.Quaternion(), _e1=new THREE.Vector3(), _e2=new THREE.Vector3();
+const _qI=new THREE.Quaternion(), AX_Z=new THREE.Vector3(0,0,1), qa_=new THREE.Quaternion(), _qd=new THREE.Quaternion(), _ql=new THREE.Quaternion(), _qk=new THREE.Quaternion(), _qk2=new THREE.Quaternion(), _qadj=new THREE.Quaternion(), AX_X=new THREE.Vector3(1,0,0), AX_T=new THREE.Vector3(), AX_H=new THREE.Vector3(), _qh=new THREE.Quaternion(), _e1=new THREE.Vector3(), _e2=new THREE.Vector3();
 // Ring grip (2026-10-21, user: the running fingers looked twisted/spiralled from the game camera). setFingers CHAINS joint rotations (joint k's
 // hand-relative rotation = qa1·…·qak, because prevInv is the inverse of the previous BIND), so the old per-joint `R(axis)·hiltDev` stacked the 30°
 // knuckle deviation 3× and spiralled every finger along the hilt. Now built from geometry, per RIGHT finger: D = the smallest rotation that turns the
 // finger's bind direction perpendicular to the hilt axis h (hand-local); joint k's absolute rotation A_k = R(h, sgn·s·Σ ang[0..k])·D, so every segment
 // stays in one plane ⟂ the hilt (a ring round it, like the reference); qa_k = A_(k−1)⁻¹·A_k. FIST.ringAng = per-joint flexion increments (rad).
 const _ringCache={}, _rA=new THREE.Quaternion(), _rB=new THREE.Quaternion(), _rV=new THREE.Vector3();
+// FIST.ringLean[f] (deg): tilts the finger's ring PLANE about the finger's own knuckle direction (still planar, no spiral), so the fingertip runs
+// along the hilt as it wraps — real fists converge (fingertips closer together than the knuckles). Positive = toward the tsuba.
 function ringData(real,f){
-  const key=f+'|'+GRIP_CFG.R.pt.join()+GRIP_CFG.R.phi+GRIP_CFG.R.tilt; if(_ringCache[f]?.key===key) return _ringCache[f];
-  const c=real.fingers.find(x=>x.side==='Right'&&x.f===f), h=runCurlAxis('none',new THREE.Vector3()).normalize();
-  const d=new THREE.Vector3(0,1,0).applyQuaternion(c.joints[0].bindH).normalize(), dp=d.clone().addScaledVector(h,-d.dot(h)).normalize();
+  const lean=FIST.ringLean?.[f]||0, key=f+'|'+GRIP_CFG.R.pt.join()+GRIP_CFG.R.phi+GRIP_CFG.R.tilt+'|'+lean; if(_ringCache[f]?.key===key) return _ringCache[f];
+  const c=real.fingers.find(x=>x.side==='Right'&&x.f===f), h0=runCurlAxis('none',new THREE.Vector3()).normalize();
+  const d=new THREE.Vector3(0,1,0).applyQuaternion(c.joints[0].bindH).normalize(), dp=d.clone().addScaledVector(h0,-d.dot(h0)).normalize();
+  const h=h0.clone().applyAxisAngle(dp,lean*D2R);
   const D=new THREE.Quaternion().setFromUnitVectors(d,dp);
   const t=dp.clone().applyAxisAngle(h,.2);   // which way round h is "toward the palm" (palm = hand −X on the right)
   return _ringCache[f]={key,h,D,sgn:t.x<dp.x?1:-1};
@@ -1248,14 +1266,14 @@ const GRIP_CFG={
   // pt x −2.73 → −3.28 (2026-10-21): measured with triangle samples the palm skin sat 6 mm inside the hilt; 5.5 mm further off the palm it is ≤1.5 mm (see FIST.hiltGripAll).
   // Rebuilt hand (2026-10-21): the hilt lies diagonally across the palm (phi 30, tilt 0) from the base of the index (hand-local (-3.25,9.2,2.1) cm, a hilt
   // radius below the palm skin) toward the hypothenar; pt = that point slid 4.3 cm along −hilt (a larger slide = hand closer to the tsuba; was 3.7 before the ring grip, when the spiralled index reached toward the tsuba and touched it — the ring-grip index is ⟂ the hilt, so the hand sits 6 mm closer: motion check 'index near guard' ≤ 4 cm).
-  R:{palmSign:-1, P:[.7071,0,-.7071], phi:30, tilt:0, carryPhi:80, carryP:[1,0,0], carryPt:[-3.1,4.2,-.7], pt:[-3.15,7.05,-1.924]},
+  R:{palmSign:-1, P:[.7071,0,-.7071], phi:30, tilt:0, carryPhi:80, carryP:[1,0,0], carryPt:[-3.1,4.2,-.7], pt:[-3.15,6.3,-3.223]},
   // twoRoll (deg, 2026-10-20): the off-hand's grip on the RIGHT's sword is this one rolled about the blade axis (≡ P rotated by twoRoll — real.grip.L2).
   // After R.phi 75→40 the off-hand's roll relative to the right (S.rho.L) sat pinned at its +90° limit (GRIP_TUNE.handRollMax) through the whole combo,
   // the left wrist landed past the crossL line at beat 2 and let go for ~150–260 ms. 35° fixed the standing combo but not "combo (from a run)" (another
   // roll history); 50° and 65° passed both, 4/4. Only the two-handed grip uses it — rotating L.P itself also changed K K's own-sword grip and pushed
   // the left arm 10.5 cm into the torso there.
   // 50 → 70 after the second right-grip pass (phi 30 + tilt): 50 passed a reset-per-scenario harness but not m.run()'s "combo (from a run)" (roll history).
-  L:{palmSign: 1, P:[.7071,0,-.7071], phi:30, tilt:0, pt:[3.15,7.05,-1.924], twoRoll:70} };   // pt/tilt: the mirror of R's seat (rebuilt hands, 2026-10-21)
+  L:{palmSign: 1, P:[.7071,0,-.7071], phi:30, tilt:0, pt:[3.15,7.05,-1.924], twoRoll:70} };   // pt: NOT slid toward the tsuba with R's (2026-10-22): the off-hand holds the kashira end, and the slid seat dropped finisher L's two-hand grip to 0.80   // pt/tilt: the mirror of R's seat (rebuilt hands, 2026-10-21)
 const gripL2=()=>{ const c=GRIP_CFG.L, a=(c.twoRoll||0)*D2R, [x,y,z]=c.P; return makeGrip({...c, P:[x*Math.cos(a)+z*Math.sin(a), y, -x*Math.sin(a)+z*Math.cos(a)]}); };
 // The hands are now modelled loose fists in ninja.glb (wrapped around a 1.75 cm-radius hilt tunnel; palm surface at x≈∓2.6, hilt axis 1 cm outside it:
 // pt = that axis' point in hand-local cm, direction (0, sin phi, cos phi)). P = which way the palm faces in blade space (see the twisted-arm note in CLAUDE.md).
@@ -1263,7 +1281,7 @@ const gripL2=()=>{ const c=GRIP_CFG.L, a=(c.twoRoll||0)*D2R, [x,y,z]=c.P; return
 // applied AFTER arm IK so wrist/finger tuning cannot move the approved elbow.
 // Rebuilt hands (2026-10-21): the walking carry uses the same seat as standing/running (GRIP_CFG.R) — the old thumb-side carry seat
 // (P [1,0,0], phi 60, pt [-3.1,5.5,-3.4], wristFlex 5) was fitted to the Meshy hand and left the new fingers loose round the hilt.
-const CARRY_HOLD={palmSign:-1,P:[.7071,0,-.7071],phi:30,tilt:0,pt:[-3.15,7.05,-1.924],wristFlex:0};
+const CARRY_HOLD={palmSign:-1,P:[.7071,0,-.7071],phi:30,tilt:0,pt:[-3.15,6.3,-3.223],wristFlex:0};
 // Run reference: blade drops behind the fist while the wrist stays neutral.
 // phi 36 / tilt 12 (attack grip: 30 / 29): the run hilt lies closer to the finger direction so the blade can trail along the forearm like the reference (blade ~21° off the
 // forearm instead of 31°, kashira hidden behind the arm) without a bigger wrist bend. Min blade↔forearm angle = tilt, hence the smaller tilt.
@@ -2492,7 +2510,7 @@ function saveDevState(){ try{ sessionStorage.setItem(DEV_KEY, JSON.stringify({bo
     if(dv.loop && dv.loop!=='off') setLoop(dv.loop);
   }
 }
-window.__iso={S,step,frame,runCurlAxis,TSUKA_S,TSUKA_PROFILE,camera,renderer,shaderErrors,REFERENCE_RUN,STAND_TUNE,RUN_TUNE,RUN_ARM,RUN_FREE,RUN_CLIP,makeGrip,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
+window.__iso={S,step,frame,runCurlAxis,ringData,TSUKA_S,TSUKA_PROFILE,camera,renderer,shaderErrors,REFERENCE_RUN,STAND_TUNE,RUN_TUNE,RUN_ARM,RUN_FREE,RUN_CLIP,makeGrip,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
   GRIP_CFG, GRIP_TUNE, CARRY_HOLD, RUN_HOLD, SHOULDER, BACK_GEAR, setBackGearVisible, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, RUN_V2, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real){ rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L), L2:gripL2()}; rig.real.carryHold=makeGrip(CARRY_HOLD); } },
   loop:setLoop};  // edit GRIP_CFG/IDLE/CARRY/COMBO/ATTACK2/ISSEN in the console; regrip() applies a GRIP_CFG edit; loop('atk2') etc. repeats a move in place so poses can be watched continuously while tuning ('off','run','run1','walk','walk1','atk1','atk2','dual','finisher' — the '1' modes run one-way instead of back and forth, e.g. into a wall)
 // Main-page A/B control: compare with the original animation at the same camera/zoom.
