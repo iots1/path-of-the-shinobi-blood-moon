@@ -76,7 +76,7 @@
   #bNight[aria-pressed="true"] .sun { display: block; }
   .chip { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; font-size: 14px; background: var(--hud-on-bg); color: var(--hud-on-ink); pointer-events: none; }
   .chip[hidden] { display: none; }
-  .opt { position: absolute; right: 12px; top: 12px; }
+  .opt { position: absolute; right: 12px; top: 12px; z-index: 30; }   /* above both toolbars: the open panel is never hidden under the camera column */
   #bOpt { height: 36px; padding: 0 10px 0 14px; gap: 6px; background: var(--hud-bg); border: 1px solid var(--hud-line); }
   #bOpt svg.i { width: 16px; height: 16px; transition: transform .15s; }
   #bOpt[aria-expanded="true"] svg.i { transform: rotate(180deg); }
@@ -91,6 +91,13 @@
   .keys { margin: 0; padding: 0; list-style: none; font-size: 13px; line-height: 1.6; color: var(--hud-soft); }
   .keys li { margin: 3px 0; }
   .keys kbd { color: var(--hud-ink); border-color: var(--hud-line); }
+  /* Hover tooltip (one shared element, placed in JS from the [data-tip] under the pointer): sits above the Options panel */
+  .hud > .tip { position: absolute; z-index: 60; max-width: 250px; padding: 7px 10px; border-radius: 8px; font-size: 13px; line-height: 1.45; pointer-events: none;
+    background: var(--hud-on-bg); color: var(--hud-on-ink); box-shadow: 0 8px 22px -8px rgba(0,0,0,.5); }
+  .tip[hidden] { display: none; }
+  .tip b { font-weight: 600; margin-right: 6px; }
+  .tip kbd { color: inherit; border-color: currentColor; opacity: .85; }
+  .tip span { display: block; margin-top: 2px; opacity: .9; }
 
   /* Capture 8 preview: full-screen modal over everything, Cancel / Download */
   #capModal { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; background: rgba(16,15,14,.95); color: #ece7dc; }
@@ -155,6 +162,7 @@
           <li><kbd>Q</kbd><kbd>E</kbd> rotate camera &nbsp;·&nbsp; <kbd>R</kbd><kbd>F</kbd> high/low angle</li>
           <li><kbd>B</kbd> skeleton &nbsp;·&nbsp; <kbd>T</kbd> slow-mo &nbsp;·&nbsp; <kbd>N</kbd> day / night</li>
           <li><kbd>P</kbd> cycle the loop mode (run/walk, one-way or back-and-forth, or an attack: repeats in place, for tuning poses live)</li>
+          <li><kbd>+</kbd><kbd>-</kbd> or <kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>+</kbd><kbd>-</kbd> quick zoom in / out (tap = one step, hold = continuous) &nbsp;·&nbsp; same as the zoom buttons on the right</li>
           <li>Scroll wheel to zoom (down to a face / hand close-up), click-drag (or right-click drag) to free rotate</li>
           <li><kbd>Alt</kbd>+drag (or middle-drag) pans the camera up/down/sideways</li>
           <li><kbd>V</kbd> camera focus: body → head → sword hand → feet &nbsp;·&nbsp; <kbd>0</kbd> reset camera</li>
@@ -167,7 +175,11 @@
           <span class="sep"></span>
           <button id="bUp" title="High angle (R)" aria-label="High angle (R)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
           <button id="bDown" title="Low angle (F)" aria-label="Low angle (F)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+          <span class="sep"></span>
+          <button id="bZoomIn" title="Zoom in (+)" aria-label="Zoom in (+)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M8 10.5h5M10.5 8v5"/></svg></button>
+          <button id="bZoomOut" title="Zoom out (-)" aria-label="Zoom out (-)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M8 10.5h5"/></svg></button>
         </div>
+        <div class="tip" id="tip" role="tooltip" hidden></div>
       </div>
     </div>
   </div>
@@ -2499,6 +2511,7 @@ requestAnimationFrame(raf);
 const ray=new THREE.Raycaster(), ground=new THREE.Plane(V(0,1,0),0);
 window.addEventListener('keydown',e=>{ const k=e.key.toLowerCase(); keys.shift=e.shiftKey;
   if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(k)){ keys[k]=true; e.preventDefault(); }
+  if(k==='+'||k==='='||k==='-'||k==='_'){ e.preventDefault();   /* also Cmd/Ctrl +/-: the page zoom of the browser is swallowed so the game camera zooms instead */ const out=k==='-'||k==='_'; zoomBy(e.repeat?(out?ZOOM_HOLD:1/ZOOM_HOLD):(out?ZOOM_TAP:1/ZOOM_TAP)); return; }
   if(e.repeat) return;
   if(k==='j'){ e.preventDefault(); press(); }
   else if(k===' '){ e.preventDefault(); blink(); }
@@ -2525,7 +2538,11 @@ cv.addEventListener('pointerup',e=>{ if(drag && !drag.moved && drag.isClick){
     const r=cv.getBoundingClientRect(); ray.setFromCamera({x:(e.clientX-r.left)/r.width*2-1,y:-(e.clientY-r.top)/r.height*2+1},camera);
     const p=ray.ray.intersectPlane(ground,V()); if(p && walkable(p.x,p.z)) S.moveTo=p; }
   drag=null; });
-cv.addEventListener('wheel',e=>{ e.preventDefault(); CAM.zoomT=clamp(CAM.zoomT*Math.pow(1.0015,e.deltaY),CAM_ZOOM_MIN,9); saveCam(); },{passive:false});
+cv.addEventListener('wheel',e=>{ e.preventDefault(); zoomBy(Math.pow(1.0025,e.deltaY)); },{passive:false});
+// Quick zoom without the wheel: + / - keys and the zoom buttons. One tap = a big step; holding repeats a smooth continuous zoom.
+const ZOOM_TAP=1.6, ZOOM_HOLD=1.045;
+CAM.zoom.set(3.5,1,0);   // snappier zoom smoothing (was 1.6 Hz, which felt sluggish)
+function zoomBy(f){ CAM.zoomT=clamp(CAM.zoomT*f,CAM_ZOOM_MIN,9); saveCam(); }
 function toggle(id){ const b=document.getElementById(id), on=b.getAttribute('aria-pressed')!=='true'; b.setAttribute('aria-pressed',on);
   if(id==='bBones'){ boneLines.visible=joints.visible=on; } if(id==='bSlow') S.speed=on?.25:1; saveDevState(); }
 const bind=(id,fn)=>document.getElementById(id).addEventListener('click',e=>{ fn(); e.currentTarget.blur(); });
@@ -2536,6 +2553,47 @@ document.getElementById('selLoop').addEventListener('change',e=>{ setLoop(e.targ
   document.addEventListener('pointerdown',e=>{ if(!pn.hidden && !e.target.closest('.opt')) setOpen(false); });
   window.addEventListener('keydown',e=>{ if(e.key==='Escape' && !pn.hidden) setOpen(false); }); }
 bind('bRotL',()=>rotateCam(-90)); bind('bRotR',()=>rotateCam(90)); bind('bUp',()=>tiltCam(12)); bind('bDown',()=>tiltCam(-12));
+// Zoom buttons: tap = one step, hold = continuous zoom (starts after 350 ms)
+function holdZoom(id,inward){ const b=document.getElementById(id); let t1=null, t2=null;
+  const stopHold=()=>{ clearTimeout(t1); clearInterval(t2); t1=t2=null; };
+  b.addEventListener('pointerdown',e=>{ e.preventDefault(); stopHold(); zoomBy(inward?1/ZOOM_TAP:ZOOM_TAP);
+    t1=setTimeout(()=>{ t2=setInterval(()=>zoomBy(inward?1/ZOOM_HOLD:ZOOM_HOLD),16); },350); });
+  for(const ev of ['pointerup','pointerleave','pointercancel']) b.addEventListener(ev,stopHold);
+  window.addEventListener('blur',stopHold); }
+holdZoom('bZoomIn',true); holdZoom('bZoomOut',false);
+// Hover tooltips for every HUD control: name + shortcut + what it does (Thai). Native title= is removed so the two don't stack.
+const TIPS={
+  bAtk:['Slash','J','โจมตีด้วยดาบ กดซ้ำเพื่อต่อคอมโบ 3 จังหวะ (一 → 二 → 三)'],
+  bCap:['Capture 8','C','อัดการโจมตีครั้งถัดไปเป็นภาพ 8 เฟรม + ไฟล์ skeleton JSON ไว้ตรวจท่าทาง'],
+  bBones:['Skeleton','B','แสดง/ซ่อนเส้นกระดูกและข้อต่อของตัวละคร'],
+  bSlow:['Slow-mo','T','เล่นเกมช้าลงเหลือ 1/4 ไว้ดูท่าทางละเอียดๆ'],
+  bNight:['Day / Night','N','สลับฉากกลางวัน ↔ กลางคืน'],
+  bRotL:['Rotate left','Q','หมุนกล้องไปทางซ้าย 90°'],
+  bRotR:['Rotate right','E','หมุนกล้องไปทางขวา 90°'],
+  bUp:['High angle','R','ยกมุมกล้องให้มองลงมาจากที่สูงขึ้น'],
+  bDown:['Low angle','F','ลดมุมกล้องให้มองในระดับต่ำลง'],
+  bZoomIn:['Zoom in','+ / ⌘+','ซูมเข้า กดครั้งเดียวขยับทีละขั้น กดค้างเพื่อซูมต่อเนื่อง'],
+  bZoomOut:['Zoom out','- / ⌘-','ซูมออก กดครั้งเดียวขยับทีละขั้น กดค้างเพื่อซูมต่อเนื่อง'],
+  bOpt:['Options','','เมนูตั้งค่า: โหมดเล่นท่าวนซ้ำ, สลับท่าวิ่ง และรายการปุ่มลัดทั้งหมด'],
+  selLoop:['Loop mode','P','เล่นท่าเดิมวนซ้ำอยู่กับที่ (วิ่ง / เดิน / โจมตี) ไว้ดูท่าต่อเนื่องตอนปรับค่า'],
+  bPose:['Run pose A/B','','สลับระหว่างท่าวิ่งใหม่ (v6 จากวิดีโอ) กับท่าเดิม เพื่อเทียบที่กล้องและซูมเดียวกัน']
+};
+{ const tip=document.getElementById('tip'), hud=tip.parentElement; let showT=null, cur=null;
+  for(const id in TIPS) document.getElementById(id).removeAttribute('title');
+  const hide=()=>{ clearTimeout(showT); showT=null; cur=null; tip.hidden=true; };
+  const show=n=>{ const [name,key,desc]=TIPS[n.id], r=n.getBoundingClientRect(), h=hud.getBoundingClientRect();
+    tip.innerHTML='<b></b>'+(key?'<kbd></kbd>':'')+'<span></span>';
+    tip.querySelector('b').textContent=name; if(key) tip.querySelector('kbd').textContent=key; tip.querySelector('span').textContent=desc;
+    tip.hidden=false; const w=tip.offsetWidth, ht=tip.offsetHeight; let x, y;
+    if(n.closest('.tools-left')){ x=r.right-h.left+8; y=r.top-h.top+(r.height-ht)/2; }
+    else if(n.closest('.tools-right')){ x=r.left-h.left-8-w; y=r.top-h.top+(r.height-ht)/2; }
+    else { x=r.right-h.left-w; y=r.bottom-h.top+8; }
+    tip.style.left=clamp(x,6,h.width-w-6)+'px'; tip.style.top=clamp(y,6,h.height-ht-6)+'px'; };
+  const target=e=>e.target.closest&&e.target.closest('.hud [id]')&&TIPS[e.target.closest('.hud [id]').id]?e.target.closest('.hud [id]'):null;
+  hud.addEventListener('pointerover',e=>{ const n=target(e); if(n===cur) return; hide(); if(!n) return; cur=n; showT=setTimeout(()=>show(n),120); });
+  hud.addEventListener('pointerleave',hide); hud.addEventListener('pointerdown',hide);
+  hud.addEventListener('focusin',e=>{ const n=target(e); if(n && n.matches(':focus-visible')){ hide(); cur=n; show(n); } }); hud.addEventListener('focusout',hide);
+  window.addEventListener('keydown',e=>{ if(e.key==='Escape') hide(); }); }
 bind('bBones',()=>toggle('bBones')); bind('bSlow',()=>toggle('bSlow'));
 bind('bNight',()=>setTimeOfDay(timeOfDay==='night'?'day':'night'));
 { let t=null; try{ t=localStorage.getItem('potsbm_time'); }catch(e){} setTimeOfDay(t==='night'?'night':'day'); }
