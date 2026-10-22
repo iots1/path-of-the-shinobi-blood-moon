@@ -5,8 +5,8 @@
 //   const sol = gs.solveFingers(I);     // → {Index:{angles:[mcp,pip,dip],cover,min,...}, ...}
 //   gs.apply(I, sol); gs.report(I);     // set them / measure enclosure + gaps (copy `angles` into FIST.runAng in client/index.html)
 // The hilt surface profile is the tsuka (+ habaki/tsuba region excluded) of the katana prop — keep in sync with rig_detail.js gripMetrics.
-const PROFILE = [[-.172, .0158], [-.15, .0168], [-.06, .0176], [.03, .0168], [.054, .0162], [.06, .0185], [.076, .0175], [.078, .0175]];
-const radius = y => { for (let k = 1; k < PROFILE.length; k++) if (y <= PROFILE[k][0]) { const a = PROFILE[k - 1], b = PROFILE[k]; return a[1] + (b[1] - a[1]) * (y - a[0]) / (b[0] - a[0]); } return .0172; };
+const PROFILE = [[-.172, 0.01343], [-.15, 0.01428], [-.06, 0.01496], [.03, 0.01428], [.054, 0.01377], [.06, 0.01572], [.076, 0.01488], [.078, 0.01488]];   // = index.html TSUKA_PROFILE (TSUKA_S .85)
+const radius = y => { for (let k = 1; k < PROFILE.length; k++) if (y <= PROFILE[k][0]) { const a = PROFILE[k - 1], b = PROFILE[k]; return a[1] + (b[1] - a[1]) * (y - a[0]) / (b[0] - a[0]); } return 0.01462; };
 const FINGERS = ['Index', 'Middle', 'Ring', 'Pinky'];
 
 // the curl axis the game uses for this finger while running (FIST.runAxisTilt leans it toward the finger direction, see setFingers)

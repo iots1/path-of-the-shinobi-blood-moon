@@ -37,7 +37,7 @@ async function solveThumb(I){
   put(axis,ang);let pen=0,guard=0;const gaps=[];
   for(const i of verts){const p=R.skinning.getVertexPosition(i,new V()).applyMatrix4(mesh.matrixWorld);I.rig.katana.worldToLocal(p);if(p.y>.078){guard+=Math.max(0,p.y-.078)**2;continue;}if(p.y<-.172)continue;const gap=Math.hypot(p.x/1.06,p.z/.86)-.0172;gaps.push(gap);pen+=Math.min(0,gap+.0012)**2;}
   gaps.sort((a,b)=>a-b);if(gaps.length<4)return {cost:1e6};
-  const tip=I.rig.katana.worldToLocal(R.bone.RightHandThumb4.getWorldPosition(new V())),tipGap=Math.hypot(tip.x/1.06,tip.z/.86)-.0172;
+  const tip=I.rig.katana.worldToLocal(R.bone.RightHandThumb4.getWorldPosition(new V())),tipGap=Math.hypot(tip.x/1.06,tip.z/.86)-0.01462;
   const near=gaps.slice(0,Math.max(4,Math.floor(gaps.length*.35))),contact=near.reduce((s,g)=>s+(g-.0015)**2,0)/near.length;
   const cost=pen*300+guard*100+contact*25+(tipGap-.0055)**2*3+Math.max(0,ang[0]+ang[1]+ang[2]-2.2)**2*.0001;
   return {cost,min:gaps[0],contact:near.reduce((a,b)=>a+b,0)/near.length,tipGap};

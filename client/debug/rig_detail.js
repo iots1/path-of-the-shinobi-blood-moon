@@ -7,9 +7,9 @@ export function gripMetrics(I,mesh=bodyMesh(I)){
  const hand=samples(I,mesh),points=hand.map(p=>({i:p.i,p:I.rig.katana.worldToLocal(p.world.clone()),by:p.by}));
  const byIndex=new Map(points.map(p=>[p.i,p.p])),checks=[...byIndex.values()],idx=mesh.geometry.index;
  for(let i=0;i<idx.count;i+=3){const a=byIndex.get(idx.array[i]),b=byIndex.get(idx.array[i+1]),c=byIndex.get(idx.array[i+2]);if(!a||!b||!c)continue;for(let u=0;u<=4;u++)for(let v=0;v<=4-u;v++)checks.push(a.clone().multiplyScalar(u/4).addScaledVector(b,v/4).addScaledVector(c,1-(u+v)/4));}
- let inside=0,min=9,guard=0;const bins=new Set();const profile=[[-.172,.0158],[-.15,.0168],[-.06,.0176],[.03,.0168],[.054,.0162],[.06,.0185],[.076,.0175],[.078,.0175]];
+ let inside=0,min=9,guard=0;const bins=new Set();const profile=[[-.172,0.01343],[-.15,0.01428],[-.06,0.01496],[.03,0.01428],[.054,0.01377],[.06,0.01572],[.076,0.01488],[.078,0.01488]];/* = index.html TSUKA_PROFILE (TSUKA_S .85) */
  for(const p of checks){if(p.y>=.080&&p.y<=.088&&Math.hypot(p.x,p.z/.9)<.0445)guard++;if(p.y<-.172||p.y>.078)continue;
- let r=.0172;for(let k=1;k<profile.length;k++)if(p.y<=profile[k][0]){const a=profile[k-1],b=profile[k];r=a[1]+(b[1]-a[1])*(p.y-a[0])/(b[0]-a[0]);break;}
+ let r=0.01462;for(let k=1;k<profile.length;k++)if(p.y<=profile[k][0]){const a=profile[k-1],b=profile[k];r=a[1]+(b[1]-a[1])*(p.y-a[0])/(b[0]-a[0]);break;}
  const gap=Math.hypot(p.x/1.06,p.z/.86)-r;min=Math.min(min,gap);if(gap<-.002)inside++;if(gap<.004)bins.add(Math.floor(((Math.atan2(p.z,p.x)*180/Math.PI)+360)%360/10));}
  return {enclosureDeg:bins.size*10,sampleCount:checks.length,penetratingSamples:inside,guardPenetratingSamples:guard,minSurfaceGapM:min,points:points.map(p=>({i:p.i,p:p.p.toArray(),by:p.by}))};
 }
@@ -25,7 +25,7 @@ export async function solve(I){
   for(let a=.45;a<=1.35;a+=.15)for(let b=.2;b<=1.4;b+=.15)for(let c=.15;c<=.9;c+=.15){
    if(a+b+c>2.9||c>.75*b+.15)continue;I.FIST.runAng[finger]=[a,b,c];apply([a,b,c]);
    let pen=0,gaps=[];
-   for(const idx of indices){const p=R.skinning.getVertexPosition(idx,new V()).applyMatrix4(mesh.matrixWorld);I.rig.katana.worldToLocal(p);if(p.y<-.172||p.y>.078)continue;const gap=Math.hypot(p.x/1.06,p.z/.86)-.0172;gaps.push(gap);pen+=Math.min(gap-.0005,0)**2;}
+   for(const idx of indices){const p=R.skinning.getVertexPosition(idx,new V()).applyMatrix4(mesh.matrixWorld);I.rig.katana.worldToLocal(p);if(p.y<-.172||p.y>.078)continue;const gap=Math.hypot(p.x/1.06,p.z/.86)-0.01462;gaps.push(gap);pen+=Math.min(gap-.0005,0)**2;}
    const bone=R.bone['RightHand'+finger+'3'],local=R.arm.R.ha.worldToLocal(bone.getWorldPosition(new V()));
    const wrapError=Math.max(0,local.x-I.RUN_HOLD.pt.x+.003);gaps.sort((a,b)=>a-b);const close=gaps.slice(0,Math.max(1,Math.round(gaps.length*.18)));
    const contact=close.reduce((s,g)=>s+(g-.0015)**2,0)/close.length;

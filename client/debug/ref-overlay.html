@@ -25,7 +25,7 @@ iframe{position:fixed;left:-1300px;top:0;width:1024px;height:768px;border:0}</st
 // (an AI-drawn sheet, the views are not exactly orthogonal).
 const VIEWS={ top:{q:[0,0],tsuba:[122,199],dia:42,L:'-n',R:'a'}, bottom:{q:[512,0],tsuba:[111,200],dia:63,L:'n',R:'a'},
   left:{q:[0,382],tsuba:[402,195],dia:66,L:'t',R:'-a'}, right:{q:[512,382],tsuba:[119,200],dia:61,L:'n',R:'a'} };
-const HILT_D=.034, TSUBA_FACE=.08, K=2;   // hilt diameter (m), tsuba hand-side face (sword-local y), render scale vs. the reference quadrant
+const HILT_D=.034*.85, TSUBA_FACE=.08, K=2;   // hilt diameter (m), tsuba hand-side face (sword-local y), render scale vs. the reference quadrant
 const $=id=>document.getElementById(id), out=$('out'), g=out.getContext('2d'), f=document.querySelector('iframe'), status=$('status');
 const ref=new Image(); ref.src='/assets/reference/grip-4view.jpeg';
 f.src='/?refOverlay='+Date.now();   // the browser caches index.html — a fresh query string always loads the current game code

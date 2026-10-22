@@ -4,8 +4,8 @@
 // Use from /debug/ref-overlay.html with pose 'idle' drawn (grip settled):
 //   const rs = await import('/debug/ring_solver.js?'+Date.now()); const sol = rs.solve(refOverlay.I); // → {Index:[a,b,c], …, report}
 //   refOverlay.I.FIST.ringAng = sol.ang; refOverlay.reset(); refOverlay.set({view:'bottom'});
-const PROFILE = [[-.172, .0158], [-.15, .0168], [-.06, .0176], [.03, .0168], [.054, .0162], [.06, .0185], [.076, .0175], [.078, .0175]];
-const rad = y => { for (let k = 1; k < PROFILE.length; k++) if (y <= PROFILE[k][0]) { const a = PROFILE[k - 1], b = PROFILE[k]; return a[1] + (b[1] - a[1]) * (y - a[0]) / (b[0] - a[0]); } return .0172; };
+const PROFILE = [[-.172, 0.01343], [-.15, 0.01428], [-.06, 0.01496], [.03, 0.01428], [.054, 0.01377], [.06, 0.01572], [.076, 0.01488], [.078, 0.01488]];   // = index.html TSUKA_PROFILE (TSUKA_S .85)
+const rad = y => { for (let k = 1; k < PROFILE.length; k++) if (y <= PROFILE[k][0]) { const a = PROFILE[k - 1], b = PROFILE[k]; return a[1] + (b[1] - a[1]) * (y - a[0]) / (b[0] - a[0]); } return 0.01462; };
 const FR = { Index: [.0094, .0085, .0076], Middle: [.0097, .0088, .0078], Ring: [.0092, .0083, .0073], Pinky: [.0080, .0072, .0064] };   // bone line → skin (mesh build radii ×1.07 × ~.9 for the oval section)
 export function solve(I, { k = .92, slack = .0012, step = .05 } = {}) {
   const R = I.rig.real, V = R.hipsPos.constructor, Q = R.arm.R.ha.quaternion.constructor, M4 = R.arm.R.ha.matrixWorld.constructor;

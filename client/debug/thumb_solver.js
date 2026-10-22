@@ -7,8 +7,8 @@
 // thumb follows the hilt's curve); kept: segments clear of the tsuka by the thumb's radius, tip near the index's middle phalanx (reference: the thumb tip
 // rests on it). Stage 2 (skinned mesh): every candidate is posed and scored by thumb skin vs the tsuka (triangle samples, ≤ maxPen inside) and thumb
 // skin vs the index finger (vertex depth inside the index's capsule), then by how close the tip is to the index's middle phalanx.
-const PROFILE = [[-.172, .0158], [-.15, .0168], [-.06, .0176], [.03, .0168], [.054, .0162], [.06, .0185], [.076, .0175], [.078, .0175]];
-const rad = y => { for (let k = 1; k < PROFILE.length; k++) if (y <= PROFILE[k][0]) { const a = PROFILE[k - 1], b = PROFILE[k]; return a[1] + (b[1] - a[1]) * (y - a[0]) / (b[0] - a[0]); } return .0172; };
+const PROFILE = [[-.172, 0.01343], [-.15, 0.01428], [-.06, 0.01496], [.03, 0.01428], [.054, 0.01377], [.06, 0.01572], [.076, 0.01488], [.078, 0.01488]];   // = index.html TSUKA_PROFILE (TSUKA_S .85)
+const rad = y => { for (let k = 1; k < PROFILE.length; k++) if (y <= PROFILE[k][0]) { const a = PROFILE[k - 1], b = PROFILE[k]; return a[1] + (b[1] - a[1]) * (y - a[0]) / (b[0] - a[0]); } return 0.01462; };
 const TR = [.0125, .0105, .0090], IR = .0092;   // thumb segment radii, index radius (bone line → skin), metres
 function fib(V, n) { const o = []; for (let i = 0; i < n; i++) { const y = 1 - 2 * (i + .5) / n, r = Math.sqrt(1 - y * y), t = i * 2.39996; o.push(new V(Math.cos(t) * r, y, Math.sin(t) * r)); } return o; }
 function ctx(I) {
