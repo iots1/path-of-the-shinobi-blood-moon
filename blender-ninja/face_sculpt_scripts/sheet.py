@@ -2,7 +2,8 @@ import sys
 from PIL import Image, ImageDraw
 # usage: sheet.py out.png mode prefixA [prefixB ...]  (rows = prefixes, cols = views)
 out, mode, *pre = sys.argv[1:]
-views=['front','side','q3','low']
+import os
+views=os.environ.get('VIEWS','front,side,q3,low').split(',')
 S=400
 im=Image.new('RGB',(S*len(views),S*len(pre)),'white')
 d=ImageDraw.Draw(im)

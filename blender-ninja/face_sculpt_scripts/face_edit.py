@@ -94,9 +94,39 @@ if not RAW:
         bm.normal_update()
         log['loop' + tag] = (len(R), len(epos), hit, len(vpos))
 
+    LEVELS = argv[argv.index('--levels') + 1] if '--levels' in argv else '12'
+    def nosez(p):  # 1.25 mm zone: the nose
+        return abs(p.x) < 0.024 and 1.561 < p.z < 1.624 and p.y < -0.088
     if REFINE:
-        loop_level(lambda p: core(p) or outer(p), '1')
-        loop_level(core, '2')
+        if '1' in LEVELS: loop_level(lambda p: core(p) or outer(p), '1')
+        if '2' in LEVELS: loop_level(core, '2')
+        if '3' in LEVELS: loop_level(nosez, '3')
+        if '4' in LEVELS: loop_level(lambda p: abs(p.x) < 0.013 and 1.550 < p.z < 1.583 and -0.123 < p.y < -0.100, '4')
+        # collapse needle triangles (min angle < 4 deg) left at the refined-zone rims: their normals
+        # are garbage and render as white specks
+        def minang(f):
+            a = []
+            for i in range(3):
+                p, q, r = f.verts[i].co, f.verts[i - 1].co, f.verts[(i + 1) % 3].co
+                u, v = q - p, r - p
+                if u.length < 1e-9 or v.length < 1e-9: return 0
+                a.append(u.angle(v))
+            return math.degrees(min(a))
+        nfix = 0
+        for _ in range(4):
+            bad = [f for f in bm.faces if len(f.verts) == 3 and all(headish(v) for v in f.verts) and f.calc_center_median().y < -0.05 and minang(f) < 4]
+            if not bad: break
+            done = set()
+            for f in bad:
+                if not f.is_valid or any(v in done for v in f.verts): continue
+                e = min(f.edges, key=lambda e: e.calc_length())
+                a, b = e.verts
+                if a.is_boundary or b.is_boundary: continue
+                done.update((a, b))
+                bmesh.ops.pointmerge(bm, verts=[a, b], merge_co=(a.co + b.co) * 0.5)
+                nfix += 1
+            bm.normal_update()
+        log['needles_collapsed'] = nfix
         # thin-plate (bi-Laplacian) fill: new verts relax, original verts stay where they were
         bm.verts.ensure_lookup_table(); bm.verts.index_update()
         zone = [v for v in bm.verts if headish(v)]
@@ -133,7 +163,7 @@ if not RAW:
         bm.normal_update()
         log['fill_free'] = int(free.sum())
         dd = np.array([(v.co - BVH0.find_nearest(v.co)[0]).length for v in new_verts]) * 1000
-        log['newdist_mm_p50_p95_max'] = (float(np.percentile(dd, 50)), float(np.percentile(dd, 95)), float(dd.max()))
+        if len(dd): log['newdist_mm_p50_p95_max'] = (float(np.percentile(dd, 50)), float(np.percentile(dd, 95)), float(dd.max()))
         bad = [tuple(round(c, 3) for c in v.co) for v in new_verts if (v.co - BVH0.find_nearest(v.co)[0]).length > 0.003][:15]
         log['bad'] = bad
         flipped = 0; tiny = 0
@@ -190,6 +220,32 @@ if not RAW:
             if d.length > 1e-6: disp[v] = d
         for v, d in disp.items(): v.co += d
         bm.normal_update()
+    # vertical stretch of the lower face (monotone cubic through old->new z knots), full on the front of the
+    # face, fading out toward the ears/nape and onto the neck (Head weight), so the chin/jaw drop and the neck stays
+    if '--stretch' in argv:
+        ST = json.load(open(argv[argv.index('--stretch') + 1]))
+        kz = np.array([k[0] for k in ST['knots']]); kn = np.array([k[1] for k in ST['knots']])
+        o = np.argsort(kz); kz, kn = kz[o], kn[o]
+        h = np.diff(kz); dsl = np.diff(kn) / h
+        m = np.zeros(len(kz)); m[0], m[-1] = dsl[0], dsl[-1]
+        for i in range(1, len(kz) - 1):   # Fritsch-Carlson monotone slopes
+            m[i] = 0 if dsl[i - 1] * dsl[i] <= 0 else 3 * (h[i - 1] + h[i]) / ((2 * h[i] + h[i - 1]) / dsl[i - 1] + (h[i] + 2 * h[i - 1]) / dsl[i])
+        def fz(z):
+            if z <= kz[0] or z >= kz[-1]: return z
+            i = int(np.searchsorted(kz, z) - 1); t = (z - kz[i]) / h[i]
+            return (kn[i] * (2 * t**3 - 3 * t**2 + 1) + h[i] * m[i] * (t**3 - 2 * t**2 + t)
+                    + kn[i + 1] * (-2 * t**3 + 3 * t**2) + h[i] * m[i + 1] * (t**3 - t**2))
+        y0, y1 = ST.get('yfade', [-0.035, 0.0]); w0, w1 = ST.get('headw', [0.2, 0.85])
+        moved = 0; mx = 0
+        for v in bm.verts:
+            if v.co.z < kz[0] or v.co.z > kz[-1] or abs(v.co.x) > 0.12: continue
+            w = (1 - ss(y0, y1, v.co.y)) * ss(w0, w1, v[dl].get(HEAD, 0))
+            if w <= 0: continue
+            dz = (fz(v.co.z) - v.co.z) * w
+            if abs(dz) > 1e-7:
+                v.co.z += dz; moved += 1; mx = max(mx, abs(dz)); disp[v] = Vector((0, 0, dz))
+        bm.normal_update()
+        log['stretch_moved'] = moved; log['stretch_max_mm'] = mx * 1000
     log['displaced'] = len(disp)
     log['maxdisp_mm'] = max((d.length for d in disp.values()), default=0) * 1000
     touched = set(disp) | new_verts
@@ -233,10 +289,12 @@ cam = bpy.data.objects.new('c', cd); sc.collection.objects.link(cam); sc.camera 
 arm.hide_render = True
 sc.render.engine = 'BLENDER_WORKBENCH'
 sc.render.resolution_x = sc.render.resolution_y = 800
+cd.clip_start = 0.005
 sc.render.film_transparent = False
 sc.view_settings.view_transform = 'Standard'
 sh = sc.display.shading
-VIEWS = [('zoom', (0.0, -1, 1.635), (90, 0, 0)), ('zoomq', (0.5, -0.86, 1.64), (90, 0, 30)), ] if '--zoom' in argv else [('front', (0.0, -1, 1.585), (90, 0, 0)), ('side', (1, -0.04, 1.585), (90, 0, 90)),
+VIEWS = [('zoom', (0.0, -1, 1.635), (90, 0, 0)), ('zoomq', (0.5, -0.86, 1.64), (90, 0, 30)), ] if '--zoom' in argv else \
+    [('nf', (0.0, -1, 1.592), (90, 0, 0)), ('nq', (0.15, -0.31, 1.585), (93, 0, 37)), ('ns', (1, -0.105, 1.588), (90, 0, 90)), ('nb', (0.0, -1, 1.40), (100.8, 0, 0)), ('nu', (0.0, -0.929, 1.001), (125, 0, 0)), ('nu2', (0.35, -0.85, 1.05), (122, 0, 25))] if '--nose' in argv else [('front', (0.0, -1, 1.585), (90, 0, 0)), ('side', (1, -0.04, 1.585), (90, 0, 90)),
          ('q3', (0.70, -0.72, 1.585), (90, 0, 44)), ('low', (0.0, -1, 1.40), (100.5, 0, 0))]
 for mode in ('tex', 'clay'):
     if mode == 'tex':
@@ -245,7 +303,7 @@ for mode in ('tex', 'clay'):
         sh.light = 'STUDIO'; sh.color_type = 'SINGLE'; sh.single_color = (0.8, 0.72, 0.65)
         sh.show_cavity = False
     for name, loc, rot in VIEWS:
-        cd.ortho_scale = 0.08 if name.startswith('zoom') else 0.26
+        cd.ortho_scale = 0.08 if name.startswith('zoom') else (0.07 if name[0] == 'n' and len(name) == 2 else 0.26)
         cam.location = loc; cam.rotation_euler = [math.radians(a) for a in rot]
         sc.render.filepath = f'{OUT}_{mode}_{name}.png'
         bpy.ops.render.render(write_still=True)

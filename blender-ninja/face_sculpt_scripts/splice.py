@@ -84,6 +84,11 @@ idx = np.concatenate([oidx[keep], addt]).ravel()
 cp = P[order]
 print(f'orig verts {len(O["POSITION"])} + new {len(order)}; tris kept {keep.sum()}/{len(oidx)}, added {add.sum()}',
       'new-vert bbox', cp.min(0).round(3).tolist() if len(cp) else None, cp.max(0).round(3).tolist() if len(cp) else None)
+# drop vertices no triangle uses any more (the original face verts that were replaced)
+used = np.zeros(len(A['POSITION']), bool); used[idx] = True
+newi = np.cumsum(used) - 1
+A = {k: v[used] for k, v in A.items()}; idx = newi[idx]
+print('dropped unreferenced verts', int((~used).sum()))
 P = A['POSITION']
 ws = A['WEIGHTS_0'].sum(1); print('weight sum min/max', ws.min(), ws.max())
 

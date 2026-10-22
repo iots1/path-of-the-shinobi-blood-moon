@@ -1,0 +1,115 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><title>Face overlay</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#17191d;color:#eee;font:14px system-ui}header{padding:10px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+h1{font-size:17px;margin:0 12px 0 0}button,select{background:#32363e;color:#fff;border:1px solid #69707d;border-radius:5px;padding:7px;cursor:pointer}label{display:flex;align-items:center;gap:5px}
+input[type=range]{width:120px}output{min-width:34px;font-variant-numeric:tabular-nums}#status{padding:6px 16px;background:#24272d;font:13px ui-monospace,monospace;white-space:pre-wrap}
+main{display:flex;justify-content:center;padding:8px}canvas{max-width:100%;max-height:calc(100vh - 170px);object-fit:contain;background:#555}
+iframe{position:fixed;left:-1300px;top:0;width:1024px;height:768px;border:0}</style>
+<header><h1>เทียบภาพซ้อน · ใบหน้า</h1>
+<label>มุมมอง <select id="view"><option value="front">หน้าตรง</option><option value="side">ด้านข้าง (เฉียง ~75°)</option><option value="front_old">หน้าตรง (ref เก่า)</option><option value="side_old">ด้านข้าง (ref เก่า)</option></select></label>
+<label>Ref โปร่งใส <input id="opacity" type="range" min="0" max="1" step=".05" value=".5"><output for="opacity"></output></label>
+<label>หมุนซ้าย-ขวา° <input id="yaw" type="range" min="-30" max="30" step="1" value="0"><output for="yaw"></output></label>
+<label>ก้ม-เงย° <input id="pitch" type="range" min="-30" max="30" step="1" value="0"><output for="pitch"></output></label>
+<label>สเกล <input id="scale" type="range" min=".8" max="1.2" step=".01" value="1"><output for="scale"></output></label>
+<label>แสดง <select id="show"><option value="overlay">ซ้อน</option><option value="model">โมเดล</option><option value="ref">Ref</option><option value="side">คู่กัน</option></select></label>
+<label><input id="marks" type="checkbox" checked> จุดอ้างอิง</label>
+<button id="save">แคป PNG</button><a href="/" style="color:#8ddce9">กลับเกม</a></header>
+<div id="status">กำลังโหลดโมเดล…</div>
+<main><canvas id="out" width="840" height="900"></canvas></main>
+<iframe></iframe>
+<script type="module">
+// Model face (rendered by the game itself, standing idle) vs art/reference/ninja-no-hood/ninja_no_hood_{front,side}.jpeg
+// (copied to assets/reference/face-{front,side}.jpeg).  Landmarks are reference-image pixels.
+// front: anchored on the mid-point between the pupils, scaled by the pupil distance.  side: anchored on the visible eye,
+// scaled by the eye→chin height.  Model landmarks are skinned mesh vertices picked once in bind space (MODEL).
+const VIEWS={
+  front:{src:'/assets/reference/face-ref2.jpeg',crop:[80,170,380,430],eyeR:[198,318],eyeL:[338,318],nose:[262,425],mouth:[265,478],chin:[265,577]},
+  side:{src:'/assets/reference/face-ref2.jpeg',crop:[530,170,400,450],eye:[652,322],noseTip:[562,395],mouth:[590,470],chin:[620,560],yaw:-15},
+  front_old:{src:'/assets/reference/face-front.jpeg',crop:[305,60,150,160],eyeR:[365,130],eyeL:[399,130],nose:[381,151],mouth:[381,165],chin:[380,182]},
+  side_old:{src:'/assets/reference/face-side.jpeg',crop:[285,60,170,160],eye:[343,132],noseTip:[325,151],mouth:[333,165],chin:[338,188]} };
+// model landmarks by TEXTURE coordinate (they ride on the painted features however the mesh is re-sculpted)
+const MODEL={ eyeR:[.30534,.38195], eyeL:[.32824,.37356], nose:[.32286,.39418], noseTip:[.3208,.38931], mouth:[.32548,.40053], chin:[.3298,.41379] };
+const KPX=900;   // canvas width in px
+const $=id=>document.getElementById(id), out=$('out'), g=out.getContext('2d'), f=document.querySelector('iframe'), status=$('status');
+const refs={}; for(const k in VIEWS){ refs[k]=new Image(); refs[k].src=VIEWS[k].src; refs[k].onload=()=>draw(); }
+// ?model=/assets/….glb on this page loads that file instead of assets/ninja.glb (game's motionOverlay hook)
+const modelQ=new URLSearchParams(location.search).get('model');
+f.src='/?faceOverlay='+Date.now()+(modelQ?'&motionOverlay=1&model='+encodeURIComponent(modelQ):'');   // fresh query string: the browser caches index.html
+let I,R,V,Q,sk,vid=null,settled=false;
+for(const el of document.querySelectorAll('input[type=range]')){ const o=document.querySelector(`output[for=${el.id}]`); const s=()=>o.textContent=el.value; el.addEventListener('input',s); s(); }
+f.onload=()=>{ const t=setInterval(()=>{ const w=f.contentWindow; if(w.__iso?.rig.real?.model){ clearInterval(t); I=w.__iso; R=I.rig.real; V=R.hipsPos.constructor; Q=R.arm.R.ha.quaternion.constructor;
+  R.model.traverse(o=>{ if(o.isSkinnedMesh&&o.material.normalMap) sk=o; }); I.stop(); draw(); } },150); };
+function pickVerts(){   // vertex nearest to each landmark's UV (only vertices a triangle uses)
+  const uv=sk.geometry.attributes.uv, ix=sk.geometry.index, used=new Uint8Array(uv.count), ids={};
+  for(let i=0;i<ix.count;i++) used[ix.getX(i)]=1;
+  for(const k in MODEL){ const m=MODEL[k]; let best=-1,bd=1e9;
+    for(let i=0;i<uv.count;i++){ if(!used[i]) continue; const d=(uv.getX(i)-m[0])**2+(uv.getY(i)-m[1])**2; if(d<bd){bd=d;best=i;} }
+    ids[k]=best; }
+  return ids;
+}
+function settle(){ const S=I.S; S.act=null; S.phase='idle'; S.moveTo=null; for(let i=0;i<300;i++){ S.pos.set(2.5,0,-1); S.facing=0; S.vel.set(0,0,0); I.frame(0,4,true); } I.frame(0,0); settled=true; }
+function lm(){ const o={}; for(const k in vid){ const v=new V(); sk.getVertexPosition(vid[k],v); sk.localToWorld(v); o[k]=v; } return o; }
+function renderModel(view){
+  if(!vid) vid=pickVerts();
+  if(!settled) settle();
+  const v=VIEWS[view], L=lm();
+  const Rt=L.eyeL.clone().sub(L.eyeR).normalize();                 // character's left = viewer's right (front view)
+  let U=new V(0,1,0); U.addScaledVector(Rt,-U.dot(Rt)).normalize();
+  let D=new V().crossVectors(U,Rt).normalize();                      // front: looking at the face
+  let right=Rt.clone();
+  if(view.startsWith('side')){ D=Rt.clone().negate(); right=new V().crossVectors(D,U).normalize(); }   // camera on the character's left, face to the image left
+  const yaw=(+$('yaw').value+(v.yaw||0))*Math.PI/180, pit=+$('pitch').value*Math.PI/180;
+  D.applyAxisAngle(U,yaw); right.applyAxisAngle(U,yaw); D.applyAxisAngle(right,pit); U.applyAxisAngle(right,pit);
+  const [cx,cy,cw,ch]=v.crop, K=KPX/cw, W=cw*K, H=Math.round(ch*K);
+  let anchor, a2d, ppm;
+  if(view.startsWith('front')){ anchor=L.eyeL.clone().add(L.eyeR).multiplyScalar(.5); a2d=[(v.eyeR[0]+v.eyeL[0])/2,(v.eyeR[1]+v.eyeL[1])/2];
+    ppm=(v.eyeL[0]-v.eyeR[0])*K/Math.abs(L.eyeL.clone().sub(L.eyeR).dot(right)); }
+  else { anchor=L.eyeL.clone(); a2d=v.eye; ppm=(v.chin[1]-v.eye[1])*K/Math.abs(L.eyeL.clone().sub(L.chin).dot(U)); }
+  ppm*=+$('scale').value;
+  const ax=(a2d[0]-cx)*K, ay=(a2d[1]-cy)*K;
+  const T=anchor.clone().addScaledVector(right,-(ax-W/2)/ppm).addScaledVector(U,-(H/2-ay)/ppm);   // world point at the canvas centre
+  const cam=I.camera, ren=I.renderer, scene=I.rig.root.parent;
+  const saved={pos:cam.position.clone(),q:cam.quaternion.clone(),up:cam.up.clone(),l:cam.left,r:cam.right,t:cam.top,b:cam.bottom,near:cam.near,far:cam.far,zoom:cam.zoom,pr:ren.getPixelRatio()};
+  const keep=new Set([I.rig.root]), hidden=[];
+  for(const o of scene.children) if(!keep.has(o)&&!o.isLight&&o.visible){ o.visible=false; hidden.push(o); }
+  const cw0=ren.domElement.width, ch0=ren.domElement.height;
+  ren.setPixelRatio(1); ren.setSize(W,H,false);
+  cam.position.copy(T).addScaledVector(D,-.6); cam.up.copy(U); cam.lookAt(T);
+  cam.left=-W/2/ppm; cam.right=W/2/ppm; cam.top=H/2/ppm; cam.bottom=-H/2/ppm; cam.near=0; cam.far=1.2; cam.zoom=1; cam.updateProjectionMatrix();
+  ren.render(scene,cam);
+  const img=document.createElement('canvas'); img.width=W; img.height=H; img.getContext('2d').drawImage(ren.domElement,0,0,W,H);
+  // model landmarks in canvas px
+  const proj=p=>{ const d=p.clone().sub(T); return [W/2+d.dot(right)*ppm, H/2-d.dot(U)*ppm]; };
+  const mk={}; for(const k in L) mk[k]=proj(L[k]);
+  for(const o of hidden) o.visible=true;
+  ren.setPixelRatio(saved.pr); ren.setSize(cw0/saved.pr,ch0/saved.pr,false);
+  Object.assign(cam,{left:saved.l,right:saved.r,top:saved.t,bottom:saved.b,near:saved.near,far:saved.far,zoom:saved.zoom}); cam.position.copy(saved.pos); cam.quaternion.copy(saved.q); cam.up.copy(saved.up); cam.updateProjectionMatrix();
+  return {img,mk,ppm,K};
+}
+function draw(){
+  const view=$('view').value, v=VIEWS[view], ref=refs[view];
+  if(!I||!ref.complete) return;
+  const {img,mk,ppm,K}=renderModel(view), show=$('show').value, W=img.width, H=img.height, [cx,cy,cw,ch]=v.crop;
+  out.width=show==='side'?W*2:W; out.height=H;
+  const drawRef=(x=0)=>g.drawImage(ref,cx,cy,cw,ch,x,0,W,H);
+  g.globalAlpha=1; g.fillStyle='#555'; g.fillRect(0,0,out.width,out.height);
+  if(show==='side'){ g.drawImage(img,0,0); drawRef(W); }
+  else if(show==='model') g.drawImage(img,0,0);
+  else if(show==='ref') drawRef();
+  else { g.drawImage(img,0,0); g.globalAlpha=+$('opacity').value; drawRef(); g.globalAlpha=1; }
+  const lines=[];
+  if($('marks').checked){
+    const dot=(p,c,x0=0)=>{ g.strokeStyle=c; g.lineWidth=2; g.beginPath(); g.arc(p[0]+x0,p[1],6,0,7); g.stroke(); };
+    for(const k of ['eyeR','eyeL','eye','nose','noseTip','mouth','chin']){
+      const r=v[k]; if(!r) continue;
+      const rp=[(r[0]-cx)*K,(r[1]-cy)*K], m=mk[k==='eye'?'eyeL':k];
+      dot(rp,'#ffcc00', show==='side'?W:0);
+      if(m){ dot(m,'#ff3b6b'); if(k!=='eyeL'&&k!=='eyeR'&&k!=='eye') lines.push(`${k}: model−ref ${((m[0]-rp[0])/ppm*1000).toFixed(1)} mm →, ${((rp[1]-m[1])/ppm*1000).toFixed(1)} mm ↑`); }
+    }
+  }
+  status.textContent=`${view.startsWith('front')?'หน้าตรง: ยึดกึ่งกลางตา, สเกลจากระยะห่างตา':'ด้านข้าง: ยึดที่ตา, สเกลจากระยะตา→คาง'} · เหลือง = ref, ชมพู = โมเดล\n`+lines.join('   ');
+}
+for(const id of ['view','opacity','yaw','pitch','scale','show','marks']) $(id).addEventListener('input',draw);
+$('save').onclick=()=>out.toBlob(b=>fetch(`/debug/save?name=face-overlay-${$('view').value}-${$('show').value}.png`,{method:'POST',body:b}).then(()=>status.textContent+='\nบันทึกแล้ว → out/'));
+// console: faceOverlay.set({view:'side',opacity:.6}); faceOverlay.I = the game's __iso
+window.faceOverlay={draw,VIEWS,MODEL,set:(o)=>{ for(const k in o){ const el=$(k); if(el.type==='checkbox') el.checked=o[k]; else el.value=o[k]; } draw(); },get I(){ return I; }};
+</script></html>
