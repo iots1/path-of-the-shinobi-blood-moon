@@ -2538,10 +2538,16 @@ cv.addEventListener('pointerup',e=>{ if(drag && !drag.moved && drag.isClick){
     const r=cv.getBoundingClientRect(); ray.setFromCamera({x:(e.clientX-r.left)/r.width*2-1,y:-(e.clientY-r.top)/r.height*2+1},camera);
     const p=ray.ray.intersectPlane(ground,V()); if(p && walkable(p.x,p.z)) S.moveTo=p; }
   drag=null; });
-cv.addEventListener('wheel',e=>{ e.preventDefault(); zoomBy(Math.pow(1.0025,e.deltaY)); },{passive:false});
+/* Wheel zoom: bigger step per notch, and the faster the wheel/trackpad is spun the larger each step gets (speed = |delta| per ms between events),
+   so a quick flick crosses the whole range while slow scrolling stays fine-grained. */
+let wheelT=0; const WHEEL_SENS=.0042, WHEEL_ACCEL=.35, WHEEL_GAIN_MAX=2.2;
+cv.addEventListener('wheel',e=>{ e.preventDefault();
+  const now=performance.now(), dt=Math.max(now-wheelT,6), dy=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?400:1); wheelT=now;
+  const gain=1+clamp(Math.abs(dy)/dt*WHEEL_ACCEL,0,WHEEL_GAIN_MAX);
+  zoomBy(Math.exp(dy*WHEEL_SENS*gain)); },{passive:false});
 // Quick zoom without the wheel: + / - keys and the zoom buttons. One tap = a big step; holding repeats a smooth continuous zoom.
 const ZOOM_TAP=1.6, ZOOM_HOLD=1.045;
-CAM.zoom.set(3.5,1,0);   // snappier zoom smoothing (was 1.6 Hz, which felt sluggish)
+CAM.zoom.set(7,1,0);   // snappy zoom smoothing, critically damped (was 1.6 Hz, then 3.5 Hz: both felt sluggish)
 function zoomBy(f){ CAM.zoomT=clamp(CAM.zoomT*f,CAM_ZOOM_MIN,9); saveCam(); }
 function toggle(id){ const b=document.getElementById(id), on=b.getAttribute('aria-pressed')!=='true'; b.setAttribute('aria-pressed',on);
   if(id==='bBones'){ boneLines.visible=joints.visible=on; } if(id==='bSlow') S.speed=on?.25:1; saveDevState(); }
