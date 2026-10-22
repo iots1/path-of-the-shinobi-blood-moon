@@ -31,7 +31,7 @@
     font-family: "Noto Serif Thai", "Sarabun", "Leelawadee UI", Tahoma, serif;
     display: flex; flex-direction: column; overflow: hidden;
   }
-  .stage-wrap { flex: 1; min-height: 0; padding: 12px 12px 6px; display: flex; }
+  .stage-wrap { flex: 1; min-height: 0; padding: 0; display: flex; }
   #stage {
     position: relative; flex: 1; min-height: 0; background: #e9e4da; overflow: hidden;
     box-shadow: 0 1px 0 rgba(0,0,0,.08), 0 18px 40px -24px rgba(0,0,0,.45);
@@ -55,21 +55,43 @@
   #flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: #f6f1e6; }
   #flash.go { animation: flash .3s ease-out; }
   @keyframes flash { 0% { opacity: .85; } 100% { opacity: 0; } }
-  .bar {
-    display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; justify-content: space-between;
-    padding: 4px 16px 12px; width: 100%;
-  }
-  .hint { margin: 0; font-size: 14px; line-height: 1.7; color: var(--bar-ink-soft); max-width: 70ch; }
-  .hint span { white-space: nowrap; margin-right: 14px; }
+  /* Floating HUD (Blender-style): tool column top-left, camera column + Options popover top-right. No bottom bar: the stage gets the whole window. */
+  .hud { position: absolute; inset: 0; z-index: 5; pointer-events: none; color: var(--hud-ink);
+    --hud-bg: rgba(240,236,226,.88); --hud-ink: #1e1c1a; --hud-soft: #57524c; --hud-line: rgba(30,28,26,.3); --hud-hover: rgba(30,28,26,.1); --hud-on-bg: #1e1c1a; --hud-on-ink: #ece7dc; }
+  #stage.night .hud { --hud-bg: rgba(28,29,34,.88); --hud-ink: #e6e1d7; --hud-soft: #a29b90; --hud-line: rgba(230,225,215,.3); --hud-hover: rgba(230,225,215,.12); --hud-on-bg: #e6e1d7; --hud-on-ink: #151413; }
+  body.mo .hud { display: none; }
+  .hud > * { pointer-events: auto; }
   kbd { font: inherit; font-size: 12px; padding: 0 5px; border: 1px solid var(--btn-line); border-radius: 3px; color: var(--bar-ink); }
-  .controls { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-  .controls button {
-    font: inherit; font-size: 14px; color: var(--bar-ink); background: transparent; min-height: 36px;
-    border: 1px solid var(--btn-line); border-radius: 999px; padding: 5px 13px; cursor: pointer;
-  }
-  .controls button.primary { background: var(--btn-on-bg); color: var(--btn-on-ink); border-color: var(--btn-on-bg); padding: 5px 22px; font-weight: 600; }
-  .controls button[aria-pressed="true"] { background: var(--btn-on-bg); color: var(--btn-on-ink); border-color: var(--btn-on-bg); }
-  .controls button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .tools { position: absolute; display: flex; flex-direction: column; gap: 3px; padding: 4px; background: var(--hud-bg); border: 1px solid var(--hud-line); border-radius: 10px; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  .tools-left { left: 12px; top: 12px; }
+  .tools-right { right: 12px; top: 58px; }
+  .tools .sep { height: 1px; margin: 3px 4px; background: var(--hud-line); }
+  .hud button { font: inherit; font-size: 14px; color: var(--hud-ink); background: transparent; border: 1px solid transparent; border-radius: 7px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+  .tools button { width: 40px; height: 40px; padding: 0; }
+  .hud button:hover { background: var(--hud-hover); }
+  .hud button[aria-pressed="true"], .hud button.primary { background: var(--hud-on-bg); color: var(--hud-on-ink); }
+  .hud button:focus-visible, .hud select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .hud svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  #bNight .sun, #bNight[aria-pressed="true"] .moon { display: none; }
+  #bNight[aria-pressed="true"] .sun { display: block; }
+  .chip { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; font-size: 14px; background: var(--hud-on-bg); color: var(--hud-on-ink); pointer-events: none; }
+  .chip[hidden] { display: none; }
+  .opt { position: absolute; right: 12px; top: 12px; }
+  #bOpt { height: 36px; padding: 0 10px 0 14px; gap: 6px; background: var(--hud-bg); border: 1px solid var(--hud-line); }
+  #bOpt svg.i { width: 16px; height: 16px; transition: transform .15s; }
+  #bOpt[aria-expanded="true"] svg.i { transform: rotate(180deg); }
+  .panel { position: absolute; right: 0; top: 42px; width: min(380px, calc(100vw - 24px)); max-height: calc(100vh - 80px); overflow: auto; padding: 12px 14px; background: var(--hud-bg); border: 1px solid var(--hud-line); border-radius: 10px;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 12px 32px -12px rgba(0,0,0,.45); }
+  .panel[hidden] { display: none; }
+  .panel h3 { margin: 14px 0 6px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--hud-soft); }
+  .panel h3:first-child { margin-top: 0; }
+  .panel select, .panel .wide { width: 100%; font: inherit; font-size: 14px; color: var(--hud-ink); background: transparent; min-height: 36px; border: 1px solid var(--hud-line); border-radius: 7px; padding: 5px 10px; cursor: pointer; }
+  .panel select option { color: #1e1c1a; background: #ece7dc; }
+  .panel .cam { margin: 8px 0 0; font-size: 13px; color: var(--hud-soft); }
+  .keys { margin: 0; padding: 0; list-style: none; font-size: 13px; line-height: 1.6; color: var(--hud-soft); }
+  .keys li { margin: 3px 0; }
+  .keys kbd { color: var(--hud-ink); border-color: var(--hud-line); }
+
   /* Capture 8 preview: full-screen modal over everything, Cancel / Download */
   #capModal { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; background: rgba(16,15,14,.95); color: #ece7dc; }
   #capModal[hidden] { display: none; }
@@ -85,13 +107,6 @@
   #capModal button.primary { background: #ece7dc; color: #151413; border-color: #ece7dc; font-weight: 600; }
   #capModal button:disabled { opacity: .5; cursor: default; }
   #capModal button:focus-visible { outline: 2px solid #d4574a; outline-offset: 2px; }
-  .controls .sep { width: 1px; height: 22px; background: var(--btn-line); margin: 0 4px; }
-  .controls select {
-    font: inherit; font-size: 14px; color: var(--bar-ink); background: var(--bg); min-height: 36px;
-    border: 1px solid var(--btn-line); border-radius: 999px; padding: 5px 10px; cursor: pointer;
-  }
-  .controls select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-  @media (max-width: 700px) { .hint { display: none; } .controls { width: 100%; justify-content: center; } }
 </style>
 </head>
 <body>
@@ -101,47 +116,59 @@
       <div id="dim" aria-hidden="true"></div>
       <div id="flash" aria-hidden="true"></div>
       <div class="kanji" id="kanji" aria-hidden="true"></div>
-    </div>
-  </div>
-  <div class="bar">
-    <p class="hint">
-      <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or click ground to run, hold <kbd>Shift</kbd> to walk</span>
-      <span><kbd>J</kbd> slash (press repeatedly for a 3-beat combo)</span>
-      <span><kbd>Space</kbd> dash (short warp)</span>
-      <span><kbd>K</kbd> lunging thrust (attack 2)</span>
-      <span><kbd>L</kbd> finisher: 一閃 single cut (the target falls after the blade stills)</span>
-      <span><kbd>C</kbd> arm "Capture 8": the next attack is shown as an 8-frame sheet; Download saves it + a skeleton JSON</span>
-      <span><kbd>Q</kbd><kbd>E</kbd> rotate camera</span>
-      <span><kbd>R</kbd><kbd>F</kbd> high/low angle</span>
-      <span><kbd>N</kbd> day / night</span>
-      <span><kbd>P</kbd> cycle the loop mode (run/walk, one-way or back-and-forth, or an attack — repeats in place, for tuning poses live)</span>
-      <span>Scroll wheel to zoom (down to a face / hand close-up), click-drag (or right-click drag) to free rotate</span>
-      <span><kbd>Alt</kbd>+drag (or middle-drag) pans the camera up/down/sideways</span>
-      <span><kbd>V</kbd> camera focus: body → head → sword hand → feet &nbsp;·&nbsp; <kbd>0</kbd> reset camera &nbsp;·&nbsp; <span id="camMode">Camera focus: Body</span></span>
-    </p>
-    <div class="controls">
-      <button id="bRotL" title="Rotate camera left (Q)">⟲ Rotate</button>
-      <button id="bRotR" title="Rotate camera right (E)">Rotate ⟳</button>
-      <button id="bUp" title="High angle (R)">High angle</button>
-      <button id="bDown" title="Low angle (F)">Low angle</button>
-      <span class="sep"></span>
-      <button id="bBones" aria-pressed="false" title="Show skeleton (B)">Skeleton</button>
-      <button id="bPose" type="button" title="Compare updated motion with the original pose">ท่าวิ่งวิดีโอ v6 · เทียบเดิม</button>
-      <button id="bSlow" aria-pressed="false" title="Slow-mo (T)">Slow-mo</button>
-      <button id="bNight" aria-pressed="false" title="Day / night (N)">☾ Night</button>
-      <select id="selLoop" title="Repeat a move (or run/walk) in place, for watching it continuously while tuning poses live (P cycles)">
-        <option value="off">Loop: off</option>
-        <option value="run">Loop: run (back and forth)</option>
-        <option value="run1">Loop: run (one way)</option>
-        <option value="walk">Loop: walk (back and forth)</option>
-        <option value="walk1">Loop: walk (one way)</option>
-        <option value="atk1">Loop: attack 1 (J)</option>
-        <option value="atk2">Loop: attack 2 (K)</option>
-        <option value="dual">Loop: dual (K K)</option>
-        <option value="finisher">Loop: finisher (L)</option>
-      </select>
-      <button id="bCap" title="Capture the next attack as 8 frames + skeleton JSON (C)">Capture 8</button>
-      <button id="bAtk" class="primary" title="Slash (J)">Slash</button>
+      <div class="hud">
+        <div class="tools tools-left" role="toolbar" aria-label="Actions">
+          <button id="bAtk" class="primary" title="Slash (J)" aria-label="Slash (J)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4 9.5 14.5"/><path d="M7 12.5l4.5 4.5"/><path d="M8.5 15.5 4 20"/></svg></button>
+          <button id="bCap" aria-pressed="false" title="Capture the next attack as 8 frames + skeleton JSON (C)" aria-label="Capture 8 (C)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+          <span class="sep"></span>
+          <button id="bBones" aria-pressed="false" title="Show skeleton (B)" aria-label="Skeleton (B)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2"/><path d="M12 7v7M7 10l5-1 5 1M12 14l-4 6M12 14l4 6"/></svg></button>
+          <button id="bSlow" aria-pressed="false" title="Slow-mo (T)" aria-label="Slow-mo (T)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="7"/><path d="M12 13V9M9 3h6"/></svg></button>
+          <button id="bNight" aria-pressed="false" title="Switch to night (N)" aria-label="Switch to night (N)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><g class="moon"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></g><g class="sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></g></svg></button>
+        </div>
+        <div class="chip" id="capChip" role="status" hidden></div>
+        <div class="opt">
+          <button id="bOpt" aria-haspopup="true" aria-expanded="false" aria-controls="optPanel">Options <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+          <div class="panel" id="optPanel" hidden>
+            <h3>Practice</h3>
+            <select id="selLoop" aria-label="Loop mode" title="Repeat a move (or run/walk) in place, for watching it continuously while tuning poses live (P cycles)">
+              <option value="off">Loop: off</option>
+              <option value="run">Loop: run (back and forth)</option>
+              <option value="run1">Loop: run (one way)</option>
+              <option value="walk">Loop: walk (back and forth)</option>
+              <option value="walk1">Loop: walk (one way)</option>
+              <option value="atk1">Loop: attack 1 (J)</option>
+              <option value="atk2">Loop: attack 2 (K)</option>
+              <option value="dual">Loop: dual (K K)</option>
+              <option value="finisher">Loop: finisher (L)</option>
+            </select>
+            <h3>Motion</h3>
+            <button id="bPose" class="wide" type="button" title="Compare updated motion with the original pose">ท่าวิ่งวิดีโอ v6 · เทียบเดิม</button>
+            <p class="cam" id="camMode">Camera focus: Body</p>
+            <h3>Controls</h3>
+            <ul class="keys">
+          <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or click ground to run, hold <kbd>Shift</kbd> to walk</li>
+          <li><kbd>J</kbd> slash (press repeatedly for a 3-beat combo)</li>
+          <li><kbd>Space</kbd> dash (short warp)</li>
+          <li><kbd>K</kbd> lunging thrust (attack 2)</li>
+          <li><kbd>L</kbd> finisher: 一閃 single cut (the target falls after the blade stills)</li>
+          <li><kbd>C</kbd> arm "Capture 8": the next attack is shown as an 8-frame sheet; Download saves it + a skeleton JSON</li>
+          <li><kbd>Q</kbd><kbd>E</kbd> rotate camera &nbsp;·&nbsp; <kbd>R</kbd><kbd>F</kbd> high/low angle</li>
+          <li><kbd>B</kbd> skeleton &nbsp;·&nbsp; <kbd>T</kbd> slow-mo &nbsp;·&nbsp; <kbd>N</kbd> day / night</li>
+          <li><kbd>P</kbd> cycle the loop mode (run/walk, one-way or back-and-forth, or an attack: repeats in place, for tuning poses live)</li>
+          <li>Scroll wheel to zoom (down to a face / hand close-up), click-drag (or right-click drag) to free rotate</li>
+          <li><kbd>Alt</kbd>+drag (or middle-drag) pans the camera up/down/sideways</li>
+          <li><kbd>V</kbd> camera focus: body → head → sword hand → feet &nbsp;·&nbsp; <kbd>0</kbd> reset camera</li>
+            </ul>
+          </div>
+        </div>
+        <div class="tools tools-right" role="toolbar" aria-label="Camera">
+          <button id="bRotL" title="Rotate camera left (Q)" aria-label="Rotate camera left (Q)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v5h5"/></svg></button>
+          <button id="bRotR" title="Rotate camera right (E)" aria-label="Rotate camera right (E)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-3-6.2"/><path d="M20 4v5h-5"/></svg></button>
+          <span class="sep"></span>
+          <button id="bUp" title="High angle (R)" aria-label="High angle (R)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
+          <button id="bDown" title="Low angle (F)" aria-label="Low angle (F)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -201,6 +228,7 @@ class SOD { // second-order dynamics: f (Hz), z (damping), r (response)
 /* ---------- renderer ---------- */
 const stageEl=document.getElementById('stage');
 const motionOverlay=new URLSearchParams(location.search).has('motionOverlay');
+if(motionOverlay) document.body.classList.add('mo');   // the debug overlays compare raw renders: no HUD on top
 const renderer=new THREE.WebGLRenderer({antialias:true,alpha:motionOverlay});
 const shaderErrors=[];
 renderer.debug.onShaderError=(gl,program,vs,fs)=>{shaderErrors.push([gl.getProgramInfoLog(program),gl.getShaderInfoLog(vs),gl.getShaderInfoLog(fs)].join('\n'));};
@@ -289,7 +317,7 @@ function setTimeOfDay(mode){
   for(const m of rippleMats) m.color.setHex(L.ripple);
   document.getElementById('paper').style.opacity=L.paper;
   stageEl.classList.toggle('night', mode==='night');
-  const b=document.getElementById('bNight'); if(b){ b.setAttribute('aria-pressed', mode==='night'); b.textContent=mode==='night'?'☀ Day':'☾ Night'; }
+  const b=document.getElementById('bNight'); if(b){ b.setAttribute('aria-pressed', mode==='night'); b.title=b.ariaLabel=mode==='night'?'Switch to day (N)':'Switch to night (N)'; }
   try{ localStorage.setItem('potsbm_time', mode); }catch(e){}
 }
 
@@ -2354,7 +2382,8 @@ function step(T){
    modal (Cancel / Download); Download saves the sheet and a JSON with every real bone's pose per frame — hand both to whoever analyses the motion. */
 const CAP={ armed:false, rec:null, n:8, cols:4, yawOff:20, pitch:10, zoom:1.3, fy:.88, width:.42 };
 const capBtn=document.getElementById('bCap');
-function capLabel(){ capBtn.textContent=CAP.rec?`● Recording ${CAP.rec.shots.length}/${CAP.n}`:CAP.armed?'Armed — press J/K/L':'Capture 8'; capBtn.setAttribute('aria-pressed',CAP.armed||!!CAP.rec); }
+const capChip=document.getElementById('capChip');
+function capLabel(){ capChip.textContent=CAP.rec?`● Recording ${CAP.rec.shots.length}/${CAP.n}`:'Armed — press J/K/L'; capChip.hidden=!(CAP.rec||CAP.armed); capBtn.setAttribute('aria-pressed',CAP.armed||!!CAP.rec); }
 function capToggle(){ if(CAP.rec) return; CAP.armed=!CAP.armed; capLabel(); }
 function capBegin(){
   CAP.armed=false; const def=S.act.def, end=def.end;
@@ -2492,7 +2521,12 @@ cv.addEventListener('wheel',e=>{ e.preventDefault(); CAM.zoomT=clamp(CAM.zoomT*M
 function toggle(id){ const b=document.getElementById(id), on=b.getAttribute('aria-pressed')!=='true'; b.setAttribute('aria-pressed',on);
   if(id==='bBones'){ boneLines.visible=joints.visible=on; } if(id==='bSlow') S.speed=on?.25:1; saveDevState(); }
 const bind=(id,fn)=>document.getElementById(id).addEventListener('click',e=>{ fn(); e.currentTarget.blur(); });
-document.getElementById('selLoop').addEventListener('change',e=>setLoop(e.target.value));
+document.getElementById('selLoop').addEventListener('change',e=>{ setLoop(e.target.value); e.target.blur(); });
+{ const opt=document.getElementById('bOpt'), pn=document.getElementById('optPanel');   // Options popover (top-right), closes on outside click / Esc
+  const setOpen=on=>{ pn.hidden=!on; opt.setAttribute('aria-expanded',on); };
+  opt.addEventListener('click',e=>{ setOpen(pn.hidden); e.currentTarget.blur(); });
+  document.addEventListener('pointerdown',e=>{ if(!pn.hidden && !e.target.closest('.opt')) setOpen(false); });
+  window.addEventListener('keydown',e=>{ if(e.key==='Escape' && !pn.hidden) setOpen(false); }); }
 bind('bRotL',()=>rotateCam(-90)); bind('bRotR',()=>rotateCam(90)); bind('bUp',()=>tiltCam(12)); bind('bDown',()=>tiltCam(-12));
 bind('bBones',()=>toggle('bBones')); bind('bSlow',()=>toggle('bSlow'));
 bind('bNight',()=>setTimeOfDay(timeOfDay==='night'?'day':'night'));
