@@ -54,6 +54,15 @@ func saveCapture(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
+// noCache makes browsers revalidate every file (Last-Modified still gives cheap 304s). Without it Chrome kept an old ninja.glb / index.html
+// (heuristic freshness), so the grip values in a NEW index.html were applied to an OLD model and the hands looked wrecked.
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	mux := http.NewServeMux()
 
@@ -75,5 +84,5 @@ func main() {
 		addr = ":" + p
 	}
 	log.Printf("Path of the Shinobi: Blood Moon server: http://localhost%s (live reload: %v)", addr, devMode)
-	log.Fatal(http.ListenAndServe(addr, handler))
+	log.Fatal(http.ListenAndServe(addr, noCache(handler)))
 }

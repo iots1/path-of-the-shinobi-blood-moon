@@ -49,6 +49,9 @@ async function ready() {
   await new Promise(r => { const c = () => (window.__iso && window.__iso.rig.real && window.__iso.rig.real.loco) ? r() : setTimeout(c, 200); c(); });
   I = window.__iso; S = I.S; R = I.rig.real; rig = I.rig; V = R.hipsPos.constructor; Q = rig.root.quaternion.constructor;
   I.stop();
+  // the game's slow-mo toggle (bSlow, S.speed .25) is kept in sessionStorage and survives reloads: frame(0,4) then advances only 1 ms per call, so every
+  // scenario below would cover a quarter of its timeline (2026-10-23: lost a measurement session to it) — always measure at 1×
+  if (S.speed !== 1) { console.warn('motion_check: S.speed was', S.speed, '→ 1'); S.speed = 1; document.getElementById('bSlow')?.setAttribute('aria-pressed', 'false'); }
 }
 // open ground, camera yaw 45 so 'a' runs ~5 m without hitting the edge or a target
 function reset(x = 2.5, z = -1, facing = -Math.PI / 4) {
@@ -406,7 +409,7 @@ export async function sheet({ mode = 'combo', times, cols = 6, yawOff = 20, pitc
 //   await m.views({mode:'run'})   modes: run | stop (run → stop) | walk | combo | thrust | dual | issen | idle
 //   extra options: skeleton:true (draw the real bones over the body, like the in-game Skeleton toggle), angles:['front'] (subset), times:[...] (ms),
 //   tag:'x' (saves motion-views-<mode>-x.* instead, so a close-up study doesn't replace the definition-of-done capture)
-export async function views({ mode = 'run', pitch = 6, zoom = 1.3, fy = .95, width = .34, save = true, skeleton = false, angles, times: tOverride, tag = '' } = {}) {
+export async function views({ mode = 'run', pitch = 6, zoom = 1.3, fy = .95, width = .34, save = true, skeleton = false, angles, times: tOverride, tag = '', presses: pOverride } = {}) {
   await ready();
   const sc0 = rig.root.parent; let k = rig.katana; while (k.parent && k.parent !== sc0) k = k.parent;
   const keep = new Set([rig.root, k, rig.katana2]); for (const e of rig.eyes) { let p = e; while (p.parent && p.parent !== sc0) p = p.parent; keep.add(p); }
@@ -425,6 +428,7 @@ export async function views({ mode = 'run', pitch = 6, zoom = 1.3, fy = .95, wid
                  issen: { presses: [0], fn: 'pressL', times: [250, 540, 610, 640, 700, 1150, 1320, 1600] } }[mode];
   if (!plan) throw new Error('views: unknown mode ' + mode);
   if (tOverride) plan.times = tOverride;
+  if (pOverride) plan.presses = pOverride;   // e.g. a single J: presses:[0]
   const ANG = [['front', 0], ['right', -90], ['back', 180], ['left', 90]].filter(a => !angles || angles.includes(a[0]));
   const lunged = { combo: I.COMBO, thrust: [I.ATTACK2, I.DUAL], dual: [I.ATTACK2, I.DUAL], issen: [I.ISSEN] }[mode] || [];
   for (const d of lunged) { d._lunge ??= d.lunge; d.lunge = 0; }   // keep the character in frame
