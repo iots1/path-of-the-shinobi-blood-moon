@@ -420,7 +420,7 @@ export async function views({ mode = 'run', pitch = 6, zoom = 1.3, fy = .95, wid
   const ev = (a, n, step) => Array.from({ length: n }, (_, i) => a + i * step);
   const plan = { run: { runMs: 1500, times: ev(860, 8, 79) },   // one 0.633 s RunningV2 cycle, steady speed
                  stop: { runMs: 1200, times: [1100, 1180, 1240, 1300, 1360, 1440, 1560, 1800] },
-                 walk: { runMs: 3600, shift: true, times: ev(2000, 8, 188) },   // one 1.5 s walk stride (WALK_STYLE.cycle) after the speed ramp; was ev(1200, 8, 130) for the old 1.03 s clip cycle
+                 walk: { runMs: 3300, shift: true, times: ev(2000, 8, 144) },   // one 1.15 s walk stride (WALK_STYLE.cycle) after the speed ramp; was ev(1200, 8, 130) for the old 1.03 s clip cycle
                  idle: { times: ev(600, 8, 120) },
                  combo: { presses: [0, 420, 860], times: [100, 190, 300, 450, 600, 760, 1000, 1250] },
                  thrust: { presses: [0], fn: 'pressK', times: [60, 170, 220, 260, 300, 420, 640, 900] },
