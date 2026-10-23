@@ -865,11 +865,16 @@ function loadNinja(){
    the planted foot roughly matches the ground) × CADENCE_BOOST, and walkPhase is derived from the
    same phase so the procedural arm swing / torso twist stay in step with the clip's legs. */
 const RUN_SPEED=4.0;      // top movement speed, m/s
-const WALK_SPEED=1.3;     // movement speed while Shift is held, m/s. 2026-10-23: was 1.6, but the Walking clip's own ground speed is 1.28 m/s (1.03 s cycle) — at 1.6 m/s the clip was sped up 25 % (0.83 s cycle = 2.4 steps/s, a hurried, robotic cadence); 1.3 plays it at its authored rate (≈1.9 steps/s)
+const WALK_SPEED=.5;      // movement speed while Shift is held, m/s (2026-10-23: the reference walk video is a slow stealth walk, see WALK_STYLE; was 1.3 = the Walking clip's own speed, 1.6 before)
 // pelvisShare sends the remaining pitch to the lumbar spine; the total chest pitch stays continuous.
 const RUN_TUNE={lean:.65,pelvisShare:.78,twistScale:.35,headCounter:.85,wristPitch:-.6,wristYaw:.3};   // wristPitch/Yaw re-scanned 2026-10-21 for the attack-seat run grip: blade 36° below horizontal / 24° off the forearm (video ≈37° / 25°), wrist at 91% of its range (was 100%, pinned on the ulnar limit)
 // wristPitch turns the hand about its palm normal (radial/ulnar), wristYaw about the thumb axis (flex/extension, swings the blade sideways). Measure with
 // client/debug/run-compare.js measureRunGrip(). lean/pelvisShare are calibrated against hip/neck landmarks in /debug/run-overlay.html.
+/* WALK_STYLE (2026-10-23, art/reference/new_ninja_katana/ninja_walk_katana.mp4 = the definition of done for the walk, measured from its silhouettes): a slow, short-stepped, low stealth walk —
+   a step every 0.87 s (stride 1.74 s, 69 steps/min; the Walking clip: 1.03 s), the boots at most 0.35 × body height apart at double support (the clip: 0.60), the swing foot barely off the floor.
+   While walking: the clip's cycle is played over `cycle` seconds at full walk speed (phase advance = speed / (WALK_SPEED·cycle)), the thighs' swing is scaled by `hip` about their bind pose
+   (step length ∝ speed·cycle, so the planted foot does not slide), the swing knee flexion by WALK_KNEE.swing, the foot keeps the clip's world orientation. Compare with tools/walk_reference_compare.py. */
+const WALK_STYLE={on:1,cycle:1.74,hip:.52};
 const CADENCE_BOOST=1.0;  // >1 = quicker steps than the stride strictly allows (slight foot slide)
 const LOCO_BONES=['LeftUpLeg','LeftLeg','LeftFoot','LeftToeBase','RightUpLeg','RightLeg','RightFoot','RightToeBase'];
 function calibrateClip(real, clip){
@@ -924,19 +929,23 @@ const STAND_TUNE={ankleLean:.06};
 const WALK_LEG={on:1,out:.02,k:1}, _q3=new THREE.Quaternion();
 /* HEEL_STRIKE (2026-10-23, user: while walking the heel never reached the floor — the toes landed first, the foot hovered and then slapped down): the Walking clip lands the foot flat.
    The sole is kept at least `deg` degrees toe-UP while the ankle is ahead of the hip (smoothstep from z0 to z0+span metres ahead), blending to flat as the body passes over it. */
-const HEEL_STRIKE={deg:16,z0:.03,span:.25};
+const HEEL_STRIKE={deg:10,z0:.03,span:.25};
 /* WALK_LAND (2026-10-23): even with the heel-first pitch the landing foot stalled ~5 cm above the floor for ~60 ms (leg at full reach, body not there yet) and then dropped the last
    4 cm in 40 ms — "hover, then stamp". While walking, the foot AHEAD of its hip that is within `far` metres of the other (planted) foot's floor level is pulled down with a
    two-bone leg IK (hip fixed, knee keeps its bend plane): full pull inside `near` metres, fading out to `far`; the foot keeps its world orientation. */
-const WALK_LAND={on:1,pin:0,near:.03,far:.10,a0:.35,ahead:.06,ramp:.03,release:.10,fade:.05};   /* a0 (2026-10-23): the pull starts only once the foot is a0 metres ahead of the hip (was 0): from the hip it dragged the swing foot onto the floor ~25 cm before heel strike */
+const WALK_LAND={on:1,pin:0,near:.03,far:.10,a0:.22,ahead:.04,ramp:.03,release:.06,fade:.05};   /* a0 (2026-10-23): the pull starts only once the foot is a0 metres ahead of the hip (was 0): from the hip it dragged the swing foot onto the floor ~25 cm before heel strike */
 /* WALK_KNEE (2026-10-23, user: walking is too fast and the knee/ankle rhythm looks robotic): the Walking clip bends the PLANTED knee most (≈44° measured hip-knee-ankle) exactly as the body passes over the foot
    — a crouched, stomping gait — and straightens it again in late stance; the swing peak is 75°. The shin's rotation away from its bind pose is scaled by `stance` while the foot is planted
    (its ankle within h0…h1 metres of the lower ankle and not far behind the hip: z0…z1), by `swing` otherwise (the lowered peak). The foot keeps its world orientation. The ground snap then lifts the pelvis
    over the straighter planted leg, so the body rises over the stance foot like a real walk. */
-const WALK_KNEE={on:1,stance:.4,stanceLoad:.8,swing:.84,z0:-.25,z1:-.13,hs:.31,to:.50,
+const WALK_KNEE={on:1,stance:.4,stanceLoad:.8,swing:.45,z0:-.25,z1:-.13,hs:.31,to:.50,
   /* swing knee: the clip unfolds the knee too early (59° → 19° in ~40 ms as the foot passes under the hip — the "robotic" snap), after folding it to 66° while the foot is still far behind.
      The shin is played `delay` of a cycle LATE during the swing (bump over the leg's phase p: b0 → peak bm → b1, 0 at heel strike so the landing is the clip's own); the stance knee is straightened (see below). */
   delay:.09,b0:.58,bm:.78,b1:1.0};   /* the bump is a function of the leg's cycle phase p (0 = heel strike, swing ≈ .57…1): it must rise/fall slower than the delay, else the shin pose runs BACKWARDS in time; driving it by the ankle's position instead made the knee flip-flop (the delayed knee holds the ankle back, which holds the delay) */
+/* WALK_ANKLE (2026-10-23, user: while the knee is bent the ankle must not be level with the floor — the toes point DOWN first; once the knee starts to unfold the ankle turns gradually until the foot is level for landing).
+   The clip holds the swing foot at the pitch clamp (38° toe-down, a flat-topped curve) and then flicks it to 32° toe-UP within 80 ms while the knee unfolds. While walking, the swing foot's pitch (e.x, toe-down positive, sole frame) now follows the leg's cycle phase p
+   (see WALK_KNEE): rises to `plant` deg between r0…r1 (toe-off → early swing), holds while the knee is flexed, then turns smoothly (f0…f1, the unfolding of the knee) through level to `strike` deg (slight toe-up) at heel strike. */
+const WALK_ANKLE={on:1,plant:48,strike:-10,r0:.52,r1:.66,f0:.76,f1:.99};
 const _wlA=new THREE.Vector3(), _wlH=new THREE.Vector3(), _wlK=new THREE.Vector3(), _wlD=new THREE.Vector3(), _wlP=new THREE.Vector3(), _wlK2=new THREE.Vector3(), _wlA2=new THREE.Vector3(), _wlV1=new THREE.Vector3(), _wlV2=new THREE.Vector3();
 function walkLanding(real,L){
   /* Runs AFTER the hip ground snap (absolute heights: the lowest sole point is at 0). c = clearance of a foot's lowest sole point.
@@ -1047,6 +1056,16 @@ function driveRealBones(real){
     const undo=new THREE.Quaternion().setFromAxisAngle(axis,-hipPitch*L.w);
     for(const side of ['Left','Right']) real.bone[side+'UpLeg'].quaternion.premultiply(undo);
   }
+  /* walking: scale the thighs' swing (see WALK_STYLE); remember the clip's foot orientation (the knee pass restores it for the planted foot) */
+  if(L && L.w>0 && L.b<1 && WALK_STYLE.on){
+    real.model.updateMatrixWorld(true);
+    const wk=L.w*(1-L.b); real.fq0??={};
+    for(const side of ['Left','Right']){
+      real.fq0[side]=real.bone[side+'Foot'].getWorldQuaternion(new THREE.Quaternion());
+      const th=real.bone[side+'UpLeg'], q=th.quaternion.clone();
+      th.quaternion.copy(real.bind[side+'UpLeg'].q).slerp(q,lerp(1,WALK_STYLE.hip,wk)); th.updateMatrixWorld(true);
+    }
+  } else if(real.fq0) real.fq0=null;
   /* walking: soften the knee (see WALK_KNEE) — the planted knee straighter, the swing knee unfolds later than the clip's timing */
   if(L && L.w>0 && L.b<1 && WALK_KNEE.on){
     real.model.updateMatrixWorld(true);
@@ -1064,7 +1083,7 @@ function driveRealBones(real){
       const h=i.y-yLow;
       const sw=stance*smooth(clamp((i.dz-K.z0)/(K.z1-K.z0),0,1));   // planted, not far behind the hip
       const ws=1-stance;
-      const fq=foot.getWorldQuaternion(new THREE.Quaternion());
+      const fq=real.fq0?.[side]?.clone()||foot.getWorldQuaternion(new THREE.Quaternion());
       /* swing: the clip's shin pose from a slightly earlier phase (see WALK_KNEE) */
       const bump=smooth(clamp((p-K.b0)/(K.bm-K.b0),0,1))*(1-smooth(clamp((p-K.bm)/(K.b1-K.bm),0,1)));
       const wd=wk*ws*bump;
@@ -1120,6 +1139,14 @@ function driveRealBones(real){
       const bankLim=lerp(lerp(RUN_CLIP.walkBankAir,RUN_CLIP.walkBank,near),RUN_CLIP.footBank,L.b)*D2R;
       e.z=lerp(e.z,clamp(e.z,-bankLim,bankLim),bankW);
       e.x=lerp(e.x,clamp(e.x,-RUN_CLIP.footPitch*D2R,RUN_CLIP.footPitch*D2R),pitchW);
+      if(L.b<1 && WALK_ANKLE.on){
+        const A=WALK_ANKLE, p=(((L.u-(side==='Left'?WALK_KNEE.hs:WALK_KNEE.hs+.5))%1)+1)%1, wk=L.w*(1-L.b);
+        const gate=smooth(clamp((p-A.r0+.02)/.06,0,1))*(1-smooth(clamp((p-.995)/.005,0,1)));   // swing only (0 in stance)
+        const w1=smooth(clamp((p-A.r0)/(A.r1-A.r0),0,1)), w2=smooth(clamp((p-A.f0)/(A.f1-A.f0),0,1));
+        const tgt=(A.plant*w1*(1-w2)+A.strike*w2)*D2R;
+        e.x=lerp(e.x,lerp(Math.max(e.x,tgt),tgt,w2),wk*gate);   /* before the knee unfolds the foot is only ever pushed MORE toe-down than the clip (no dip at toe-off) */
+      }
+      (real.footDbg??={})[side]=e.x/D2R;
       if(L.b<1){
         const hipRL=real.bone[side+'UpLeg'].getWorldPosition(V()).applyMatrix4(rig.root.matrixWorld.clone().invert()), ankRL=foot.getWorldPosition(V()).applyMatrix4(rig.root.matrixWorld.clone().invert());
         const ahead=smooth(clamp((ankRL.z-hipRL.z-HEEL_STRIKE.z0)/HEEL_STRIKE.span,0,1)), wk=L.w*(1-L.b);
@@ -1941,7 +1968,7 @@ function applySkeleton(p,T){
       const stopping=!input&&(sp<(S.armRunSp??sp)-1e-4||S.walkAmt<.97);
       S.armRun=L.b>=ar?lerp(ar,L.b,1-Math.exp(-T/.06)):stopping?ar:lerp(ar,L.b,1-Math.exp(-T/.25));
       if(S.walkAmt<.02) S.armRun=L.b; S.armRunSp=sp; }
-    L.u=(L.u+T*sp/lerp(L.walk.stride,lerp(L.run.stride,REFERENCE_RUN.stride,REFERENCE_RUN.amount),L.b)*lerp(1,CADENCE_BOOST,L.b))%1; L.w=S.walkAmt; }
+    L.u=(L.u+T*sp/lerp(WALK_STYLE.on?WALK_SPEED*WALK_STYLE.cycle:L.walk.stride,lerp(L.run.stride,REFERENCE_RUN.stride,REFERENCE_RUN.amount),L.b)*lerp(1,CADENCE_BOOST,L.b))%1; L.w=S.walkAmt; }
   const w=S.walkAmt, breathe=Math.sin(t*1.8);
   S.runRefMix=lerp(S.runRefMix||0,(S.act?0:REFERENCE_RUN.amount)*(L?.b||0)*w,1-Math.exp(-T/.08));
   const ph=L ? 2*Math.PI*L.u : S.walkPhase;
