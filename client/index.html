@@ -1043,7 +1043,7 @@ const BACK_GEAR={visible:false}; // temporarily hide back-mounted props while tu
 // runPulse adds ~1° of retraction per stride, rather than a repeated shrug.
 // raise (rad): the right clavicle lifts as the upper arm goes up (a real shoulder elevates once the arm passes ~horizontal); without it the overhead
 // beat-1 wind-up read as the arm hinging off a locked, dropped shoulder. Ramped by S.shRaiseR (0..1, from last frame's right-elbow elevation, see the arm solve).
-const SHOULDER={drop:.10,dropR:.08,carryDrop:.06,carryBack:.10,runBack:.12,runPulse:.018,carryTwist:20,raise:.24};   // (a 'reach' clavicle protraction while two-handed was tried 2026-10-23 and removed: backAx is not mirrored between the shoulders, and the left wrist went out of range)   // runBack was .30: with the torso pitched 40° the retracted right clavicle rose → shoulder line rolled −5° (idle +2°) and the shoulder read shrugged; .12 → ≈ −2° (front reference: right shoulder ~4° higher)   // dropR: extra idle drop for the RIGHT clavicle only (the right shoulder read higher/more shrugged than the left)
+const SHOULDER={drop:.10,dropR:.08,carryDrop:.06,carryBack:.10,runBack:.12,runPulse:.018,carryTwist:20,raise:.24,reachL:1.0,reachR:.5};   // reach (rad): both clavicles protract while the off-hand grips the hilt (S.twoEff) — arms reach-clamped straight to a hilt at belly centre ran the upper arms across the chest, left upper-arm axis ON the chest skin for 400 ms (2026-10-23, measured on the skinned mesh)   // (a 'reach' clavicle protraction while two-handed was tried 2026-10-23 and removed: backAx is not mirrored between the shoulders, and the left wrist went out of range)   // runBack was .30: with the torso pitched 40° the retracted right clavicle rose → shoulder line rolled −5° (idle +2°) and the shoulder read shrugged; .12 → ≈ −2° (front reference: right shoulder ~4° higher)   // dropR: extra idle drop for the RIGHT clavicle only (the right shoulder read higher/more shrugged than the left)
 function driveRealBones(real){
   _rlq.clear();
   for(const name in real.bind) real.bone[name].quaternion.copy(real.bind[name].q); // reset → no drift
@@ -1072,6 +1072,7 @@ function driveRealBones(real){
   // Pitch the torso from the pelvis, preserving the authored leg cycle in world
   // space. Clip thighs are local to Hips and must cancel its added run pitch.
   if(L && L.w>0){
+    { const prot=(k==='Left'?-1:1)*(k==='Left'?SHOULDER.reachL:SHOULDER.reachR)*(k==='Left'?S.protL||0:S.protR||0)*(1-carry);   /* backAx is the same axis for both: forward = −θ on the left clavicle, +θ on the right */ if(Math.abs(prot)>1e-4) o.b.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(o.backAx,prot)); }
     const hipPitch=(S.runPitch||0)*RUN_TUNE.pelvisShare;
     const axis=V(1,0,0).applyQuaternion(real.bind.Hips.rl.clone().invert());
     const undo=new THREE.Quaternion().setFromAxisAngle(axis,-hipPitch*L.w);
@@ -2183,9 +2184,10 @@ function applySkeleton(p,T){
     if(RUN_TUNE.wristYaw) neutralHand.multiply(new THREE.Quaternion().setFromAxisAngle(V(0,0,1),RUN_TUNE.wristYaw*run));   // swings the blade sideways (front reference: it trails out to the right)
     const runBlade=neutralHand.multiply(gR.K.clone().invert());
     const handBlade=qBR.clone().slerp(runBlade,run*carryR);
-    aimHand(aR,handBlade,1,gR,T,carryR>0?GRIP_TUNE.carryRollRate*D2R:Infinity);
+    aimHand(aR,handBlade,1,gR,T,carryR>0?GRIP_TUNE.carryRollRate*D2R:(settleR?220*D2R:Infinity));   /* forearm twist after the cut: 17° → 79° at 416°/s was the 'twisting elbow' */
     // Bound the final wrist rotation too: the forearm's swivel can change its
     // local frame on a reversal even when the desired world-space hand is smooth.
+    { const tg=Math.min(1,S.twoEff||0)*smooth(clamp((_gv.copy(shR).sub(eR).angleTo(_b.copy(wR).sub(eR))*57.2958-125)/25,0,1)), cur=S.protR||0; S.protR=lerp(cur,tg,1-Math.exp(-T/(tg>cur?.25:.16))); }   /* arm straight while two-handed → clavicle protraction (driveRealBones, next frame); slow ease: the clavicle limit is 400°/s */
     if(carryR>.001){
       if(!aR.carryWrist) aR.carryWrist=aR.ha.quaternion.clone();
       aR.carryWrist.rotateTowards(aR.ha.quaternion,GRIP_TUNE.carryRollRate*D2R*T);
@@ -2290,13 +2292,14 @@ function applySkeleton(p,T){
     const wristCostL=Ek=>qHL?wGripL*GRIP_TUNE.wristCost*Math.max(0,wristEllipse(_wl1.copy(ik.W).sub(Ek).normalize().applyQuaternion(qHL),'L').e-.8):0;
     // continuity (hold) only while it is on the hilt: with a free arm the pole IS the answer, and a sticky elbow kept whichever side it last
     // happened to be on — results depended on what the arm had done before (a flared elbow survived a whole idle second).
-    eL=swivel(shL,ik,aL,T,Ek=>Math.acos(clamp(Ek.clone().sub(shL).normalize().dot(prefL),-1,1))*57.2958*.4+liftCost(shL,Ek,upL)+wristCostL(Ek),GRIP_TUNE.swivelHold*Math.max(S.twoEff,dE),null,Infinity,S.relL>0?lerp(GRIP_TUNE.swivelRate,500,smooth(clamp(S.relL/.35,0,1))):GRIP_TUNE.swivelRate,1+3*S.lagF); wL=ik.W; aL.eRel=eL.clone().sub(shL);
+    eL=swivel(shL,ik,aL,T,Ek=>Math.acos(clamp(Ek.clone().sub(shL).normalize().dot(prefL),-1,1))*57.2958*.4+liftCost(shL,Ek,upL)+wristCostL(Ek)+S.lagF*2*Math.max(0,_gv.copy(Ek).sub(shL).dot(V(1,0,0).applyQuaternion(cq))*100-3),GRIP_TUNE.swivelHold*Math.max(S.twoEff,dE),null,Infinity,S.relL>0?lerp(GRIP_TUNE.swivelRate,500,smooth(clamp(S.relL/.35,0,1))):GRIP_TUNE.swivelRate,1+3*S.lagF); wL=ik.W; aL.eRel=eL.clone().sub(shL);
+    { const tg=Math.min(1,S.twoEff||0)*smooth(clamp((_gv.copy(shL).sub(eL).angleTo(_b.copy(wL).sub(eL))*57.2958-125)/25,0,1)), cur=S.protL||0; S.protL=lerp(cur,tg,1-Math.exp(-T/(tg>cur?.25:.16))); }
     aimArm(real.arm.L,shL,eL,wL,Math.PI,T,S.walkAmt>.05?0:500,real.arm.L.upperRollRest??null,.85*S.lagF,true); if(!S.act && S.relL<=0 && S.twoEff<.01 && S.walkAmt<.01) real.arm.L.upperRollRest=real.arm.L.upperRoll; // hand orientation: from LAST frame's toward the target (the right-hilt grip qBL, then the own-sword grip qD past dE .5) in small steps — a slerp(qBL,qD,dE) flips
     // its path when the two are ~180° apart (36,000°/s one-step wrist spikes, depending on history); the lag shrinks to ~10 ms once the hand is fully dual
     const qBLk=qBL.clone().multiply(_q.setFromAxisAngle(_gv.set(0,1,0),(GRIP_CFG.L.twoRoll||0)*D2R));   // qBL·Ry(twoRoll)·gL.K = qBL·gL2.K, so aimHand can keep using gL
     let qHand=qBLk;
     if(dq){ S.qHandL=(S.qHandL||qBLk.clone()).slerp(dE>.5?qD:qBLk,1-Math.exp(-T/lerp(.045,.01,smooth(clamp((dE-.7)/.3,0,1))))); qHand=S.qHandL; } else S.qHandL=null;
-    aimHand(real.arm.L,qHand,Math.min(1,S.twoEff+dE),dE>.5?gL:{K:gL.K.clone().multiply(seatQ),pt:gL.pt},T);   // (seat flex only on the right sword's hilt) sum, not max: while the grip hands over (twoEff↓, dE↑) max() dipped under .5 and the fist spun toward the bind pose (10,000°/s one-step spike)
+    aimHand(real.arm.L,qHand,Math.min(1,S.twoEff+dE),dE>.5?gL:{K:gL.K.clone().multiply(seatQ),pt:gL.pt},T,S.relL>0?220*D2R:Infinity);   // (seat flex only on the right sword's hilt) sum, not max: while the grip hands over (twoEff↓, dE↑) max() dipped under .5 and the fist spun toward the bind pose (10,000°/s one-step spike)
     // Free left arm while moving: the clips' own arm swing (an animator's FK — natural plane, elbow bend and wrist, within joint range) replaces the
     // IK pump, faded by walkAmt and out as soon as the hand is wanted on a hilt. The IK pump put the fist on the belly on the back-swing.
     S.armClipW=lerp(S.armClipW||0,RUN_CLIP.armL*(S.act?0:1),1-Math.exp(-T/.08));   // eased: an attack starting mid-run must not snap the arm from the clip pose to the IK pose in one frame
@@ -2607,6 +2610,8 @@ function step(T){
   const arm=applySkeleton(S.st,T); lastArm=arm;
   S.facing=saveF;
   // ---- trail ----
+    /* past the cut's last key the sword hand's return to the hip is damped harder (hand 3.2 Hz instead of the beat's 4.2–5 Hz): the whole sword arm used to drop ~790°/s */
+    if(S.act && !S.act.settled && S.act.def.dyn && S.act.t>(S.act.def.keys?.[S.act.def.keys.length-1]?.[0]??1e9)+30){ S.act.settled=true; setDyn({...S.act.def.dyn,hand:[3.2,.85,.2]}); }
   const tsp=S.prevTip?arm.tip.distanceTo(S.prevTip)/T:0; S.prevTip=arm.tip.clone();
   const prev2=S.prevTip2; S.prevTip2=arm.tip2?arm.tip2.clone():null;
   if(S.act){ const a=S.act, k0=kStart(a.def), k1=kHit(a.def);
