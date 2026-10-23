@@ -1491,7 +1491,7 @@ function aimArm(a, S0, E, W, twistLimit=Math.PI, T=0, rollRate=0, restRoll=null,
       const limited=clampRoll(twist,a.upperRoll??twist,twistLimit);
       a.upperRoll=twistLimit<Math.PI-.01   /* (carryR a hair above 0 after a stop gives a limit just under π: still not a carry) */
         ? smoothAngle(a.upperRoll??twist,limited,T,.06,GRIP_TUNE.carryRollRate*D2R)
-        : rollRate>0 ? smoothAngle(a.upperRoll??twist,restRoll==null?twist:restRoll+wrapA(twist-restRoll)*(1-Math.max(restW,straightW)),T,.05,rollRate*D2R) : twist;
+        : rollRate>0 ? wrapA(smoothAngle(a.upperRoll??twist,restRoll==null?twist:restRoll+wrapA(twist-restRoll)*(1-Math.max(restW,straightW)),T,.05,rollRate*D2R)) : twist;   /* wrapped: the smoothed value drifted past ±π (383° ≡ 23°) and read as a huge roll */
       wq.premultiply(_q2.setFromAxisAngle(ud,a.upperRoll));
       a.up.quaternion.copy(a.up.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(wq)); a.up.updateMatrixWorld(true);
     }
@@ -2185,7 +2185,10 @@ function applySkeleton(p,T){
     const roRNow=(roR===null?S.rho.R:clampRoll(roR,S.rho.R,GRIP_TUNE.bladeRollMax*D2R))*(1-idleRelaxK());
     S.rho.R=smoothAngle(S.rho.R, roRNow, T, GRIP_TUNE.tauRoll, (carryR>0?GRIP_TUNE.carryRollRate:GRIP_TUNE.rollRate)*D2R);
     const qBR=new THREE.Quaternion().setFromAxisAngle(dir,S.rho.R).multiply(qB0);
-    const p2=gripPass(gR,aR,shR,G,qBR,poleR,true,T,carryR,settleR?350:undefined); aR.eRel=p2.eRel;
+    /* settling (cut over, or idle): the sword hand swings back to the hip on an ARC around the shoulder (reach kept) instead of the straight line between two points on the reach sphere, which cuts inside it — the elbow folded 163° → 113° and unfolded again ("bowed / arched elbow") */
+    S.arcW=lerp(S.arcW||0,settleR?1:0,1-Math.exp(-T/(settleR?.12:.05)));   /* eased: switching it on in one step jumped the elbow 31 m/s */
+    if(S.arcW>.001 && aR.gLenMax){ const v=_gv.copy(G).sub(shR), len=v.length(), want=aR.gLenMax*.985; if(len<want && len>.05) G.copy(shR).addScaledVector(v,lerp(len,want,S.arcW)/len); }
+    const p2=gripPass(gR,aR,shR,G,qBR,poleR,true,T,carryR,settleR?350:undefined); aR.eRel=p2.eRel; aR.gLenMax=Math.max(aR.gLenMax||0,p2.G.distanceTo(shR));
     G.copy(p2.G); eR=p2.E; wR=p2.W;
     { const tg=Math.min(1,S.twoEff||0)*smooth(clamp((_gv.copy(shR).sub(eR).angleTo(_b.copy(wR).sub(eR))*57.2958-125)/25,0,1)), cur=S.protR||0; S.protR=lerp(cur,tg,1-Math.exp(-T/(tg>cur?.25:.16))); }   /* arm straight while two-handed → clavicle protraction (driveRealBones, next frame); slow ease: the clavicle limit is 400°/s */
     { const up=chest.worldToLocal(eR.clone()).sub(chest.worldToLocal(shR.clone())), elev=Math.asin(clamp(up.y/up.length(),-1,1))/D2R;   // upper-arm elevation (°, chest-local)
@@ -2295,7 +2298,7 @@ function applySkeleton(p,T){
           // while in transit the arm swings a little OUTWARD (+x, away from the torso) and keeps a slight elbow bend (a dead-straight arm has no defined
           // bend plane: the upper-arm roll sat at ~110° and the palm faced outward); both fade to nothing on arrival
           const d=_gv.copy(S.tLd).addScaledVector(V(1,0,0),.3*tr).normalize();
-          const P=sc.clone().addScaledVector(d,S.tLl*(1-.1*Math.min(1,tr/.6)));
+          const P=sc.clone().addScaledVector(d,S.tLl);
           // keep the released wrist outside the (inflated) torso: the arc from the belly-centre hilt to the hip otherwise sweeps the hand 2–3 cm through the belly
           if(P.y>-.55&&P.y<.2){ const dd=Math.hypot(P.x/.21,(P.z-.04)/.22); if(dd<1&&dd>.05){ const k=lerp(1,1/dd,S.lagF); P.x*=k; P.z=.04+(P.z-.04)*k; } }
           tL.copy(chest.localToWorld(P)); } } }
@@ -2309,7 +2312,7 @@ function applySkeleton(p,T){
     // continuity (hold) only while it is on the hilt: with a free arm the pole IS the answer, and a sticky elbow kept whichever side it last
     // happened to be on — results depended on what the arm had done before (a flared elbow survived a whole idle second).
     eL=swivel(shL,ik,aL,T,Ek=>Math.acos(clamp(Ek.clone().sub(shL).normalize().dot(prefL),-1,1))*57.2958*.4+liftCost(shL,Ek,upL)+wristCostL(Ek)+S.lagF*2*Math.max(0,_gv.copy(Ek).sub(shL).dot(V(1,0,0).applyQuaternion(cq))*100-3),GRIP_TUNE.swivelHold*Math.max(S.twoEff,dE),null,Infinity,S.relL>0?lerp(GRIP_TUNE.swivelRate,500,smooth(clamp(S.relL/.35,0,1))):GRIP_TUNE.swivelRate,1+3*S.lagF); wL=ik.W; aL.eRel=eL.clone().sub(shL);
-    { const tg=Math.min(1,S.twoEff||0)*smooth(clamp((_gv.copy(shL).sub(eL).angleTo(_b.copy(wL).sub(eL))*57.2958-125)/25,0,1)), cur=S.protL||0; S.protL=lerp(cur,tg,1-Math.exp(-T/(tg>cur?.25:.16))); }
+    { const tg=Math.min(1,S.twoEff||0)*smooth(clamp((_gv.copy(shL).sub(eL).angleTo(_b.copy(wL).sub(eL))*57.2958-125)/25,0,1)), cur=S.protL||0; S.protL=lerp(cur,tg,1-Math.exp(-T/(tg>cur?.25:(S.relL>0?.1:.16)))); }
     aimArm(real.arm.L,shL,eL,wL,Math.PI,T,S.walkAmt>.05?0:500,real.arm.L.upperRollRest??null,.85*S.lagF,true); if(!S.act && S.relL<=0 && S.twoEff<.01 && S.walkAmt<.01) real.arm.L.upperRollRest=real.arm.L.upperRoll; // hand orientation: from LAST frame's toward the target (the right-hilt grip qBL, then the own-sword grip qD past dE .5) in small steps — a slerp(qBL,qD,dE) flips
     // its path when the two are ~180° apart (36,000°/s one-step wrist spikes, depending on history); the lag shrinks to ~10 ms once the hand is fully dual
     const qBLk=qBL.clone().multiply(_q.setFromAxisAngle(_gv.set(0,1,0),(GRIP_CFG.L.twoRoll||0)*D2R));   // qBL·Ry(twoRoll)·gL.K = qBL·gL2.K, so aimHand can keep using gL
