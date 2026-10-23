@@ -25,6 +25,7 @@ CLAUDE.md is kept short (size limit). Every finding, measurement, dead end and "
 | `docs/notes/model-no-hood-2026-10-19.md` | the character asset's basics, `IDLE`, `CARRY`, `GRIP_CFG.R.phi`/`poleR` trade-offs, sword-arm swing, `SHOULDER.dropR`, standing pose vs. reference |
 | `docs/notes/hands-grip.md` | anything in `GRIP_CFG`, `RUN_HOLD`/`CARRY_HOLD`, `FIST.*` (`ringAng`, `ringLean`, `thumbQR`, `thumbRelaxL`, `cup`…), `setFingers`/`prepFingers`/`adaptLeft`, `TSUKA_S`, finger/hand mesh, the grip solvers |
 | `docs/notes/run-locomotion.md` | `RUN_*` constants, `RUN_CLIP`/`locoArmPose`, `WRIST_LIM`/`limitWrist`, `client/rig/reference_run.js`, `S.armRun`, run overlay |
+| `docs/notes/run-locomotion.md` → "Walk definition of done" | the walk's target = `art/reference/new_ninja_katana/ninja_walk_katana.mp4` (frames in `walk_frames/`); compare with `tools/walk_reference_compare.py` + `walkRef()` |
 | `docs/notes/combo-attacks.md` | beat 1 raise / `SHOULDER.raise`, `GRIP_TUNE.seatFlex`, two-handed off-hand wrist range |
 | `docs/notes/face.md` | head/face mesh, `blender-ninja/face_sculpt_scripts/`, outline normals/bias, face overlay |
 | `docs/notes/model-2026-10-18.md` | key reach rescaling policy, beat-2 stiffness dead end, post-attack droop (`IDLE_RELAX_MS`), grip-flicker history, `embeddedImageTexture()`, shoulder-mesh fix lessons |

@@ -30,3 +30,6 @@ out/
 
 # motion-guard stop counter (lets a session end after 3 blocked stops)
 .claude/.motion-stop-count
+
+# regenerable video frames (tools/extract_video_frames.swift)
+art/reference/new_ninja_katana/walk_frames/

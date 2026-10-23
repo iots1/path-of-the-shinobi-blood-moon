@@ -420,7 +420,7 @@ export async function views({ mode = 'run', pitch = 6, zoom = 1.3, fy = .95, wid
   const ev = (a, n, step) => Array.from({ length: n }, (_, i) => a + i * step);
   const plan = { run: { runMs: 1500, times: ev(860, 8, 79) },   // one 0.633 s RunningV2 cycle, steady speed
                  stop: { runMs: 1200, times: [1100, 1180, 1240, 1300, 1360, 1440, 1560, 1800] },
-                 walk: { runMs: 3900, shift: true, times: ev(2000, 8, 218) },   // one 1.74 s walk stride (WALK_STYLE.cycle) after the speed ramp; was ev(1200, 8, 130) for the old 1.03 s clip cycle
+                 walk: { runMs: 3600, shift: true, times: ev(2000, 8, 188) },   // one 1.5 s walk stride (WALK_STYLE.cycle) after the speed ramp; was ev(1200, 8, 130) for the old 1.03 s clip cycle
                  idle: { times: ev(600, 8, 120) },
                  combo: { presses: [0, 420, 860], times: [100, 190, 300, 450, 600, 760, 1000, 1250] },
                  thrust: { presses: [0], fn: 'pressK', times: [60, 170, 220, 260, 300, 420, 640, 900] },
@@ -508,4 +508,20 @@ export async function walkRef({ n = 16, u0 = .31, zoom = 1.55, fy = .88, w = 560
   }
   key('a', false, true);
   return `walkRef: ${out.length} frames saved as out/walkcmp-${tag}-NN.png (u: ${out.map(o => o.u).join(' ')})`;
+}
+
+// World direction of the wielded katana's blade (PCA of its biggest mesh's vertices, tip = the end farther from the right hand): pitch below horizontal and
+// azimuth off the character's forward (deg). Used to match the carried blade to art/reference/new_ninja_katana/ninja_walk_katana.mp4 (≈33° below, 0° off).
+export async function bladeAngle() {
+  await ready();
+  const k = rig.katana; k.updateMatrixWorld(true);
+  let best = null; k.traverse(o => { if (o.geometry && (!best || o.geometry.attributes.position.count > best.geometry.attributes.position.count)) best = o; });
+  const pa = best.geometry.attributes.position, pts = [];
+  for (let i = 0; i < pa.count; i += 3) pts.push(new V().fromBufferAttribute(pa, i).applyMatrix4(best.matrixWorld));
+  const c = pts.reduce((a, p) => a.add(p), new V()).multiplyScalar(1 / pts.length);
+  let d = new V(1, .3, .2);
+  for (let it = 0; it < 20; it++) { const n = new V(); for (const p of pts) { const q = p.clone().sub(c); n.addScaledVector(q, q.dot(d)); } d = n.normalize(); }
+  let mn = 1e9, mx = -1e9, pm, pM; for (const p of pts) { const t = p.clone().sub(c).dot(d); if (t < mn) { mn = t; pm = p; } if (t > mx) { mx = t; pM = p; } }
+  const hand = R.bone.RightHand.getWorldPosition(new V()), tip = pM.distanceTo(hand) > pm.distanceTo(hand) ? pM : pm, base = tip === pM ? pm : pM, dir = tip.clone().sub(base).normalize(), f = rig.root.rotation.y;
+  return { pitchBelowHorizontal: +(Math.asin(-dir.y) * 180 / Math.PI).toFixed(1), azimuthOffForward: +(Math.atan2(Math.sin(f) * dir.z - Math.cos(f) * dir.x, Math.sin(f) * dir.x + Math.cos(f) * dir.z) * 180 / Math.PI).toFixed(1) };
 }
