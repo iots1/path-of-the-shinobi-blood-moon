@@ -148,6 +148,8 @@
               <option value="dual">Loop: dual (K K)</option>
               <option value="finisher">Loop: finisher (L)</option>
             </select>
+            <h3>อุปกรณ์</h3>
+            <button id="bCloak" class="wide" type="button" aria-pressed="true">ผ้าคลุม · สวมอยู่</button>
             <h3>Motion</h3>
             <button id="bPose" class="wide" type="button" title="Compare updated motion with the original pose">ท่าวิ่งวิดีโอ v6 · เทียบเดิม</button>
             <p class="cam" id="camMode">Camera focus: Body</p>
@@ -199,6 +201,7 @@
 }
 </script>
 <script type="module">
+import {createCloak} from "./equipment/cloak.js";
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { enableVolumeSkinning } from './rig/volume_skinning.js';
@@ -853,6 +856,8 @@ function loadNinja(){
     for(const [d] of BONE_MAP) for(const c of rig[d].children) if(c.userData.mesh) c.visible=false;
     for(const s of ['R','L']) for(const p of ['upper','fore','hand']) rig[p+s].visible=false;
     rig.real=real;
+    real.equipmentCloak=createCloak({THREE,root:rig.root,real,SOD,loadTexture:embeddedImageTexture,onReady:()=>setCloak(EQUIPMENT.cloak)});
+    setCloak(EQUIPMENT.cloak);
     console.log('[GLTF] ninja.glb attached', {flipped:model.rotation.y!==0, armR:[real.arm.R.l1,real.arm.R.l2], hips:real.hipsPos.toArray()});
     loadLocoClips(real, gltf.animations);
   }, err=>console.error('[GLTF] failed to parse assets/ninja.glb — keeping the procedural character', err));
@@ -1054,6 +1059,17 @@ function rlq(o){ // root-local quaternion of a glb node, built from the current 
   let q=_rlq.get(o); if(q) return q;
   q = o.parent===rig.root ? o.quaternion.clone() : rlq(o.parent).clone().multiply(o.quaternion);
   _rlq.set(o,q); return q;
+}
+const EQUIPMENT={cloak:true};
+try{const saved=JSON.parse(localStorage.getItem("potsbm_equipment"));if(typeof saved?.cloak==='boolean')EQUIPMENT.cloak=saved.cloak;}catch{}
+function setCloak(on){
+  EQUIPMENT.cloak=!!on;
+  if(rig.real?.equipmentCloak) rig.real.equipmentCloak.group.visible=EQUIPMENT.cloak;
+  const b=document.getElementById('bCloak');
+  b.disabled=rig.real?.equipmentCloak?.status==='loading';
+  b.setAttribute('aria-pressed',String(EQUIPMENT.cloak));
+  b.textContent=b.disabled?'กำลังโหลดผ้าคลุม…':rig.real?.equipmentCloak?.status==='error'?'ผ้าคลุม · โหลดอีกครั้ง':EQUIPMENT.cloak?'ผ้าคลุม · สวมอยู่':'ผ้าคลุม · ถอดอยู่';
+  try{localStorage.setItem('potsbm_equipment',JSON.stringify(EQUIPMENT));}catch{}
 }
 const BACK_GEAR={visible:false}; // temporarily hide back-mounted props while tuning the shoulder/grip
 // Clavicle drop/retraction in radians; carryTwist limits upper-arm roll in degrees.
@@ -2412,6 +2428,7 @@ function applySkeleton(p,T){
     const side=clamp(spinV*.05,-.5,.5)*(nz<0?1:-1);
     c.hinge.rotation.x=c.flap.update(T,flap); c.hinge.rotation.z=c.side.update(T,side);
   }
+  real?.equipmentCloak?.update(T,S,spinV);
   r.eyeMat.opacity=clamp(p.eye,0,1); r.glint.opacity=clamp(p.glint,0,1)*.7;
   // wR = the sword grip point G (hit test / trail / debug use it as the blade root); wristR = the real IK wrist
   return {shR,eR,wR:G,wristR:wR,shL,eL,wL,dir, base:G.clone().addScaledVector(dir,.3), tip:G.clone().addScaledVector(dir,.82),
@@ -2823,7 +2840,7 @@ function frame(now, manualMs, noRender){
   updateCamera(Math.max(ms,1)/1000);
   updateStrokes();
   if(boneLines.visible && lastArm) drawBones(lastArm);
-  if(!noRender){ if(rig.real?.skinning) rig.real.skinning.update(); renderer.render(scene,camera); }
+  if(!noRender){ if(rig.real?.skinning) rig.real.skinning.update(); rig.real?.equipmentCloak?.prepareRender(); renderer.render(scene,camera); }
   capTick();
 }
 let rafOn=true; function raf(t){ if(!rafOn) return; frame(t); requestAnimationFrame(raf); }
@@ -2925,6 +2942,7 @@ const TIPS={
   hud.addEventListener('pointerleave',hide); hud.addEventListener('pointerdown',hide);
   hud.addEventListener('focusin',e=>{ const n=target(e); if(n && n.matches(':focus-visible')){ hide(); cur=n; show(n); } }); hud.addEventListener('focusout',hide);
   window.addEventListener('keydown',e=>{ if(e.key==='Escape') hide(); }); }
+bind('bCloak',()=>{if(rig.real?.equipmentCloak?.status==='error'){rig.real.equipmentCloak.load();setCloak(EQUIPMENT.cloak);}else setCloak(!EQUIPMENT.cloak);});setCloak(EQUIPMENT.cloak);
 bind('bBones',()=>toggle('bBones')); bind('bSlow',()=>toggle('bSlow'));
 bind('bNight',()=>setTimeOfDay(timeOfDay==='night'?'day':'night'));
 { let t=null; try{ t=localStorage.getItem('potsbm_time'); }catch(e){} setTimeOfDay(t==='night'?'night':'day'); }
@@ -2942,7 +2960,7 @@ function saveDevState(){ try{ sessionStorage.setItem(DEV_KEY, JSON.stringify({bo
   }
 }
 window.__iso={S,step,frame,runCurlAxis,ringData,TSUKA_S,TSUKA_PROFILE,camera,renderer,shaderErrors,REFERENCE_RUN,STAND_TUNE,RUN_TUNE,RUN_ARM,RUN_FREE,RUN_CLIP,WALK_POSE,WALK_ARM,WALK_STYLE,WALK_ANKLE,WALK_LEG,WALK_KNEE,WALK_LAND,HEEL_STRIKE,makeGrip,stop:()=>{rafOn=false;},press,pressK,pressL,blink,BLINK,CAM,rotateCam,tiltCam,rig,
-  GRIP_CFG, GRIP_TUNE, CARRY_HOLD, RUN_HOLD, SHOULDER, BACK_GEAR, setBackGearVisible, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, RUN_V2, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real){ rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L), L2:gripL2()}; rig.real.carryHold=makeGrip(CARRY_HOLD); } },
+  EQUIPMENT,setCloak, GRIP_CFG, GRIP_TUNE, CARRY_HOLD, RUN_HOLD, SHOULDER, BACK_GEAR, setBackGearVisible, FIST, refist:()=>{ if(rig.real) rig.real.fingers=prepFingers(rig.real); }, IDLE, CARRY, RUN_V2, COMBO, ATTACK2, DUAL, DRAW2, ISSEN, targets, setSword2, regrip:()=>{ if(rig.real){ rig.real.grip={R:makeGrip(GRIP_CFG.R), L:makeGrip(GRIP_CFG.L), L2:gripL2()}; rig.real.carryHold=makeGrip(CARRY_HOLD); } },
   loop:setLoop};  // edit GRIP_CFG/IDLE/CARRY/COMBO/ATTACK2/ISSEN in the console; regrip() applies a GRIP_CFG edit; loop('atk2') etc. repeats a move in place so poses can be watched continuously while tuning ('off','run','run1','walk','walk1','atk1','atk2','dual','finisher' — the '1' modes run one-way instead of back and forth, e.g. into a wall)
 // Main-page A/B control: compare with the original animation at the same camera/zoom.
 const poseUpdated={idle:IDLE.lean,ankle:STAND_TUNE.ankleLean,pelvis:RUN_TUNE.pelvisShare,twist:RUN_TUNE.twistScale,thumb:FIST.thumbGrip,swing:RUN_ARM.swing,pulse:SHOULDER.runPulse};

@@ -16,3 +16,10 @@
 ## Libraries
 - Three.js (MIT) https://threejs.org
 - Fonts: Noto Serif Thai, Yuji Syuku (Google Fonts, OFL)
+
+## Removable cloak (2026-10-24)
+- Created with Meshy and supplied by the user as `assets/cloak.glb`.
+- Current fitted source-resolution rig: `assets/cloak-fitted.glb`; original texture images preserved.
+- Earlier optimized preview: `assets/cloak-game.glb` (inactive; optimization deferred at user request).
+- Reference: `art/reference/cloak/28455cc7-86c9-4ddf-a234-1b5cd5b603a7.jpeg`.
+- Meshy plan used for this specific asset: not specified.
