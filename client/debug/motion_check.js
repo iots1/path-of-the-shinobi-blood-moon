@@ -115,6 +115,35 @@ function dualHits() { // K then K: the thrust and the dual cut must each land on
   return { thrust: out.includes('突'), dual: out.includes('双'), shown };
 }
 
+// Catch the actual back-hilt hand-off, not just sword visibility. Both quick
+// double-tap and K after the thrust has recovered must reach the moving prop.
+function dualContacts(secondK = 340, fromRun = false) {
+  reset(); if(fromRun){ key('a',true); adv(700); key('a',false); }
+  const out = {twist:{wrist:0,forearm:0,upper:0,travel:0}}; let prevTwist=null;
+  for(let t=0;t<3200;t+=4){
+    if(t===0 || t===secondK) I.pressK(); I.frame(0,4,true);
+    const a=S.act; if(a?.def!==I.DUAL) continue;
+    if(a.t>=a.def.draw && a.t<=a.def.sheathe){
+      const arm=R.arm.L, d=arm.q0.clone().invert().multiply(arm.ha.quaternion);
+      const tw=Math.atan2(Math.sin(2*Math.atan2(d.y,d.w)),Math.cos(2*Math.atan2(d.y,d.w)));
+      out.twist.wrist=Math.max(out.twist.wrist,Math.abs(tw)*D);
+      out.twist.forearm=Math.max(out.twist.forearm,Math.abs(arm.rollS||0)*D);
+      out.twist.upper=Math.max(out.twist.upper,Math.abs(arm.upperRoll||0)*D);
+      if(prevTwist!==null) out.twist.travel+=Math.abs(Math.atan2(Math.sin(tw-prevTwist),Math.cos(tw-prevTwist)))*D;
+      prevTwist=tw;
+    }
+    for(const [name,at] of [['draw',a.def.draw],['sheathe',a.def.sheathe]]){
+      if(out[name] || a.t<at) continue;
+      const hand=R.arm.L.ha, hq=hand.getWorldQuaternion(new Q());
+      const palm=hand.getWorldPosition(new V()).add(R.grip.L.pt.clone().applyQuaternion(hq));
+      const back=R.backSwords[0].g, target=new V(0,.12,0).applyQuaternion(back.quaternion).add(back.position);
+      const blade=new V(0,1,0).applyQuaternion(hq.multiply(R.grip.L.K.clone().invert()));
+      out[name]={gap:palm.distanceTo(target),angle:blade.angleTo(new V(0,-1,0).applyQuaternion(back.quaternion))*D};
+    }
+  }
+  return out;
+}
+
 function finisherHit() { // L: the cut is made at ~0.6 s but nothing may react before the release (~1.28 s), then the dummy must go
   reset(1.2, 1.6, Math.PI * .25);
   const tg = I.targets.filter(x => x.type === 'dummy'), n = () => tg.reduce((a, x) => a + x.hits, 0), n0 = n();
@@ -306,6 +335,17 @@ export async function run() {
     check(`${name} NaN`, !r.nan, r.nan ? 'NaN in a bone' : 'none');
     check(`${name} sword back in the saya`, !S.sword2 && rig.real.backSwords[0].g.visible === (I.BACK_GEAR?.visible ?? true) && !rig.katana2.visible, `sword2 ${S.sword2}, back sword visible ${rig.real.backSwords[0].g.visible}`);
     if (r.worst.length) lines.push('      spikes: ' + r.worst.join(' | ')); }
+  for(const [secondK,fromRun] of [[340,false],[848,false],[340,true]]){
+    const r=dualContacts(secondK,fromRun), context=`second K ${secondK}ms${fromRun?', from run':''}`;
+    const tw=r.twist;
+    check(`dual K K axial joint limits (${context})`,tw.wrist<=30 && tw.forearm<=70 && tw.upper<=105,
+      `wrist ${f(tw.wrist)}° / forearm ${f(tw.forearm)}° / upper arm ${f(tw.upper)}° (limits 30/70/105)`);
+    check(`dual K K no wrist spin (${context})`,tw.travel<=200,`cumulative axial travel ${f(tw.travel)}° from draw to sheathe (limit 200)`);
+    for(const name of ['draw','sheathe']){
+      const c=r[name]; check(`dual K K ${name} contact (${context})`, !!c && c.gap<=.025 && c.angle<=25,
+        c?`palm gap ${(c.gap*100).toFixed(1)} cm (limit 2.5), blade ${f(c.angle)}° off saya (limit 25°)`:'hand-off was not reached');
+    }
+  }
   { const r = dualHits(); check('dual K K hits', r.thrust && r.dual, `thrust hit ${r.thrust}, dual cut hit ${r.dual}, sword2 shown during the cut ${r.shown}`); }
   { const r = finisherHit(); check('finisher L delayed hit', r.early === 0 && r.late > 0 && !r.kanjiEarly, `dummy hits before the release ${r.early}, after ${r.late}, kanji early ${r.kanjiEarly}`); }
   const h = hits();
@@ -330,7 +370,7 @@ export async function run() {
   // every 4 ms step: shoulder pops + side-to-side sway (see shoulderTrace)
   for (const [name, o] of [['run→stop', { until: 2600, runMs: 1200, steady: [700, 1200] }], ['walk→stop', { until: 3000, runMs: 1600, shift: true, steady: [900, 1600] }],
                            ['combo (standing)', { until: 1900, runMs: 0, presses: [0, 420, 860], steady: [0, 0] }], ['run reversals', { until: 6000, route: ['a', 'd', 'a', 'd', 'w', 's'], steady: [0, 0] }],
-                           ['thrust K', { until: 1200, runMs: 0, presses: [0], fn: 'pressK', steady: [0, 0] }], ['dual K K', { until: 2000, runMs: 0, presses: [0, 340], fn: 'pressK', steady: [0, 0] }],
+                           ['thrust K', { until: 1200, runMs: 0, presses: [0], fn: 'pressK', steady: [0, 0] }], ['dual K K', { until: 2500, runMs: 0, presses: [0, 340], fn: 'pressK', steady: [0, 0] }],
                            ['finisher L', { until: 2000, runMs: 0, presses: [0], fn: 'pressL', steady: [0, 0] }]]) {
     const r = await shoulderTrace(o), j = Math.max(r.jump.L, r.jump.R), c = Math.max(r.clavRate.L, r.clavRate.R);
     // joint range of motion, every frame, both arms
@@ -424,7 +464,7 @@ export async function views({ mode = 'run', pitch = 6, zoom = 1.3, fy = .95, wid
                  idle: { times: ev(600, 8, 120) },
                  combo: { presses: [0, 420, 860], times: [100, 190, 300, 450, 600, 760, 1000, 1250] },
                  thrust: { presses: [0], fn: 'pressK', times: [60, 170, 220, 260, 300, 420, 640, 900] },
-                 dual: { presses: [0, 340], fn: 'pressK', times: [400, 520, 620, 760, 980, 1180, 1420, 1700] },
+                 dual: { presses: [0, 340], fn: 'pressK', times: [700, 900, 1080, 1180, 1320, 1640, 1880, 2200] },
                  issen: { presses: [0], fn: 'pressL', times: [250, 540, 610, 640, 700, 1150, 1320, 1600] } }[mode];
   if (!plan) throw new Error('views: unknown mode ' + mode);
   if (tOverride) plan.times = tOverride;
