@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Run torso review</title>
+<style>
+body{margin:0;background:#ddd;font:14px system-ui}
+nav{padding:10px}button{margin-right:8px;padding:8px}
+pre{white-space:pre-wrap;max-height:260px;overflow:auto}
+iframe{width:100%;height:780px;border:0}
+</style>
+<nav>
+  <button data-mode="check">Motion check</button>
+  <button data-mode="run">Run</button>
+  <button data-mode="rig">Rig side sheet</button>
+  <button data-mode="compare">Compare live</button>
+  <button data-mode="before">Before live</button>
+  <button data-mode="combo">Combo</button>
+  <button data-mode="walk">Walk</button>
+  <button data-mode="stop">Stop</button>
+  <label><input id="skeleton" type="checkbox">Skeleton</label>
+</nav>
+<pre id="report">Loading model…</pre>
+<iframe title="Game animation review"></iframe>
+<script type="module">
+const f=document.querySelector('iframe'), report=document.querySelector('#report');
+const buttons=[...document.querySelectorAll('[data-mode]')];
+let pending;
+const busy=on=>buttons.forEach(b=>b.disabled=on);
+f.onload=async()=>{
+  busy(true);
+  try {
+    const game=f.contentWindow;
+    while(!game.__iso?.rig.real?.loco) await new Promise(r=>setTimeout(r,200));
+    const m=await game.eval("import('/debug/motion_check.js?'+Date.now())");
+    const sheetModule=await game.eval("import('/debug/run-rig-sheet.js?'+Date.now())");
+    report.textContent='Ready — each button loads a fresh game before measuring.';
+    if(pending){
+      const mode=pending; pending=null;
+      report.textContent='Rendering '+mode+'…';
+      const {rigSheet}=sheetModule;
+      report.textContent=mode==='check'?await m.run():mode==='rig'?await rigSheet():['compare','before'].includes(mode)?await (await game.eval("import('/debug/run-cloth-compare.js?'+Date.now())")).clothComparison({baseline:mode==='before'}):
+        await m.views({mode,width:1,zoom:1.4,fy:.8,skeleton:document.querySelector('#skeleton').checked});
+    }
+  } catch(e){ report.textContent=e.stack; }
+  finally { busy(false); }
+};
+for(const b of buttons) b.onclick=()=>{
+  busy(true); pending=b.dataset.mode; report.textContent='Loading fresh game…';
+  f.src='/?torsoReview='+Date.now();
+};
+busy(true);
+f.src='/?torsoReview='+Date.now();
+</script>
+</html>

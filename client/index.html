@@ -449,7 +449,8 @@ const rig={};
     rig['thigh'+side]=thigh; rig['knee'+side]=knee; rig['ankle'+side]=ankle;
   }
   const spine=new THREE.Group(); spine.position.y=.02; hips.add(spine); rig.spine=spine;
-  const chest=new THREE.Group(); chest.position.y=.3; spine.add(chest); rig.chest=chest;
+  const spineMid=new THREE.Group(); spineMid.position.y=.15; spine.add(spineMid); rig.spineMid=spineMid;
+  const chest=new THREE.Group(); chest.position.y=.15; spineMid.add(chest); rig.chest=chest;
   const torso=inked(new THREE.CylinderGeometry(.16,.15,.46,12).translate(0,-.1,0),PAL.robe,.012,{map:clothTex}); torso.scale.z=.72; chest.add(torso);
   const belt=inked(new THREE.CylinderGeometry(.152,.152,.035,16,1,true),PAL.white,0); belt.scale.z=.73; belt.position.y=-.27; chest.add(belt);
   for(const s of [-1,1]){ const st=inked(new THREE.BoxGeometry(.026,.3,.012),PAL.white,0,{shadow:false}); st.position.set(0,-.03,.112); st.rotation.z=s*.62; chest.add(st); }
@@ -599,7 +600,7 @@ const rig={};
    This model's hood/cloak/back-swords are sculpted into the mesh itself (not a separate driver
    piece) — only the eye glow still gets socketed onto the real head bone. */
 const BONE_MAP=[ // [driver, glb bone] — parents before children
-  ['hips','Hips'],['spine','Spine02'],['chest','Spine'],
+  ['hips','Hips'],['spine','Spine02'],['spineMid','Spine01'],['chest','Spine'],
   ['neck','neck'],['head','Head'],
   ['thighL','LeftUpLeg'],['kneeL','LeftLeg'],['ankleL','LeftFoot'],
   ['thighR','RightUpLeg'],['kneeR','RightLeg'],['ankleR','RightFoot'],
@@ -867,7 +868,7 @@ function loadNinja(){
 const RUN_SPEED=4.0;      // top movement speed, m/s
 const WALK_SPEED=.95;      // movement speed while Shift is held, m/s (2026-10-23: the reference walk video is a slow stealth walk, see WALK_STYLE; was 1.3 = the Walking clip's own speed, 1.6 before)
 // pelvisShare sends the remaining pitch to the lumbar spine; the total chest pitch stays continuous.
-const RUN_TUNE={lean:.65,pelvisShare:.78,twistScale:.35,headCounter:.85,wristPitch:-.6,wristYaw:.3};   // wristPitch/Yaw re-scanned 2026-10-21 for the attack-seat run grip: blade 36° below horizontal / 24° off the forearm (video ≈37° / 25°), wrist at 91% of its range (was 100%, pinned on the ulnar limit)
+const RUN_TUNE={lean:.72,pelvisShare:.60,twistScale:1,recoil:.026,hipTurn:.06,chestTurn:.10,spineWave:.018,headCounter:.85,wristPitch:-.6,wristYaw:.3};   // wristPitch/Yaw re-scanned 2026-10-21 for the attack-seat run grip: blade 36° below horizontal / 24° off the forearm (video ≈37° / 25°), wrist at 91% of its range (was 100%, pinned on the ulnar limit)
 // wristPitch turns the hand about its palm normal (radial/ulnar), wristYaw about the thumb axis (flex/extension, swings the blade sideways). Measure with
 // client/debug/run-compare.js measureRunGrip(). lean/pelvisShare are calibrated against hip/neck landmarks in /debug/run-overlay.html.
 /* WALK_STYLE (2026-10-23, art/reference/new_ninja_katana/ninja_walk_katana.mp4 = the definition of done for the walk, measured from its silhouettes): a slow, short-stepped, low stealth walk —
@@ -1060,7 +1061,7 @@ const BACK_GEAR={visible:false}; // temporarily hide back-mounted props while tu
 // runPulse adds ~1° of retraction per stride, rather than a repeated shrug.
 // raise (rad): the right clavicle lifts as the upper arm goes up (a real shoulder elevates once the arm passes ~horizontal); without it the overhead
 // beat-1 wind-up read as the arm hinging off a locked, dropped shoulder. Ramped by S.shRaiseR (0..1, from last frame's right-elbow elevation, see the arm solve).
-const SHOULDER={drop:.10,dropR:.08,carryDrop:.06,carryBack:.10,runBack:.12,runPulse:.018,carryTwist:20,raise:.24,reachL:1.0,reachR:.5};   // reach (rad): both clavicles protract while the off-hand grips the hilt (S.twoEff) — arms reach-clamped straight to a hilt at belly centre ran the upper arms across the chest, left upper-arm axis ON the chest skin for 400 ms (2026-10-23, measured on the skinned mesh)   // (a 'reach' clavicle protraction while two-handed was tried 2026-10-23 and removed: backAx is not mirrored between the shoulders, and the left wrist went out of range)   // runBack was .30: with the torso pitched 40° the retracted right clavicle rose → shoulder line rolled −5° (idle +2°) and the shoulder read shrugged; .12 → ≈ −2° (front reference: right shoulder ~4° higher)   // dropR: extra idle drop for the RIGHT clavicle only (the right shoulder read higher/more shrugged than the left)
+const SHOULDER={drop:.10,dropR:.08,carryDrop:.06,carryBack:.10,runBack:.12,runPulse:.032,carryTwist:20,raise:.24,reachL:1.0,reachR:.5};   // reach (rad): both clavicles protract while the off-hand grips the hilt (S.twoEff) — arms reach-clamped straight to a hilt at belly centre ran the upper arms across the chest, left upper-arm axis ON the chest skin for 400 ms (2026-10-23, measured on the skinned mesh)   // (a 'reach' clavicle protraction while two-handed was tried 2026-10-23 and removed: backAx is not mirrored between the shoulders, and the left wrist went out of range)   // runBack was .30: with the torso pitched 40° the retracted right clavicle rose → shoulder line rolled −5° (idle +2°) and the shoulder read shrugged; .12 → ≈ −2° (front reference: right shoulder ~4° higher)   // dropR: extra idle drop for the RIGHT clavicle only (the right shoulder read higher/more shrugged than the left)
 function driveRealBones(real){
   _rlq.clear();
   for(const name in real.bind) real.bone[name].quaternion.copy(real.bind[name].q); // reset → no drift
@@ -1090,7 +1091,7 @@ function driveRealBones(real){
   // Pitch the torso from the pelvis, preserving the authored leg cycle in world
   // space. Clip thighs are local to Hips and must cancel its added run pitch.
   if(L && L.w>0){
-    const hipPitch=(S.runPitch||0)*RUN_TUNE.pelvisShare;
+    const hipPitch=rig.hips.rotation.x;
     const axis=V(1,0,0).applyQuaternion(real.bind.Hips.rl.clone().invert());
     const undo=new THREE.Quaternion().setFromAxisAngle(axis,-hipPitch*L.w);
     for(const side of ['Left','Right']) real.bone[side+'UpLeg'].quaternion.premultiply(undo);
@@ -1731,7 +1732,7 @@ const IDLE={hx:-.31,hy:-.44,hz:-.08, by:0, el:-30, hipY:-.01, hipYaw:0, chestYaw
 // The forearm and blade trail together, outside the right side of the body.
 // Reach-clamping keeps a soft ~163° elbow rather than locking it straight.
 const CARRY={...IDLE, hx:-.32, hy:-.23, hz:-.58, by:-175, el:-62, hipY:0, lean:.05, spread:.12, step:0};   // el −35 → −62 (2026-10-21, rebuilt hands): with the new carry seat −35 held the walking blade 5° ABOVE horizontal; −62 ≈ 16° below (wrist ~80% of its range). RUN_V2 overrides el, so only walking changes
-const RUN_ARM={back:.44,drop:.14,out:.26,swing:.012};   // drop .08→.14: the front reference's elbow/hand land on their marks at .14 (the side one alone would want .08); at .08–.11 the arm stuck out at shoulder height like a "T" and bunched the deltoid // shoulder-relative, stays level as the torso pitches
+const RUN_ARM={back:.44,drop:.14,out:.26,swing:.042};   // drop .08→.14: the front reference's elbow/hand land on their marks at .14 (the side one alone would want .08); at .08–.11 the arm stuck out at shoulder height like a "T" and bunched the deltoid // shoulder-relative, stays level as the torso pitches
 // The free (left) arm at full run, chest-local (before toReach/shoulder-drift): fist back/forward targets of the pump and the elbow-side pole. Front reference
 // (ninja_katana_run_front.jpeg): fist high at the chest, elbow flared wide. fwd was [.20,.04,.36] — measured against that reference at the phase where the
 // right foot leads (u≈.77): this puts the fist on the reference's fist (5 px) and the elbow within ~10 cm of its (the model's arm is shorter than the
@@ -2030,14 +2031,21 @@ function applySkeleton(p,T){
   r.hips.position.y=HIP_Y+p.hipY+Math.abs(Math.sin(ph))*.025*w-.012*w+breathe*.002;
   r.hips.position.y+=referenceHipOffset(L?.u||0)*(S.runRefMix||0);
   S.runPitch=lerp(S.runPitch||0,(L?L.b:0)*w*RUN_TUNE.lean,1-Math.exp(-T/.08));
-  const pelvisPitch=S.runPitch*RUN_TUNE.pelvisShare;
+  const runW=clamp(S.runPitch/RUN_TUNE.lean,0,1);
+  // Two soft compression pulses per stride; continuous velocity at the cycle seam.
+  const recoil=Math.sin(2*ph-.4)*RUN_TUNE.recoil*runW;
+  const pelvisPitch=S.runPitch*RUN_TUNE.pelvisShare+recoil;
+  const flex=S.runPitch*(1-RUN_TUNE.pelvisShare)-recoil;
   const twist=lerp(1,RUN_TUNE.twistScale,L?.b||0);
-  r.hips.rotation.set(pelvisPitch,p.hipYaw+Math.sin(ph)*.025*w*twist,0);
+  const hipTurn=Math.sin(ph)*lerp(.025,RUN_TUNE.hipTurn,L?.b||0)*w*twist;
+  r.hips.rotation.set(pelvisPitch,p.hipYaw+hipTurn,0);
   const runLean=S.runPitch;
-  // Share forward flexion between pelvis and lumbar spine: avoid pitching the
-  // whole pelvis/waist as one rigid block, while keeping the chest near the reference.
-  r.spine.rotation.set(p.lean+.06*w+runLean-pelvisPitch,0,0);
-  r.chest.rotation.set(breathe*.012,p.chestYaw-Math.sin(ph)*.04*w*twist,0);   // shoulder counter-twist (was .18 + hips .12: the shoulders swung the low blade into the legs)
+  // Drive all three existing spine bones, lower -> middle -> chest. Keep the
+  // total forward lean and distribute flexion rather than hinging at the waist.
+  const spineWave=Math.sin(2*ph-.9)*RUN_TUNE.spineWave*runW;
+  r.spine.rotation.set(p.lean+.06*w+flex*.45-spineWave,0,0);
+  r.spineMid.rotation.set(flex*.35+spineWave,-hipTurn*.35*runW,0);
+  r.chest.rotation.set(breathe*.012+flex*.20,p.chestYaw-Math.sin(ph)*lerp(.04,RUN_TUNE.chestTurn,L?.b||0)*w*twist,0);
   r.head.rotation.set(-p.lean*.6-.05*w-runLean*RUN_TUNE.headCounter,p.headYaw-p.chestYaw*.4,0);
   // legs: stance + walk (rotate legs so the feet stay flat on the ground)
   const crouch=clamp(-p.hipY*3.4,0,1);
