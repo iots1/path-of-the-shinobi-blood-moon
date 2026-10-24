@@ -1453,17 +1453,17 @@ function runCurlAxis(f, out=new THREE.Vector3()){
 const WRIST_LIM={flex:80, ext:70, radial:25, ulnar:40, rate:3000};   // rate: °/s cap on the hand while it is being held on the boundary
 const _wl1=new THREE.Vector3(), _wl2=new THREE.Vector3(), _wlq=new THREE.Quaternion();
 // fh = the forearm direction (elbow → wrist) in hand space → how much of the wrist's range the bend uses (1 = on the ellipse)
-function wristEllipse(fh, side){
+function wristEllipse(fh, side, limits=WRIST_LIM){
   const bend=Math.acos(clamp(fh.y,-1,1));
   const palm=side==='R'?-1:1, phi=Math.atan2(-fh.z,-palm*fh.x), fl=bend*Math.cos(phi), rd=bend*Math.sin(phi);
-  return { bend, e: bend<1e-4?0:Math.hypot(fl/((fl>=0?WRIST_LIM.flex:WRIST_LIM.ext)*D2R), rd/((rd>=0?WRIST_LIM.radial:WRIST_LIM.ulnar)*D2R)) };
+  return { bend, e: bend<1e-4?0:Math.hypot(fl/((fl>=0?limits.flex:limits.ext)*D2R), rd/((rd>=0?limits.radial:limits.ulnar)*D2R)) };
 }
-function limitWrist(a, side, weight=1, T=0){
+function limitWrist(a, side, weight=1, T=0, limits=WRIST_LIM){
   const keep=()=>{ (a.wlPrev??=new THREE.Quaternion()).copy(a.ha.quaternion); };
   if(weight<=0){ a.wlPrev=null; return; }
   a.ha.updateMatrixWorld(true);
   const fh=a.ha.getWorldPosition(_wl1).sub(a.fo.getWorldPosition(_wl2)).normalize().applyQuaternion(a.ha.getWorldQuaternion(_wlq).invert());   // forearm direction, hand space
-  const {bend,e}=wristEllipse(fh,side);
+  const {bend,e}=wristEllipse(fh,side,limits);
   const ax=_wl2.set(0,1,0).cross(fh);
   if(e<=1){ keep(); return; }
   if(ax.lengthSq()<1e-6) ax.set(-(side==='R'?-1:1),0,0).cross(_wl1.set(0,1,0));   // folded straight back (~180°): Y×fh vanishes — bend it back toward the palm side
@@ -1472,7 +1472,7 @@ function limitWrist(a, side, weight=1, T=0){
   if(T>0 && a.wlPrev){ a.wlPrev.rotateTowards(a.ha.quaternion, WRIST_LIM.rate*D2R*T); a.ha.quaternion.copy(a.wlPrev); }
   // the range wins over the rate: if the capped pose lags outside the ellipse (hand flung toward rest at the end of a cut), pull it in hard
   a.ha.updateMatrixWorld(true);
-  const fh2=a.ha.getWorldPosition(_wl1).sub(a.fo.getWorldPosition(_wl2)).normalize().applyQuaternion(a.ha.getWorldQuaternion(_wlq).invert()), w2=wristEllipse(fh2,side);
+  const fh2=a.ha.getWorldPosition(_wl1).sub(a.fo.getWorldPosition(_wl2)).normalize().applyQuaternion(a.ha.getWorldQuaternion(_wlq).invert()), w2=wristEllipse(fh2,side,limits);
   const ax2=_wl2.set(0,1,0).cross(fh2);
   if(w2.e>1 && ax2.lengthSq()>1e-6) a.ha.quaternion.multiply(_wlq.setFromAxisAngle(ax2.normalize(),(w2.bend-w2.bend/w2.e)*weight));
   keep(); a.ha.updateMatrixWorld(true);
@@ -1840,8 +1840,8 @@ const DUAL={ kanji:'双', lunge:9, impactMin:860, chain:99999, end:1860, reach:2
          [460, P({...DRAW2, dual:1, hx:-.3,hy:-.3,hz:.1, by:0, el:-20, hipY:-.12, hipYaw:-.12, chestYaw:-.18, lean:.1, spread:.3, step:.3}),'io'],
          [640, P({dual:1, hx2:.30,hy2:.34,hz2:.20, by2:10, el2:65, hx:-.3,hy:-.3,hz:.1, by:0, el:-20, hipY:-.14, hipYaw:-.08, chestYaw:-.1, lean:.12, spread:.33, step:.32}),'io'],
          [760, P({dual:1, hx:-.28,hy:-.18,hz:.22, by:-45, el:-10, hx2:.30,hy2:.20,hz2:.22, by2:15, el2:60, hipY:-.2, lean:.2, spread:.36, step:.35, glint:.6}),'io'],
-         [900, P({dual:1, hx:-.1,hy:0,hz:.36, by:20, el:2, hx2:.12,hy2:.02,hz2:.36, by2:-20, el2:-15, hipY:-.3, hipYaw:.05, chestYaw:.08, lean:.5, headYaw:-.05, spread:.3, step:1, glint:1}),'in'],
-         [1030, P({dual:1, hx:-.1,hy:0,hz:.34, by:35, el:0, hx2:.08,hy2:-.08,hz2:.32, by2:-35, el2:-35, hipY:-.3, hipYaw:.05, chestYaw:.08, lean:.5, spread:.3, step:1, glint:.5}),'out'],
+         [900, P({dual:1, hx:-.1,hy:0,hz:.36, by:20, el:2, hx2:.12,hy2:.02,hz2:.36, by2:-20, el2:-15, hipY:-.16, hipYaw:.05, chestYaw:.08, lean:.28, headYaw:-.05, spread:.24, step:.55, glint:1}),'in'],
+         [1030, P({dual:1, hx:-.1,hy:0,hz:.34, by:35, el:0, hx2:.08,hy2:-.08,hz2:.32, by2:-35, el2:-35, hipY:-.16, hipYaw:.05, chestYaw:.08, lean:.28, spread:.24, step:.55, glint:.5}),'out'],
          [1190, P({dual:1, hx2:.30,hy2:.34,hz2:.20, by2:10, el2:65, hx:-.24,hy:-.18,hz:.21, by:-20, el:25, hipY:-.15, lean:.15, spread:.26, step:.4}),'io'],
          [1350, P({...DRAW2, dual:1, hx:-.26,hy:-.22,hz:.12, by:-15, el:55, hipY:-.08, lean:.1, spread:.2, step:.2}),'io'],
          [1480, P({...DRAW2, dual:1, hx:-.26,hy:-.22,hz:.12, by:-15, el:55, hipY:-.05, lean:.1, spread:.2, step:.2}),'io'],
@@ -2373,7 +2373,10 @@ function applySkeleton(p,T){
       d.multiply(twist.invert()).multiply(new THREE.Quaternion().setFromAxisAngle(V(0,1,0),clamp(angle,-lim,lim)));
       aL.ha.quaternion.copy(aL.q0).multiply(d); aL.ha.updateMatrixWorld(true);
     }
-    limitWrist(aL,'L',Math.max(smooth(clamp(dE/.3,0,1)),smooth(clamp((.8-(S.twoEff||0))/.3,0,1))*(1-dE)),T);   // full strength once the hand is mostly off the hilt / mostly on its own sword (hand-overs)
+    /* A loaded cutting wrist stays near neutral; fade out before reaching the back hilt. */
+    const cutW=dualAct?smooth(clamp((S.act.t-640)/120,0,1))*(1-smooth(clamp((S.act.t-1060)/130,0,1))):0;
+    const cutLimits={flex:lerp(WRIST_LIM.flex,22,cutW),ext:lerp(WRIST_LIM.ext,25,cutW),radial:lerp(WRIST_LIM.radial,15,cutW),ulnar:lerp(WRIST_LIM.ulnar,20,cutW)};
+    limitWrist(aL,'L',Math.max(smooth(clamp(dE/.3,0,1)),smooth(clamp((.8-(S.twoEff||0))/.3,0,1))*(1-dE)),T,cutLimits);   // full strength once the hand is mostly off the hilt / mostly on its own sword (hand-overs)
     S.dualHandQ=dualAct?aL.ha.getWorldQuaternion(new THREE.Quaternion()):null;
     // the second sword is glued to the left fist the same way (blade = hand * K⁻¹)
     if(S.sword2){ const qH=aL.ha.getWorldQuaternion(new THREE.Quaternion()), qB2=qH.clone().multiply(_q.copy(gL.K).invert());

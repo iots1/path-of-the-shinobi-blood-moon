@@ -119,7 +119,7 @@ function dualHits() { // K then K: the thrust and the dual cut must each land on
 // double-tap and K after the thrust has recovered must reach the moving prop.
 function dualContacts(secondK = 340, fromRun = false) {
   reset(); if(fromRun){ key('a',true); adv(700); key('a',false); }
-  const out = {twist:{wrist:0,forearm:0,upper:0,travel:0}}; let prevTwist=null;
+  const out = {cut:{wrist:0,knee:0,samples:0},twist:{wrist:0,forearm:0,upper:0,travel:0}}; let prevTwist=null;
   for(let t=0;t<3200;t+=4){
     if(t===0 || t===secondK) I.pressK(); I.frame(0,4,true);
     const a=S.act; if(a?.def!==I.DUAL) continue;
@@ -131,6 +131,13 @@ function dualContacts(secondK = 340, fromRun = false) {
       out.twist.upper=Math.max(out.twist.upper,Math.abs(arm.upperRoll||0)*D);
       if(prevTwist!==null) out.twist.travel+=Math.abs(Math.atan2(Math.sin(tw-prevTwist),Math.cos(tw-prevTwist)))*D;
       prevTwist=tw;
+    }
+    if(a.t>=760 && a.t<=1060){
+      const ang=armAngles('L');
+      out.cut.wrist=Math.max(out.cut.wrist,Math.hypot(ang.flex,ang.radial));
+      const hip=R.bone.LeftUpLeg.getWorldPosition(new V()), knee=R.bone.LeftLeg.getWorldPosition(new V()), ankle=R.bone.LeftFoot.getWorldPosition(new V());
+      out.cut.knee=Math.max(out.cut.knee,180-hip.sub(knee).angleTo(ankle.sub(knee))*D);
+      out.cut.samples++;
     }
     for(const [name,at] of [['draw',a.def.draw],['sheathe',a.def.sheathe]]){
       if(out[name] || a.t<at) continue;
@@ -338,6 +345,8 @@ export async function run() {
   for(const [secondK,fromRun] of [[340,false],[848,false],[340,true]]){
     const r=dualContacts(secondK,fromRun), context=`second K ${secondK}ms${fromRun?', from run':''}`;
     const tw=r.twist;
+    check(`dual K K loaded wrist (${context})`,r.cut.samples>0 && r.cut.wrist<=26,`peak bend ${f(r.cut.wrist)}° during cut (limit 26)`);
+    check(`dual K K support knee (${context})`,r.cut.samples>0 && r.cut.knee<=85,`peak flexion ${f(r.cut.knee)}° during cut (limit 85)`);
     check(`dual K K axial joint limits (${context})`,tw.wrist<=30 && tw.forearm<=70 && tw.upper<=105,
       `wrist ${f(tw.wrist)}° / forearm ${f(tw.forearm)}° / upper arm ${f(tw.upper)}° (limits 30/70/105)`);
     check(`dual K K no wrist spin (${context})`,tw.travel<=200,`cumulative axial travel ${f(tw.travel)}° from draw to sheathe (limit 200)`);
