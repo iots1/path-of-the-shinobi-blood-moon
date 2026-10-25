@@ -14,12 +14,21 @@ function measure(I,mode){
   let body;
   I.rig.real.model.traverse(o=>{if(o.isSkinnedMesh && o.material.map)body=o;});
   const bodyMatrix=inverse.clone().multiply(body.matrixWorld),cells=new Map();
+  const bodyPoints=new Float32Array(body.geometry.attributes.position.count*3),clothProbes=[];
+  const volume=I.rig.real.skinning,useDQ=volume?.enabled&&!volume.unsupportedScale;
+  if(typeof cloak.getVertexPosition!=='function')throw new Error('Displayed cloak surface accessor missing');
+  const probeMesh=(source,points)=>{
+    const geometry=new THREE.BufferGeometry();geometry.setIndex(source.geometry.index);
+    geometry.setAttribute('position',new THREE.BufferAttribute(points,3));geometry.computeBoundingSphere();
+    const mesh=new THREE.Mesh(geometry,source.material);mesh.matrixAutoUpdate=false;mesh.matrixWorld.copy(source.matrixWorld);return mesh;
+  };
   const key=(x,y)=>Math.floor(x/.015)+','+Math.floor(y/.015);
   // Visible torso, not inflated bone capsules. A 15-mm XY raster is deliberately
   // conservative: use the furthest-back surface among neighbouring cells.
   for(let i=0;i<body.geometry.attributes.position.count;i++){
-    v.fromBufferAttribute(body.geometry.attributes.position,i);
-    body.applyBoneTransform(i,v);v.applyMatrix4(bodyMatrix);
+    if(useDQ)volume.getVertexPosition(i,v);
+    else{v.fromBufferAttribute(body.geometry.attributes.position,i);body.applyBoneTransform(i,v);}
+    v.toArray(bodyPoints,i*3);v.applyMatrix4(bodyMatrix);
     if(Math.abs(v.x)>.18 || v.y<.75 || v.y>1.46)continue;
     const k=key(v.x,v.y);cells.set(k,Math.min(cells.get(k)??9,v.z));
   }
@@ -27,11 +36,12 @@ function measure(I,mode){
   const gaps=[];let worst=null;
   for(const mesh of cloak.meshes){
     const position=mesh.geometry.attributes.position,matrix=inverse.clone().multiply(mesh.matrixWorld);
+    const displayedPoints=new Float32Array(position.count*3);
     vertices+=position.count;triangles+=(mesh.geometry.index?.count??position.count)/3;
     for(let i=0;i<position.count;i++){
       v.fromBufferAttribute(position,i);
       const rear=Math.abs(v.x)<=.14 && v.y>=.85 && v.y<=1.4 && v.z<=-.14;
-      mesh.applyBoneTransform(i,v);v.applyMatrix4(matrix);
+      cloak.getVertexPosition(mesh,i,v);v.toArray(displayedPoints,i*3);v.applyMatrix4(matrix);
       finite&&=Number.isFinite(v.x+v.y+v.z);
       const along=THREE.MathUtils.clamp(((v.x-a.x)*axis.x+(v.y-a.y)*axis.y+(v.z-a.z)*axis.z)/length2,0,1);
       handleGap=Math.min(handleGap,v.distanceTo(nearest.copy(a).addScaledVector(axis,along)));
@@ -40,23 +50,33 @@ function measure(I,mode){
       for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)back=Math.min(back,cells.get(key(v.x+dx*.015,v.y+dy*.015))??9);
       if(back<1){const gap=back-v.z;gaps.push(gap);if(!worst||gap<worst.gap)worst={gap,rest:new THREE.Vector3().fromBufferAttribute(position,i).toArray(),posed:v.toArray()};}
     }
+    if(mode!=='run')clothProbes.push(probeMesh(mesh,displayedPoints));
   }
   const sleeveHem=[];
   // Regress the actual reported hem crossing, independently of the fit formula.
   // Lateral rays compare the visible cloth and sleeve surfaces at the arm edge.
   if(mode!=='run'){
-    const ray=new THREE.Raycaster();
+    const ray=new THREE.Raycaster(),bodyProbe=probeMesh(body,bodyPoints);
     // The overlapping front mantle has a higher left hem.
     for(const side of [-1,1])for(const height of side<0?[1.33,1.34]:[1.35,1.36]){
-      const origin=new THREE.Vector3(side*.7,height,-.005).applyMatrix4(root.matrixWorld);
-      const direction=new THREE.Vector3(-side,0,0).transformDirection(root.matrixWorld);
-      ray.set(origin,direction);
-      const shirt=ray.intersectObject(body,false)[0],fabric=ray.intersectObjects(cloak.meshes,false)[0];
-      sleeveHem.push({side:side<0?'right':'left',height,gap:shirt&&fabric?shirt.distance-fabric.distance:null});
+      const samples=[];let missingBody=0,uncovered=0;
+      // A single ray can pass through the open hem/mesh seam. Sample a fixed
+      // 2-mm cross and report coverage rather than calling a missing hit a gap.
+      for(const [dy,dz] of [[0,0],[-.002,0],[.002,0],[0,-.002],[0,.002]]){
+        const origin=new THREE.Vector3(side*.7,height+dy,-.005+dz).applyMatrix4(root.matrixWorld);
+        const direction=new THREE.Vector3(-side,0,0).transformDirection(root.matrixWorld);
+        ray.set(origin,direction);
+        const shirt=ray.intersectObject(bodyProbe,false)[0],fabric=ray.intersectObjects(clothProbes,false)[0];
+        if(!shirt || shirt.point.clone().applyMatrix4(inverse).x*side<=0){missingBody++;continue;}
+        if(!fabric || fabric.point.clone().applyMatrix4(inverse).x*side<=0){uncovered++;continue;}
+        samples.push(shirt.distance-fabric.distance);
+      }
+      sleeveHem.push({side:side<0?'right':'left',height,gap:samples.length?Math.min(...samples):null,coveredSamples:samples.length,missingBodySamples:missingBody,uncoveredSamples:uncovered});
     }
+    bodyProbe.geometry.dispose();for(const mesh of clothProbes)mesh.geometry.dispose();
   }
   gaps.sort((a,b)=>a-b);
-  return {vertices,triangles,finite,separateMesh:body!==cloak.meshes[0],separateSkeleton:body.skeleton!==cloak.meshes[0].skeleton,
+  return {vertices,triangles,finite,surface:'collision-deformed cloak',bodySkinning:useDQ?'dual-quaternion':'linear',separateMesh:body!==cloak.meshes[0],separateSkeleton:body.skeleton!==cloak.meshes[0].skeleton,
     clothBones:cloak.meshes[0].skeleton.bones.length,handleAxisGap:handleGap,sleeveHem,
     rear:{worst,samples:gaps.length,minGap:gaps[0],p01Gap:gaps[Math.floor(gaps.length*.01)],inside:gaps.filter(x=>x<-.003).length}};
 }
@@ -71,12 +91,16 @@ export async function run(){
     const result=measure(I,mode);report.scenarios[mode]=result;
     if(result.vertices!==351097 || result.triangles!==641566)report.failures.push(mode+': original resolution changed');
     if(!result.separateMesh || !result.separateSkeleton || result.clothBones!==28)report.failures.push(mode+': independent cloth rig missing');
-    if(mode!=='run' && result.sleeveHem.some(p=>p.gap==null || p.gap<.005))report.failures.push(mode+': mantle hem less than 5mm outside sleeve at arm-edge probes');
+    if(mode!=='run'){
+      const covered=side=>result.sleeveHem.filter(p=>p.side===side).reduce((sum,p)=>sum+p.coveredSamples,0);
+      if(covered('left')<3 || covered('right')<3)report.failures.push(mode+': insufficient displayed arm-edge ray coverage');
+      if(result.sleeveHem.some(p=>p.gap!=null && p.gap<.005))report.failures.push(mode+': mantle hem less than 5mm outside sleeve at arm-edge probes');
+    }
     if(!result.finite)report.failures.push(mode+': non-finite skinned vertex');
     if(result.handleAxisGap<.03)report.failures.push(mode+': cloth within 3cm of handle axis');
     if(result.rear.samples<1000 || result.rear.inside>0 || result.rear.minGap<.005)report.failures.push(mode+': rear torso clearance below 5mm');
   }
-  report.note='Three sampled poses; rear torso and dense vertex-to-handle-axis checks do not certify every animation frame or all cloth/self collisions.';
+  report.note='Three sampled poses using collision-deformed cloak and displayed body skinning; sampled rear/arm rays and hilt distance do not certify every animation frame or all cloth/self collisions.';
   const response=await fetch('/debug/save?name=cloak-fit-check.json',{method:'POST',body:JSON.stringify(report,null,2)});
   if(!response.ok)throw new Error('Could not save cloak fit check');
   console.log('CLOAK FIT:',report.failures.length?'FAIL':'PASS',report);

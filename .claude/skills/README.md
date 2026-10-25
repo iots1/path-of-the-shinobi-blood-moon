@@ -10,3 +10,5 @@ only (no WebGPU/TSL, no React). Where a skill's advice needs a newer API or a di
 check the API exists in 0.160 before using it.
 
 To update: re-clone the repo and copy `skills/*/SKILL.md` over these folders (review the diff first).
+
+`blender-preserve-surface` — project-authored workflow for fitting/layering worn accessories (Blender, GLB or runtime three.js) while preserving source folds, stitched rims and weave; worked examples for the cloak and the mask in `references/`. See [SKILL.md](blender-preserve-surface/SKILL.md); invoke in Claude Code with `/blender-preserve-surface`.

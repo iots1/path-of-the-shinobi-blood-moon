@@ -66,6 +66,7 @@ Raw Meshy body (≈390k verts / 732k tris, raw face/clothes, 4096² JPEG texture
 - Changing the tsuka size means updating `TSUKA_S` and every debug copy of the profile (see `hands-grip.md`).
 
 ## Project rules
+- **Preserve textured surfaces while fitting:** any fit/shape/skin/collision change to a worn accessory (cloak, mask, …) — Blender, GLB or runtime JS — follows `.claude/skills/blender-preserve-surface/SKILL.md` without being asked, including its all-angles/all-poses check; fitting is separate from remesh/optimization.
 - **three.js skills** (`.claude/skills/threejs-*`, from CloudAI-X/threejs-skills, see `.claude/skills/README.md`) are written for r186. This project is pinned to `three@0.160.0` with the r128 colour/light pipeline above — when a skill's advice disagrees (WebGPU/TSL, physical light units, colour management, newer addon APIs), these project rules win; check an API exists in 0.160 before using it.
 - **The Go side is the sole authority on outcomes** (whether a hit landed, how much health is lost) — never trust values sent by the client.
 - Do not commit `.glb/.blend/.fbx` files until `git lfs install` has been run.

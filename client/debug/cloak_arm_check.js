@@ -1,4 +1,6 @@
-// Dev-only: how far do the cloak's skinned vertices sit INSIDE the arms / hands / katana blade?
+// Legacy pre-collision diagnostic: linear-skinned source vertices versus capsules.
+// These values are NOT displayed penetration after the GPU push. For displayed
+// cloth use /debug/cloak_surface_check.js (beforeDepthMm + afterDepthMm).
 // Fresh load, then: const c=await import('/debug/cloak_arm_check.js'); await c.run();
 // Saves out/cloak-arm-check.json. Freezes the loop; reload to resume play.
 import * as THREE from 'three';
@@ -28,7 +30,7 @@ function depths(I){
 export async function run(){
   const I=window.__iso;await I.rig.real.equipmentCloak.ready;
   const scenarios={idle:{until:600},run:{until:1500,runMs:1500},combo:{until:1900,presses:[0,420,860]},thrust:{until:1100,presses:[0],fn:'pressK'},dual:{until:1900,presses:[0,340],fn:'pressK'},finisher:{until:1800,presses:[0],fn:'pressL'}};
-  const report={at:new Date().toISOString(),scenarios:{}};
+  const report={at:new Date().toISOString(),surface:'linear skin before GPU collision',note:'Legacy pre-push depths, not visible penetration. Use cloak_surface_check.js for displayed collision-deformed geometry and fresh scenario resets.',scenarios:{}};
   for(const [name,o] of Object.entries(scenarios)){
     I.stop();let t=0,pi=0;const presses=o.presses||[],peak={},samples=[];
     if(o.runMs)key('a',true);

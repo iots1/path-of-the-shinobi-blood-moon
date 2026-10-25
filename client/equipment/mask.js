@@ -1,7 +1,9 @@
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {encodeRigidTransform,transformBlendedPoint} from '../rig/volume_skinning_math.mjs';
 
 // Face/neck gaiter (assets/mask.glb, native size ~1.3 x 1.9 x 1.75 m, front = +Z like the character).
-// Rigid accessory: follows the real Head bone, never touches bones, the grip solver or ninja.glb.
+// Separate skinned accessory: face follows Head; the tucked hem shares the shirt’s local bone weights.
+// Existing character bones/assets are read only. Source topology, UVs and embedded textures stay intact.
 // FIT = root-local placement at the bind pose (metres, y up, front +z); the nose notch sits on the nose bridge.
 export const MASK_FIT={x:0,y:1.478,z:-.005,sx:.136,sy:.16,sz:.155};
 // Below the jaw the gaiter is pulled in onto the neck (ellipse rx/rz around x=0,z=cz) so its lower part sits inside
@@ -17,34 +19,34 @@ export const MASK_FACE={on:true,off:.006,blur:3,grow:3};   /* grow = max-filter 
 export const MASK_WRAP={on:true,side:.006,under:.004,neckY:1.525,lift:0,grow:3,blur:2,cz:-.02};
 // Collar line: the body texture tells skin from the grey garment. Per direction around the neck, scanning down from
 // `scan`, the first run of `run` non-skin cells after the neck skin is the collar edge yc (no skin found: neighbours' yc).
-// Below yc the mask is pushed `inset` inside the garment surface (never drawn over grey); between yc and `top` it hugs
-// the skin/hair + `off`. So the black ends exactly on the collar line: the V at the front, the collar at the back.
-export const MASK_COLLAR={on:true,scan:1.545,top:1.545,run:3,off:.006,inset:.006,grow:2};   /* grow = max-filter over cells above the collar line only */
-// Upper edge (reference ninja_side.jpeg: ears and the back of the head stay bare). Behind the cheek the cloth above
-// yTop(angle) is pushed `inset` inside the head/hair surface, so the visible edge runs from the nose bridge along the
-// cheek to below the ear and around the nape. |angle| < front: untouched; front..back: yFront -> yBack; beyond: yBack.
-export const MASK_TRIM={on:true,front:.75,back:1.45,yFront:1.6,yBack:1.545,inset:.006};
+// Above yc the neck band targets skin + `off` (through the smooth field); below it the cloth continues as a neck tube
+// and the shader clips it `clip` under the line. Every vertex follows the weights of the body surface under it.
+export const MASK_COLLAR={on:true,scan:1.545,top:1.545,run:3,off:.006,grow:2,clip:.002};   /* grow = max-filter over cells above the collar line only; clip = cloth kept under the collar lip */
+// Upper edge = the source's own sewn rim, lowered at the ears by a smooth vertical squash (see mapPoint).
+// The back of the head and the ears stay bare, matching ninja_side.jpeg. No source vertices are folded onto one y plane.
+export const MASK_TRIM={on:true,y0:1.5,kFront:.86,k:.5,a0:.9,a1:1.35,a2:1.9,a3:2.2,backLift:.018};   /* side squash: angles in rad from the front (ears ~1.6–1.8) */
+// Cavity shading from the source relief (see sourceRelief): x = multiplicative contrast, y = added light on ridges.
+export const MASK_RELIEF={x:.5,y:.25};
 const PB=120,PY0=1.4,PYC=.003,PH=107;
 const GX0=-.1,GY0=1.4,CELL=.003,GW=67,GH=82;
 export function createMask({THREE,root,real,loadTexture,onReady=()=>{}}){
   const group=new THREE.Group();group.name='equipment-mask';group.matrixAutoUpdate=false;root.add(group);
-  const head=real.bone.Head,headM=new THREE.Matrix4(),rootInv=new THREE.Matrix4(),local=new THREE.Matrix4(),fit=new THREE.Matrix4();
-  const accessory={group,status:'loading',error:null,ready:null,update,load,fit:MASK_FIT,neck:MASK_NECK,face:MASK_FACE,wrap:MASK_WRAP,collar:MASK_COLLAR,trim:MASK_TRIM,refit,reshape};
-  let raw=null,praw=null,pcls=null;   /* front-most skin z per (x,y) cell, root-local bind pose */
-  let shaped=[];   /* [{position attribute, original copy}] */
+  const head=real.bone.Head,rootInv=new THREE.Matrix4(),fit=new THREE.Matrix4();
+  const accessory={group,status:'loading',error:null,ready:null,update,load,fit:MASK_FIT,neck:MASK_NECK,face:MASK_FACE,wrap:MASK_WRAP,collar:MASK_COLLAR,trim:MASK_TRIM,refit,reshape,getVertexPosition,collisionCapsule};
+  let raw=null,praw=null,pcls=null,pindex=null,body=null;
+  let shaped=[],sourceFront=null,sourcePolar=null,context=null,fitField=null;
+  const smooth=t=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);};
   function refit(){
-    root.updateMatrixWorld(true);
-    const headInv=rootInv.copy(root.matrixWorld).invert().multiply(head.matrixWorld).invert();
     fit.compose(new THREE.Vector3(MASK_FIT.x,MASK_FIT.y,MASK_FIT.z),new THREE.Quaternion(),new THREE.Vector3(MASK_FIT.sx,MASK_FIT.sy,MASK_FIT.sz));
-    local.multiplyMatrices(headInv,fit);   /* mask in Head-bone space; stays rigid on the head */
+    if(shaped.length&&raw){sourceFields();reshape();}
   }
   function skinField(){
-    let body=null;
+    body=null;
     root.traverse(o=>{if(o.isSkinnedMesh&&!/^equipment-/.test(o.parent?.name||'')&&(!body||o.geometry.attributes.position.count>body.geometry.attributes.position.count))body=o;});
     if(!body)return;
-    root.updateMatrixWorld(true);body.skeleton.update();
+    root.updateMatrixWorld(true);real.skinning?.update();body.skeleton.update();
     const inv=new THREE.Matrix4().copy(root.matrixWorld).invert(),P=new THREE.Vector3(),n=body.geometry.attributes.position.count;
-    raw=new Float32Array(GW*GH).fill(-9);praw=new Float32Array(PB*PH).fill(-9);pcls=new Int8Array(PB*PH).fill(-1);
+    raw=new Float32Array(GW*GH).fill(-9);praw=new Float32Array(PB*PH).fill(-9);pcls=new Int8Array(PB*PH).fill(-1);pindex=new Int32Array(PB*PH).fill(-1);
     const mat=Array.isArray(body.material)?body.material[0]:body.material,img=mat?.map?.image,uv=body.geometry.attributes.uv,TS=2048;
     let tex=null;
     if(img&&uv){const cv=new OffscreenCanvas(TS,TS),cx=cv.getContext('2d');cx.drawImage(img,0,0,TS,TS);tex=cx.getImageData(0,0,TS,TS).data;}
@@ -57,18 +59,18 @@ export function createMask({THREE,root,real,loadTexture,onReady=()=>{}}){
       return Math.max(r,g,b)<48?1:0;
     };
     for(let i=0;i<n;i++){
-      body.getVertexPosition(i,P).applyMatrix4(body.matrixWorld).applyMatrix4(inv);
+      (real.skinning?.getVertexPosition?real.skinning.getVertexPosition(i,P):body.getVertexPosition(i,P)).applyMatrix4(body.matrixWorld).applyMatrix4(inv);
       if(P.y>=PY0&&P.y<PY0+PH*PYC){
         const px=P.x,pz=P.z-MASK_WRAP.cz,r=Math.hypot(px,pz);
-        if(r<.2){const b=Math.floor((Math.atan2(px,pz)+Math.PI)/(2*Math.PI)*PB)%PB,row=Math.floor((P.y-PY0)/PYC);if(r>praw[row*PB+b]){praw[row*PB+b]=r;pcls[row*PB+b]=classify(i);}}
+        if(r<.2){const b=Math.floor((Math.atan2(px,pz)+Math.PI)/(2*Math.PI)*PB)%PB,row=Math.floor((P.y-PY0)/PYC);if(r>praw[row*PB+b]){praw[row*PB+b]=r;pcls[row*PB+b]=classify(i);pindex[row*PB+b]=i;}}
       }
       const cx=Math.round((P.x-GX0)/CELL),cy=Math.round((P.y-GY0)/CELL);
       if(cx<0||cy<0||cx>=GW||cy>=GH||P.z<-.02)continue;
       if(P.z>raw[cy*GW+cx])raw[cy*GW+cx]=P.z;
     }
   }
-  function smoothField(radius){
-    const f=Float32Array.from(raw);
+  function smoothField(radius,input=raw,grow=MASK_FACE.grow){
+    const f=Float32Array.from(input);
     for(let pass=0;pass<40;pass++){   /* fill empty cells from their neighbours */
       let empty=0;
       for(let y=0;y<GH;y++)for(let x=0;x<GW;x++)if(f[y*GW+x]<-5){
@@ -77,7 +79,7 @@ export function createMask({THREE,root,real,loadTexture,onReady=()=>{}}){
       }
       if(!empty)break;
     }
-    const grown=Float32Array.from(f),g=Float32Array.from(f),G=MASK_FACE.grow;
+    const grown=Float32Array.from(f),g=Float32Array.from(f),G=grow;
     for(let y=0;y<GH;y++)for(let x=0;x<GW;x++){
       let m=-9;for(let dy=-G;dy<=G;dy++)for(let dx=-G;dx<=G;dx++){const X=x+dx,Y=y+dy;if(X>=0&&Y>=0&&X<GW&&Y<GH)m=Math.max(m,f[Y*GW+X]);}
       grown[y*GW+x]=m;
@@ -109,8 +111,8 @@ export function createMask({THREE,root,real,loadTexture,onReady=()=>{}}){
     }
     return g;
   }
-  function filledPolar(){
-    const f=Float32Array.from(praw);
+  function filledPolar(input=praw){
+    const f=Float32Array.from(input);
     for(let pass=0;pass<60;pass++){
       let empty=0;
       for(let y=0;y<PH;y++)for(let b=0;b<PB;b++)if(f[y*PB+b]<-5){
@@ -168,72 +170,321 @@ export function createMask({THREE,root,real,loadTexture,onReady=()=>{}}){
     if(a<-5||b<-5||c<-5||d<-5)return null;
     return (a*(1-tx)+b*tx)*(1-ty)+(c*(1-tx)+d*tx)*ty;
   }
-  function reshape(){
-    const clamp01=t=>Math.max(0,Math.min(1,t));
-    const F=MASK_FIT,N=MASK_NECK,smooth=t=>t*t*(3-2*t);
-    const field=raw&&MASK_FACE.on?smoothField(MASK_FACE.blur):null;
-    const pf=praw&&MASK_WRAP.on?polarField():null,W=MASK_WRAP,C=MASK_COLLAR;
-    const pc=praw&&pcls&&C.on?filledPolar():null,cut=pc?collarCut():null;
-    if(pc)pc.hi=coverField(pc.f,cut);
-    accessory.collarLine=cut;
-    for(const [attr,orig] of shaped){
-      const a=attr.array,o=orig;
-      for(let i=0;i<o.length;i+=3){
-        const x=o[i]*F.sx+F.x,y=o[i+1]*F.sy+F.y,z=o[i+2]*F.sz+F.z;
-        let nx=x,nz=z,ws=0;
-        if(pf){   /* sides / back: radial fit */
-          const th=Math.atan2(nx,nz-W.cz),ath=Math.abs(th),r=Math.hypot(nx,nz-W.cz);
-          ws=smooth(clamp01((ath-.9)/.6));
-          if(ws>0){
-            const rp=samplePolar(pf,Math.max(y,W.neckY),th);   /* below the jaw: the neck radius, not the collar lip */
-            if(rp!==null){
-              const rn=r+(rp+W.side-r)*ws;   /* from the angle, not by scaling: r can be ~0 */
-              nx=rn*Math.sin(th);nz=W.cz+rn*Math.cos(th);
-            }
-          }
-        }
-        if(field){   /* front of the face: lie on the skin */
-          const w=smooth(clamp01((z-N.cz)/.03))*smooth(clamp01((y-1.44)/.03))*smooth(clamp01((.1-Math.abs(x))/.02));
-          if(w>0){const zf=sample(field,x,y);if(zf!==null)nz=z+(zf+MASK_FACE.off-z)*w;}
-        }
-        if(y<N.y0){
-          const w=smooth(Math.min(1,(N.y0-y)/(N.y0-N.y1))),n=1-N.tail*smooth(Math.max(0,Math.min(1,(N.y1-y)/(N.y1-N.hem)))),dx=nx/(N.rx*n),dz=(nz-N.cz)/(N.rz*n),rho=Math.hypot(dx,dz);
-          if(rho>1){const k=1+(1/rho-1)*w;nx=nx*k;nz=N.cz+(nz-N.cz)*k;}
-        }
-        if(cut&&y<C.top){   /* collar: hug the skin above the collar line, dive under the garment below it */
-          const th=Math.atan2(nx,nz-W.cz),r=Math.hypot(nx,nz-W.cz),fb=(th+Math.PI)/(2*Math.PI)*PB-.5,b0=Math.floor(fb),t=fb-b0;
-          const yc=cut[(b0+PB)%PB]*(1-t)+cut[(b0+1)%PB]*t;
-          let rn=null;
-          if(y<yc){const rl=samplePolar(pc.lo,y,th);if(rl!==null)rn=Math.min(r,rl-C.inset);}
-          else{const rh=samplePolar(pc.hi,y,th);if(rh!==null)rn=r+(rh+C.off-r)*smooth(clamp01((C.top-y)/.012));}
-          if(rn!==null){nx=rn*Math.sin(th);nz=W.cz+rn*Math.cos(th);}
-        }
-        let ny=y;
-        if(pf&&MASK_TRIM.on){   /* trim: nothing over the ears / occiput. Cloth above the line is folded down onto it (clean edge) */
-          const T=MASK_TRIM,th=Math.atan2(nx,nz-W.cz),ath=Math.abs(th);
-          if(ath>T.front){
-            const yt=T.yFront+(T.yBack-T.yFront)*smooth(clamp01((ath-T.front)/(T.back-T.front)));
-            if(y>yt){
-              ny=yt;
-              const rp=samplePolar(pf,Math.max(yt,W.neckY),th);
-              if(rp!==null){const r=Math.hypot(nx,nz-W.cz),rn=r+(rp+W.side-r)*Math.max(ws,smooth(clamp01((ath-T.front)/.2)));nx=rn*Math.sin(th);nz=W.cz+rn*Math.cos(th);}
-            }
-          }
-        }
-        if(y<N.yb){   /* back of the neck: the rear hem stops at the top of the grey collar (yb) */
-          const b=smooth(Math.max(0,Math.min(1,(N.cz-nz)/.04)));ny=N.yb-(N.yb-y)*(1-N.back*b);
-        }
-        if(ws>0)ny+=W.lift*ws*smooth(clamp01((y-1.57)/.05));   /* rim up over the ears / occiput; starts above the neck so the collar hem stays put */
-        a[i]=(nx-F.x)/F.sx;a[i+1]=(ny-F.y)/F.sy;a[i+2]=(nz-F.z)/F.sz;
+  function sourceFields(){
+    const F=MASK_FIT,W=MASK_WRAP,sr=new Float32Array(GW*GH).fill(-9),sp=new Float32Array(PB*PH).fill(-9);
+    for(const record of shaped){const o=record.original;for(let i=0;i<o.length;i+=3){
+      const x=o[i]*F.sx+F.x,y=o[i+1]*F.sy+F.y,z=o[i+2]*F.sz+F.z,th=Math.atan2(x,z-W.cz),b=(Math.floor((th+Math.PI)/(2*Math.PI)*PB)+PB)%PB;
+      const row=Math.floor((y-PY0)/PYC);if(row>=0&&row<PH)sp[row*PB+b]=Math.max(sp[row*PB+b],Math.hypot(x,z-W.cz));
+      const cx=Math.round((x-GX0)/CELL),cy=Math.round((y-GY0)/CELL);
+      if(cx>=0&&cy>=0&&cx<GW&&cy<GH&&z>-.02)sr[cy*GW+cx]=Math.max(sr[cy*GW+cx],z);
+    }}
+    sourceFront=smoothField(1,sr,0);sourcePolar=filledPolar(sp).f;
+  }
+  function angleSample(values,th){
+    const fb=(th+Math.PI)/(2*Math.PI)*PB-.5,b0=Math.floor(fb),t=fb-b0;
+    return values[(b0+PB)%PB]*(1-t)+values[(b0+1+PB)%PB]*t;
+  }
+  function mapPoint(x0,y0,z0,out){
+    const F=MASK_FIT,N=MASK_NECK,W=MASK_WRAP,C=MASK_COLLAR,T=MASK_TRIM;
+    const x=x0*F.sx+F.x,originalY=y0*F.sy+F.y,z=z0*F.sz+F.z;
+    const theta0=Math.atan2(x,z-W.cz),ath0=Math.abs(theta0),sourceR=Math.hypot(x,z-W.cz);
+    let y=originalY,nx=x,nz=z,ws=0;
+    // Ears bare (ninja_side.jpeg): squash the side panels vertically above T.y0 by T.k, fading in over the cheek and out
+    // towards the nape, where the source's own back rim already sits at the nape (~1.548). One smooth map of position,
+    // sampled into the field like everything else, so the stitched rim and its folds move together. (The old per-angle
+    // "relative to this bin's highest vertex" warp dropped the back rim under the collar where a bin held both the horn
+    // and the low back rim, leaving a skin gap at the nape.)
+    if(T.on&&originalY>T.y0){
+      const front=1-smooth((ath0-T.a0)/(T.a1-T.a0)),side=(1-front)*(1-smooth((ath0-T.a2)/(T.a3-T.a2)));
+      y=T.y0+(originalY-T.y0)*(1-(1-T.kFront)*front-(1-T.k)*side);   /* kFront: less of the face covered (user, 2026-10-25) */
+      y+=T.backLift*smooth((ath0-T.a2)/(T.a3-T.a2))*smooth((originalY-T.y0)/.04);   /* nape rim up under the hairline corners */
+    }
+    if(context.pf){
+      ws=smooth((ath0-.9)/.6);
+      if(ws>0){const grown=samplePolar(context.pf,Math.max(y,W.neckY),theta0),own=context.pc?samplePolar(context.pc.f,Math.max(y,W.neckY),theta0):null,wb=smooth((ath0-1.9)/.4),rp=grown===null||own===null?grown:grown+(own-grown)*wb,   /* nape: the surface at this height, not the hair overhang above — the band hugs the neck and slides under the hair */
+        ref=samplePolar(sourcePolar,Math.max(PY0+.004,Math.min(PY0+(PH-2)*PYC,originalY)),theta0);
+        if(rp!==null){const target=rp+W.side+.25*(sourceR-(ref??sourceR)),rn=sourceR+(target-sourceR)*ws;nx=rn*Math.sin(theta0);nz=W.cz+rn*Math.cos(theta0);}
       }
-      attr.needsUpdate=true;
+    }
+    if(context.field){
+      const w=smooth((z-N.cz)/.03)*smooth((y-1.44)/.03)*smooth((.1-Math.abs(x))/.02);
+      if(w>0){const zf=sample(context.field,x,y),ref=sample(sourceFront,x,originalY);if(zf!==null)nz=z+(zf+MASK_FACE.off+.25*(z-(ref??z))-z)*w;}
+    }
+    if(y<N.y0){
+      const w=smooth((N.y0-y)/(N.y0-N.y1)),n=1-N.tail*smooth((N.y1-y)/(N.y1-N.hem));
+      const rho=Math.hypot(nx/(N.rx*n),(nz-N.cz)/(N.rz*n));
+      if(rho>1){const k=1+(1/rho-1)*w;nx*=k;nz=N.cz+(nz-N.cz)*k;}
+    }
+    if(context.cut&&y<C.top+.025){
+      // Neck band: lie `off` outside the neck skin. Below the collar line keep the skin radius measured just above the
+      // line (a neck tube, no tuck/fold); the shader clips it at the collar line (see installSkin), so no part of the
+      // cloth is drawn over the grey and no per-vertex projection touches the visible surface.
+      const th=Math.atan2(nx,nz-W.cz),r=Math.hypot(nx,nz-W.cz),yc=angleSample(context.cut,th);
+      const hi=samplePolar(context.pc.hi,Math.max(y,yc+.004),th);
+      if(hi!==null){
+        const amount=1-smooth((y-C.top+.012)/.037),rn=r+(hi+C.off-r)*amount;
+        nx=rn*Math.sin(th);nz=W.cz+rn*Math.cos(th);
+      }
+    }
+    out[0]=nx;out[1]=y;out[2]=nz;return out;
+  }
+  function skinWeights(mesh,positions){
+    const count=positions.length/3,indices=new Uint16Array(count*4),weights=new Float32Array(count*4),follow=new Float32Array(count);
+    const headIndex=body.skeleton.bones.indexOf(head),bi=body.geometry.attributes.skinIndex,bw=body.geometry.attributes.skinWeight;
+    for(let i=0;i<count;i++){
+      const x=positions[i*3],y=positions[i*3+1],z=positions[i*3+2],th=Math.atan2(x,z-MASK_WRAP.cz),bin=(Math.floor((th+Math.PI)/(2*Math.PI)*PB)+PB)%PB;
+      const yc=context.cut?angleSample(context.cut,th):1.48;
+      // Every vertex copies the weights of the body surface it lies on (face -> Head, neck skin -> Neck, tucked hem ->
+      // garment). A Head-only neck band let the neck skin poke through when the head tilted (combo beat 1).
+      const w=1,sampleY=y<yc?Math.min(y,yc-.006):y;
+      let row=Math.max(0,Math.min(PH-1,Math.floor((sampleY-PY0)/PYC))),nearest=-1,distance=Infinity;
+      if(w>0)for(let dy=-3;dy<=3;dy++)for(let db=-3;db<=3;db++){
+        const rr=row+dy;if(rr<0||rr>=PH)continue;const id=pindex[rr*PB+(bin+db+PB)%PB];if(id<0)continue;
+        const score=dy*dy+db*db;if(score<distance){distance=score;nearest=id;}
+      }
+      const mix=new Map([[headIndex,1-w]]);
+      if(nearest>=0)for(let k=0;k<4;k++){const id=bi.array[nearest*4+k],value=bw.array[nearest*4+k]*w;mix.set(id,(mix.get(id)||0)+value);}
+      else mix.set(headIndex,1);
+      const best=[...mix].filter(([,v])=>v>1e-7).sort((a,b)=>b[1]-a[1]).slice(0,4),total=best.reduce((n,p)=>n+p[1],0);
+      for(let k=0;k<4;k++){indices[i*4+k]=best[k]?.[0]??headIndex;weights[i*4+k]=(best[k]?.[1]??0)/total;}
+      follow[i]=w;
+    }
+    mesh.geometry.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(indices,4));
+    mesh.geometry.setAttribute('skinWeight',new THREE.Float32BufferAttribute(weights,4));
+    mesh.geometry.setAttribute('maskCollarFollow',new THREE.Float32BufferAttribute(follow,1));
+  }
+  function toBodyBind(mesh,positions,normals){
+    // Inverting each bone before blending is not inverse blended DQ. Unpose each
+    // fitted vertex through its CURRENT blended body DQ once, then share the
+    // body's original bind convention. The tucked cloth then moves exactly with
+    // the garment sample even when Head and torso rotate relative to each other.
+    root.updateMatrixWorld(true);real.skinning.update();
+    const bindInverse=body.bindMatrix.clone().invert(),rootToBind=body.bindMatrixInverse.clone().invert().multiply(body.matrixWorld.clone().invert()).multiply(root.matrixWorld),normalToBind=new THREE.Matrix3().getNormalMatrix(rootToBind),normalFromBind=new THREE.Matrix3().getNormalMatrix(bindInverse);
+    const ids=mesh.geometry.attributes.skinIndex.array,weights=mesh.geometry.attributes.skinWeight.array,sourceR=real.skinning.real,sourceD=real.skinning.dual;
+    const r=new Float64Array(4),d=new Float64Array(4),point=new THREE.Vector3(),normal=new THREE.Vector3(),translation=new THREE.Vector3(),inverseQ=new THREE.Quaternion();
+    for(let i=0;i<positions.length/3;i++){
+      r.fill(0);d.fill(0);const reference=ids[i*4]*4;
+      for(let k=0;k<4;k++){
+        const offset=ids[i*4+k]*4,dot=sourceR[reference]*sourceR[offset]+sourceR[reference+1]*sourceR[offset+1]+sourceR[reference+2]*sourceR[offset+2]+sourceR[reference+3]*sourceR[offset+3],weight=weights[i*4+k]*(dot<0?-1:1);
+        for(let c=0;c<4;c++){r[c]+=sourceR[offset+c]*weight;d[c]+=sourceD[offset+c]*weight;}
+      }
+      const length=Math.hypot(...r)||1;for(let c=0;c<4;c++){r[c]/=length;d[c]/=length;}const rd=r[0]*d[0]+r[1]*d[1]+r[2]*d[2]+r[3]*d[3];for(let c=0;c<4;c++)d[c]-=r[c]*rd;
+      translation.set(2*(r[3]*d[0]-d[3]*r[0]+r[1]*d[2]-r[2]*d[1]),2*(r[3]*d[1]-d[3]*r[1]+r[2]*d[0]-r[0]*d[2]),2*(r[3]*d[2]-d[3]*r[2]+r[0]*d[1]-r[1]*d[0]));inverseQ.set(-r[0],-r[1],-r[2],r[3]);
+      point.fromArray(positions,i*3).applyMatrix4(rootToBind).sub(translation).applyQuaternion(inverseQ).applyMatrix4(bindInverse).toArray(positions,i*3);
+      normal.fromArray(normals,i*3).applyMatrix3(normalToBind).applyQuaternion(inverseQ).applyMatrix3(normalFromBind).normalize().toArray(normals,i*3);
+    }
+    mesh.matrix.copy(root.matrixWorld.clone().invert().multiply(body.matrixWorld));mesh.matrixAutoUpdate=false;mesh.updateMatrixWorld(true);
+  }
+  // Stitches, rolled hems and folds are geometry in the source (its textures are a flat weave). Under the game's ink
+  // lighting their 1–2 mm relief barely shades on black cloth, so read it back as a cavity term: signed curvature of the
+  // SOURCE surface (umbrella Laplacian on UV-welded vertices, so the atlas seams leave no lines), robustly normalised.
+  function sourceRelief(record){
+    const o=record.original,n=record.normals,index=record.mesh.geometry.index?.array,count=o.length/3,F=MASK_FIT;
+    const relief=new Float32Array(count);if(!index)return relief;
+    const weld=new Int32Array(count),keys=new Map();let welded=0;
+    for(let i=0;i<count;i++){const key=Math.round(o[i*3]*1e5)+','+Math.round(o[i*3+1]*1e5)+','+Math.round(o[i*3+2]*1e5);let id=keys.get(key);if(id===undefined){id=welded++;keys.set(key,id);}weld[i]=id;}
+    const pos=new Float64Array(welded*3),nor=new Float64Array(welded*3),sum=new Float64Array(welded*3),deg=new Float64Array(welded),len=new Float64Array(welded);
+    for(let i=0;i<count;i++){const w=weld[i]*3;pos[w]=o[i*3]*F.sx;pos[w+1]=o[i*3+1]*F.sy;pos[w+2]=o[i*3+2]*F.sz;nor[w]+=n[i*3]/F.sx;nor[w+1]+=n[i*3+1]/F.sy;nor[w+2]+=n[i*3+2]/F.sz;}
+    for(let t=0;t<index.length;t+=3)for(let e=0;e<3;e++){
+      const a=weld[index[t+e]],b=weld[index[t+(e+1)%3]];if(a===b)continue;
+      const dx=pos[b*3]-pos[a*3],dy=pos[b*3+1]-pos[a*3+1],dz=pos[b*3+2]-pos[a*3+2],l=Math.hypot(dx,dy,dz);
+      sum[a*3]+=dx;sum[a*3+1]+=dy;sum[a*3+2]+=dz;deg[a]++;len[a]+=l;sum[b*3]-=dx;sum[b*3+1]-=dy;sum[b*3+2]-=dz;deg[b]++;len[b]+=l;
+    }
+    const curv=new Float32Array(welded);
+    for(let w=0;w<welded;w++){
+      if(!deg[w])continue;const nl=Math.hypot(nor[w*3],nor[w*3+1],nor[w*3+2])||1,edge=len[w]/deg[w]||1;
+      curv[w]=-(sum[w*3]*nor[w*3]+sum[w*3+1]*nor[w*3+1]+sum[w*3+2]*nor[w*3+2])/(nl*deg[w]*edge);   /* + = ridge / outer roll edge */
+    }
+    const sorted=Float32Array.from(curv).sort(),scale=Math.max(Math.abs(sorted[Math.floor(welded*.02)]),Math.abs(sorted[Math.floor(welded*.98)]))||1;
+    for(let i=0;i<count;i++)relief[i]=Math.max(-1,Math.min(1,curv[weld[i]]/scale));
+    return relief;
+  }
+  function clipLine(){   /* collar line for the clip: the median cut, circular box blur over ±3 bins (~9°) for a clean curve */
+    const cut=context.cut,out=new Float32Array(PB);if(!cut)return out.fill(-9);
+    for(let b=0;b<PB;b++){let sum=0;for(let d=-3;d<=3;d++)sum+=cut[(b+d+PB)%PB];out[b]=sum/7;}
+    return out;
+  }
+  function installSkin(mesh){
+    mesh.customDepthMaterial?.dispose();mesh.customDistanceMaterial?.dispose();
+    const bones=body.skeleton.bones,inverses=body.skeleton.boneInverses.map(m=>m.clone());
+    const skeleton=new THREE.Skeleton(bones,inverses);mesh.bind(skeleton,body.bindMatrix.clone());
+    const count=bones.length,r=new Float32Array(count*4),d=new Float32Array(count*4),uniforms={maskDqReal:{value:r},maskDqDual:{value:d},maskDqAmount:{value:1},maskCut:{value:clipLine()},maskClip:{value:MASK_COLLAR.clip}};
+    const matrix=new THREE.Matrix4(),p=new THREE.Vector3(),q=new THREE.Quaternion(),scale=new THREE.Vector3();
+    const used=[...new Set(mesh.geometry.attributes.skinIndex.array)],signature=new Float64Array(used.length*16).fill(NaN);
+    const state={r,d,uniforms,update(){
+      let changed=false;for(let i=0;i<used.length;i++)for(let c=0;c<16;c++){const value=bones[used[i]].matrixWorld.elements[c],k=i*16+c;if(value!==signature[k]){signature[k]=value;changed=true;}}
+      if(!changed)return;
+      skeleton.update();let rigid=true;
+      for(let i=0;i<count;i++){matrix.fromArray(skeleton.boneMatrices,i*16).decompose(p,q,scale);q.normalize();if(Math.max(Math.abs(scale.x-1),Math.abs(scale.y-1),Math.abs(scale.z-1))>.002)rigid=false;encodeRigidTransform(p,q,r,d,i*4);}
+      uniforms.maskDqAmount.value=rigid&&real.skinning?.enabled!==false?1:0;
+    }};
+    const declarations=`
+#ifdef USE_SKINNING
+uniform vec4 maskDqReal[${count}];uniform vec4 maskDqDual[${count}];uniform float maskDqAmount;
+vec4 maskMultiply(vec4 a,vec4 b){return vec4(a.w*b.xyz+b.w*a.xyz+cross(a.xyz,b.xyz),a.w*b.w-dot(a.xyz,b.xyz));}
+vec3 maskRotate(vec4 r,vec3 v){return v+2.0*cross(r.xyz,cross(r.xyz,v)+r.w*v);}
+void maskBlend(out vec4 r,out vec4 d){ivec4 idx=ivec4(skinIndex);vec4 ref=maskDqReal[idx.x];vec4 signs=vec4(1.0,dot(ref,maskDqReal[idx.y])<0.0?-1.0:1.0,dot(ref,maskDqReal[idx.z])<0.0?-1.0:1.0,dot(ref,maskDqReal[idx.w])<0.0?-1.0:1.0);vec4 w=skinWeight*signs;r=maskDqReal[idx.x]*w.x+maskDqReal[idx.y]*w.y+maskDqReal[idx.z]*w.z+maskDqReal[idx.w]*w.w;d=maskDqDual[idx.x]*w.x+maskDqDual[idx.y]*w.y+maskDqDual[idx.z]*w.z+maskDqDual[idx.w]*w.w;float n=max(length(r),.00001);r/=n;d/=n;d-=r*dot(r,d);}
+#endif
+`;
+    const position=`
+#ifdef USE_SKINNING
+vec4 skinVertex=bindMatrix*vec4(transformed,1.0);vec4 linearSkinned=boneMatX*skinVertex*skinWeight.x+boneMatY*skinVertex*skinWeight.y+boneMatZ*skinVertex*skinWeight.z+boneMatW*skinVertex*skinWeight.w;
+vec4 maskR,maskD;maskBlend(maskR,maskD);vec3 maskTranslation=2.0*maskMultiply(maskD,vec4(-maskR.xyz,maskR.w)).xyz;vec3 maskSkinned=maskRotate(maskR,skinVertex.xyz)+maskTranslation;transformed=(bindMatrixInverse*vec4(mix(linearSkinned.xyz,maskSkinned,maskDqAmount),1.0)).xyz;
+#endif
+`;
+    const normal=`
+#ifdef USE_SKINNING
+mat4 skinMatrix=skinWeight.x*boneMatX+skinWeight.y*boneMatY+skinWeight.z*boneMatZ+skinWeight.w*boneMatW;vec4 maskNR,maskND;maskBlend(maskNR,maskND);vec3 maskBindNormal=(bindMatrix*vec4(objectNormal,0.0)).xyz;objectNormal=(bindMatrixInverse*vec4(mix((skinMatrix*vec4(maskBindNormal,0.0)).xyz,maskRotate(maskNR,maskBindNormal),maskDqAmount),0.0)).xyz;
+#ifdef USE_TANGENT
+vec3 maskBindTangent=(bindMatrix*vec4(objectTangent,0.0)).xyz;objectTangent=(bindMatrixInverse*vec4(mix((skinMatrix*vec4(maskBindTangent,0.0)).xyz,maskRotate(maskNR,maskBindTangent),maskDqAmount),0.0)).xyz;
+#endif
+#endif
+`;
+    // Collar clip: the cloth below the collar line (in the fitted rest position, so it follows the skin in every pose)
+    // is not drawn. Interpolated per fragment => a smooth edge along the collar instead of a jagged depth intersection.
+    const clipVertex='attribute vec3 maskRest;\nvarying vec3 vMaskRest;\n',clipFragment=`varying vec3 vMaskRest;uniform float maskCut[${PB}];uniform float maskClip;\n`;
+    const clipTest=`void main() {
+  {float th=atan(vMaskRest.x,vMaskRest.z-(${MASK_WRAP.cz.toFixed(4)}));float fb=(th+3.14159265)/6.2831853*${PB}.0-.5;float b0=floor(fb);
+   int i0=int(mod(b0,${PB}.0)),i1=int(mod(b0+1.,${PB}.0));if(vMaskRest.y<mix(maskCut[i0],maskCut[i1],fb-b0)-maskClip)discard;}`;
+    mesh.customDepthMaterial=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking});mesh.customDistanceMaterial=new THREE.MeshDistanceMaterial();
+    for(const material of [mesh.material,mesh.customDepthMaterial,mesh.customDistanceMaterial]){
+      material.onBeforeCompile=shader=>{
+        Object.assign(shader.uniforms,uniforms);
+        shader.vertexShader=clipVertex+shader.vertexShader.replace('#include <skinning_pars_vertex>','#include <skinning_pars_vertex>'+declarations).replace('#include <skinning_vertex>',position).replace('#include <skinnormal_vertex>',normal).replace('#include <begin_vertex>','#include <begin_vertex>\nvMaskRest=maskRest;');
+        shader.fragmentShader=clipFragment+shader.fragmentShader.replace('void main() {',clipTest);
+        if(material===mesh.material){
+          shader.uniforms.maskReliefGain={value:MASK_RELIEF};
+          shader.vertexShader='attribute float maskRelief;\nvarying float vMaskRelief;\n'+shader.vertexShader.replace('vMaskRest=maskRest;','vMaskRest=maskRest;vMaskRelief=maskRelief;');
+          shader.fragmentShader='varying float vMaskRelief;uniform vec2 maskReliefGain;\n'+shader.fragmentShader.replace('#include <map_fragment>','#include <map_fragment>\n{float c=clamp(vMaskRelief,-1.,1.);diffuseColor.rgb=diffuseColor.rgb*(1.+maskReliefGain.x*c)+maskReliefGain.y*max(c,0.);}');
+        }
+      };
+      material.customProgramCacheKey=()=>`mask-collar-dq-clip-relief-v3-${count}-${material===mesh.material}`;material.needsUpdate=true;
+    }
+    mesh.onBeforeRender=()=>state.update();mesh.onBeforeShadow=()=>state.update();mesh.userData.maskSkinning=state;state.update();
+  }
+  function buildFitField(){
+    const step=.045,min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity],F=MASK_FIT;
+    for(const record of shaped)for(let i=0;i<record.original.length;i+=3)for(let k=0;k<3;k++){min[k]=Math.min(min[k],record.original[i+k]);max[k]=Math.max(max[k],record.original[i+k]);}
+    const origin=min.map(v=>Math.floor(v/step)*step-4*step),size=max.map((v,k)=>Math.ceil((v-origin[k])/step)+5),[W,H,D]=size;
+    let data=new Float32Array(W*H*D*3);const point=new Float64Array(3),scales=[F.sx,F.sy,F.sz],translation=[F.x,F.y,F.z];
+    for(let z=0;z<D;z++)for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+      const p=[origin[0]+x*step,origin[1]+y*step,origin[2]+z*step],i=((z*H+y)*W+x)*3;mapPoint(...p,point);
+      for(let k=0;k<3;k++)data[i+k]=point[k]-(p[k]*scales[k]+translation[k]);
+    }
+    // Smooth the deformation field, never the original mesh or stitched band.
+    for(let pass=0;pass<2;pass++)for(let axis=0;axis<3;axis++){
+      const next=new Float32Array(data.length),stride=[3,W*3,W*H*3][axis],limit=[W,H,D][axis];
+      for(let z=0;z<D;z++)for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+        const i=((z*H+y)*W+x)*3,c=[x,y,z][axis],lo=c>0?i-stride:i,hi=c<limit-1?i+stride:i;
+        for(let k=0;k<3;k++)next[i+k]=.25*data[lo+k]+.5*data[i+k]+.25*data[hi+k];
+      }
+      data=next;
+    }
+    fitField={step,origin,size,data,strength:1};
+  }
+  function sampleFit(x,y,z,out,jac){
+    const {step,origin,size,data,strength}=fitField,[W,H]=size,F=MASK_FIT,points=[x,y,z],base=[],w=[],dw=[];
+    for(let k=0;k<3;k++){
+      const u=(points[k]-origin[k])/step,n=Math.floor(u),t=u-n;base[k]=n-1;
+      w[k]=[(1-t)**3/6,(3*t**3-6*t*t+4)/6,(-3*t**3+3*t*t+3*t+1)/6,t**3/6];
+      dw[k]=[-.5*(1-t)**2/step,(1.5*t*t-2*t)/step,(-1.5*t*t+t+.5)/step,.5*t*t/step];
+    }
+    out[0]=x*F.sx+F.x;out[1]=y*F.sy+F.y;out[2]=z*F.sz+F.z;
+    jac.fill(0);jac[0]=F.sx;jac[4]=F.sy;jac[8]=F.sz;
+    for(let i=0;i<4;i++)for(let j=0;j<4;j++)for(let k=0;k<4;k++){
+      const o=(((base[2]+k)*H+base[1]+j)*W+base[0]+i)*3,weight=w[0][i]*w[1][j]*w[2][k]*strength;
+      const dx=dw[0][i]*w[1][j]*w[2][k]*strength,dy=w[0][i]*dw[1][j]*w[2][k]*strength,dz=w[0][i]*w[1][j]*dw[2][k]*strength;
+      for(let c=0;c<3;c++){const value=data[o+c];out[c]+=value*weight;jac[c]+=value*dx;jac[c+3]+=value*dy;jac[c+6]+=value*dz;}
     }
   }
+  function reshape(){
+    if(!body||!sourceFront)return;
+    const field=raw&&MASK_FACE.on?smoothField(MASK_FACE.blur):null,pf=praw&&MASK_WRAP.on?polarField():null;
+    const pc=praw&&pcls&&MASK_COLLAR.on?filledPolar():null,cut=pc?collarCut():null;if(pc)pc.hi=coverField(pc.f,cut);
+    context={field,pf,pc,cut};accessory.collarLine=cut;buildFitField();
+    const out=new Float64Array(3),jac=new Float64Array(9);let singular=0,negative=0,visibleNegative=0,minDet=Infinity;
+    const F=MASK_FIT,scale=[F.sx,F.sy,F.sz],translation=[F.x,F.y,F.z],cache=[];
+    for(const record of shaped){
+      const o=record.original,positions=new Float32Array(o.length),matrices=new Float32Array(o.length*3);
+      for(let i=0;i<o.length;i+=3){sampleFit(o[i],o[i+1],o[i+2],out,jac);positions.set(out,i);matrices.set(jac,i*3);}
+      cache.push({positions,matrices});
+    }
+    // Fold-over check on the VISIBLE cloth only: the tube under the collar is clipped away (installSkin), so its
+    // compression must not weaken the fit of the face and neck band (it held the whole field at 73 %).
+    for(const entry of cache){
+      const p=entry.positions,visible=new Uint8Array(p.length/3);
+      for(let v=0;v<visible.length;v++){const th=Math.atan2(p[v*3],p[v*3+2]-MASK_WRAP.cz);visible[v]=!cut||p[v*3+1]>=angleSample(cut,th)-.01?1:0;}
+      entry.visible=visible;
+    }
+    let strength=1,minimum=-Infinity;
+    while(strength>=.2){
+      minimum=Infinity;
+      for(const {matrices,visible} of cache)for(let i=0;i<matrices.length;i+=9){
+        if(!visible[i/9])continue;
+        const ax=F.sx+(matrices[i]-F.sx)*strength,ay=matrices[i+1]*strength,az=matrices[i+2]*strength,bx=matrices[i+3]*strength,by=F.sy+(matrices[i+4]-F.sy)*strength,bz=matrices[i+5]*strength,cx=matrices[i+6]*strength,cy=matrices[i+7]*strength,cz=F.sz+(matrices[i+8]-F.sz)*strength;
+        minimum=Math.min(minimum,(ax*(by*cz-bz*cy)+ay*(bz*cx-bx*cz)+az*(bx*cy-by*cx))/(F.sx*F.sy*F.sz));
+      }
+      if(minimum>.05)break;strength*=.9;
+    }
+    if(minimum<=0)throw new Error('Mask fitting would invert the visible source surface');
+    fitField.strength=strength;
+    const finished=[];
+    for(let ri=0;ri<shaped.length;ri++){
+      const record=shaped[ri],mesh=record.mesh,o=record.original,n=record.normals,positions=cache[ri].positions,matrices=cache[ri].matrices,normals=new Float32Array(n.length);
+      for(let i=0;i<o.length;i+=3){
+        for(let c=0;c<3;c++){const baseline=o[i+c]*scale[c]+translation[c];out[c]=baseline+strength*(positions[i+c]-baseline);positions[i+c]=out[c];}
+        for(let k=0;k<9;k++){const diagonal=k===0?F.sx:k===4?F.sy:k===8?F.sz:0;jac[k]=diagonal+strength*(matrices[i*3+k]-diagonal);}
+        const [ax,ay,az,bx,by,bz,cx,cy,cz]=jac;
+        const c0x=by*cz-bz*cy,c0y=bz*cx-bx*cz,c0z=bx*cy-by*cx,c1x=cy*az-cz*ay,c1y=cz*ax-cx*az,c1z=cx*ay-cy*ax,c2x=ay*bz-az*by,c2y=az*bx-ax*bz,c2z=ax*by-ay*bx,det=ax*c0x+ay*c0y+az*c0z;
+        minDet=Math.min(minDet,det/(MASK_FIT.sx*MASK_FIT.sy*MASK_FIT.sz));
+        const th=Math.atan2(out[0],out[2]-MASK_WRAP.cz),yc=cut?angleSample(cut,th):1.48;
+        if(det<=0){negative++;if(out[1]>yc+.012)visibleNegative++;}
+        let nx,ny,nz;
+        if(Math.abs(det)>1e-9){const sign=det<0?-1:1;nx=sign*(c0x*n[i]+c1x*n[i+1]+c2x*n[i+2]);ny=sign*(c0y*n[i]+c1y*n[i+1]+c2y*n[i+2]);nz=sign*(c0z*n[i]+c1z*n[i+1]+c2z*n[i+2]);}
+        else{singular++;nx=n[i]/MASK_FIT.sx;ny=n[i+1]/MASK_FIT.sy;nz=n[i+2]/MASK_FIT.sz;}
+        const length=Math.hypot(nx,ny,nz)||1;normals[i]=nx/length;normals[i+1]=ny/length;normals[i+2]=nz/length;
+      }
+      finished.push({mesh,positions,normals});
+    }
+    for(const {mesh,positions,normals} of finished){
+      mesh.geometry.setAttribute('maskRest',new THREE.Float32BufferAttribute(positions.slice(),3));   /* fitted root-local position, for the collar clip */
+      skinWeights(mesh,positions);toBodyBind(mesh,positions,normals);
+      mesh.geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));mesh.geometry.setAttribute('normal',new THREE.Float32BufferAttribute(normals,3));
+      mesh.skeleton?.dispose();installSkin(mesh);mesh.geometry.computeBoundingBox();mesh.geometry.computeBoundingSphere();
+    }
+    accessory.diagnostics={sourceVertices:shaped.reduce((n,r)=>n+r.original.length/3,0),normalSingularVertices:singular,negativeJacobians:negative,visibleNegativeJacobians:visibleNegative,minNormalizedDeterminant:minDet,fieldStrength:strength,skinned:true};
+    group.matrix.identity();group.matrixWorldNeedsUpdate=true;
+  }
   function update(){
-    if(!group.visible || accessory.status!=='ready')return;
-    rootInv.copy(root.matrixWorld).invert();
-    group.matrix.multiplyMatrices(rootInv,headM.multiplyMatrices(head.matrixWorld,local));
+    // All dense deformation is done once at load/refit. Renderer callbacks update
+    // only 70 joint transforms; the 4-ms gameplay substep never rewrites vertices.
+    if(!group.visible||accessory.status!=='ready')return;
     group.matrixWorldNeedsUpdate=true;
+  }
+  // Keeps the cloak's hood/collar outside the mask (cloak.js adds this to its arm/sword capsules). The cloak was fitted
+  // to the bare neck; its hood edge sat inside the mask's thickness behind the ears. Axis = neck -> Head bone, shifted
+  // `forward` along the head's facing so one round capsule reaches ~5.5 cm behind the neck axis, ~6 cm on the rear
+  // diagonals and ~8 cm at the sides — the mask's measured outer radii plus a few mm.
+  const NECK_CAPSULE={forward:.035,r:.09,below:.02,above:.12},capsuleForward=new THREE.Vector3(),capsuleUp=new THREE.Vector3(),capsuleQ=new THREE.Quaternion();
+  let headForward=null;
+  function collisionCapsule(){
+    if(!group.visible||accessory.status!=='ready')return null;
+    const neck=real.bone.neck??real.bone.Neck;if(!neck)return null;
+    if(!headForward){root.updateMatrixWorld(true);headForward=new THREE.Vector3(0,0,1).applyQuaternion(root.getWorldQuaternion(capsuleQ)).applyQuaternion(head.getWorldQuaternion(new THREE.Quaternion()).invert());}
+    const a=neck.getWorldPosition(new THREE.Vector3()),b=head.getWorldPosition(new THREE.Vector3());
+    capsuleUp.subVectors(b,a).normalize();capsuleForward.copy(headForward).applyQuaternion(head.getWorldQuaternion(capsuleQ));
+    capsuleForward.addScaledVector(capsuleUp,-capsuleForward.dot(capsuleUp)).normalize().multiplyScalar(NECK_CAPSULE.forward);
+    const base=a.clone().add(capsuleForward);
+    return {name:'MaskNeck',a:base.clone().addScaledVector(capsuleUp,-NECK_CAPSULE.below),b:base.clone().addScaledVector(capsuleUp,NECK_CAPSULE.above),r:NECK_CAPSULE.r,r1:NECK_CAPSULE.r};
+  }
+  function getVertexPosition(mesh,index,out=new THREE.Vector3()){
+    mesh.updateWorldMatrix(true,false);mesh.userData.maskSkinning.update();
+    const state=mesh.userData.maskSkinning,geo=mesh.geometry,ids=geo.attributes.skinIndex,w=geo.attributes.skinWeight;
+    if(state.uniforms.maskDqAmount.value){
+      const p=new THREE.Vector3().fromBufferAttribute(geo.attributes.position,index).applyMatrix4(mesh.bindMatrix);
+      out.fromArray(transformBlendedPoint(state.r,state.d,[ids.getX(index),ids.getY(index),ids.getZ(index),ids.getW(index)],[w.getX(index),w.getY(index),w.getZ(index),w.getW(index)],p.toArray())).applyMatrix4(mesh.bindMatrixInverse);
+    }else mesh.getVertexPosition(index,out);
+    return out.applyMatrix4(mesh.matrixWorld).applyMatrix4(rootInv.copy(root.matrixWorld).invert());
   }
   function load(){
     accessory.status='loading';accessory.error=null;
@@ -245,9 +496,17 @@ export function createMask({THREE,root,real,loadTexture,onReady=()=>{}}){
       const decode=index=>index==null?null:loadTexture(buffer,json.textures[index].source);
       const [map,normalMap]=await Promise.all([decode(pbr.baseColorTexture?.index),decode(source.normalTexture?.index)]);
       if(map)map.anisotropy=8;
-      const material=new THREE.MeshStandardMaterial({map,normalMap,normalScale:new THREE.Vector2(.6,.6),roughness:.95,metalness:0,side:THREE.FrontSide});   /* FrontSide: the shaping lays the cloth's inner and outer walls onto the same surface; DoubleSide z-fights them into grey blotches */
-      gltf.scene.traverse(object=>{if(object.isMesh){const at=object.geometry.attributes.position;shaped.push([at,at.array.slice()]);object.material=material;object.castShadow=true;object.receiveShadow=true;object.frustumCulled=false;}});
-      refit();skinField();reshape();group.add(gltf.scene);
+      const material=new THREE.MeshStandardMaterial({map,normalMap,normalScale:new THREE.Vector2(1,1),roughness:.95,metalness:0,side:THREE.FrontSide});   /* FrontSide: the shaping lays the cloth's inner and outer walls onto the same surface; DoubleSide z-fights them into grey blotches */
+      for(const old of accessory.meshes||[]){group.remove(old);old.skeleton?.dispose();}
+      shaped=[];accessory.meshes=[];
+      gltf.scene.traverse(object=>{if(object.isMesh){
+        const geometry=object.geometry,mesh=new THREE.SkinnedMesh(geometry,material);
+        mesh.name='Mask_Fitted_Detail';mesh.castShadow=true;mesh.receiveShadow=true;mesh.frustumCulled=false;
+        const record={mesh,original:geometry.attributes.position.array.slice(),normals:geometry.attributes.normal.array.slice()};shaped.push(record);
+        geometry.setAttribute('maskRelief',new THREE.Float32BufferAttribute(sourceRelief(record),1));
+        group.add(mesh);accessory.meshes.push(mesh);
+      }});
+      skinField();sourceFields();refit();
       accessory.status='ready';onReady();return accessory;
     })().catch(error=>{accessory.status='error';accessory.error=error;console.error('[Mask]',error);onReady();return accessory;});
     return accessory.ready;
