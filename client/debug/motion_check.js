@@ -106,18 +106,21 @@ function hits() { // dummy at about 0.8 m — every beat should land
   return [...new Set(out)];
 }
 
-function dualHits() { // K then K: the thrust and the dual cut must each land on a dummy; the 2nd sword must be in the hand during the cut
+export function dualHits(diag = false) { // K then K: the thrust and the dual cut must each land on a dummy; the 2nd sword must be in the hand during the cut
   // Start 1.4 m from the dummy at (1.2, 2.8), facing it: the thrust then really connects at ~270 ms. (The old start, 1.2 m at 45°, only 'hit' by grazing the dummy
   // with the raised blade at ~172 ms — right after the hit test opens — so the result flipped with any change of the ready stance.) Hits before 200 ms don't count.
   reset(1.2, 1.4, 0);
   let t = 0, prevH = 0, shown = false; const out = [];
-  while (t < 2000) { if (t === 0 || t === 340) I.pressK(); I.frame(0, 4, true); t += 4; if (S.sword2) shown = true; if (S.hitstop > 0 && prevH <= 0 && S.act && S.act.t >= 200) out.push(S.act.def.kanji); prevH = S.hitstop; }
-  return { thrust: out.includes('突'), dual: out.includes('双'), shown };
+  const dummy = diag ? I.targets.filter(x => x.type === 'dummy').sort((a, b) => Math.hypot(a.x - 1.2, a.z - 2.8) - Math.hypot(b.x - 1.2, b.z - 2.8))[0] : null, near = { R: 9, L: 9 }, trace = [], xz = (a, b, c, full) => { const ab = b.clone().sub(a), u = Math.max(0, Math.min(1, ((c.x - a.x) * ab.x + (c.z - a.z) * ab.z) / (ab.x * ab.x + ab.z * ab.z || 1))), d = Math.hypot(a.x + ab.x * u - c.x, a.z + ab.z * u - c.z); return full ? `d${d.toFixed(2)} u${u.toFixed(2)} y${(a.y + ab.y * u).toFixed(2)}` : d; };
+  while (t < 2000) { if (t === 0 || t === 340) I.pressK(); I.frame(0, 4, true); t += 4; if (S.sword2) shown = true; if (S.hitstop > 0 && prevH <= 0 && S.act && S.act.t >= 200) { out.push(S.act.def.kanji); if (diag) trace.push(`HIT ${S.act.def.kanji} at a.t ${Math.round(S.act.t)} lastHit ${dummy.lastHit}`); } prevH = S.hitstop;
+    if (diag && S.act?.def === I.DUAL && S.act.t >= 740 && S.act.t <= 1100) { const bl = (k) => [k.localToWorld(new V(0, .07, 0)), k.localToWorld(new V(0, .82, 0))]; near.R = Math.min(near.R, xz(...bl(I.rig.katana), dummy)); if (I.rig.katana2.visible) near.L = Math.min(near.L, xz(...bl(I.rig.katana2), dummy));
+      if (t % 20 === 0) trace.push(`${Math.round(S.act.t)}:R[${xz(...bl(I.rig.katana), dummy, true)}] L[${I.rig.katana2.visible ? xz(...bl(I.rig.katana2), dummy, true) : '-'}] h${dummy.h}`); } }
+  return { thrust: out.includes('突'), dual: out.includes('双'), shown, ...(diag ? { reachR: +near.R.toFixed(3), reachL: +near.L.toFixed(3), need: +(dummy.r + (I.DUAL.hitPad ?? .06)).toFixed(3), hits: out.join(''), trace: trace.filter(x => x.startsWith('HIT')).join(' | ') + ' || ' + trace.filter(x => !x.startsWith('HIT')).join(' | ') } : {}) };
 }
 
 // Catch the actual back-hilt hand-off, not just sword visibility. Both quick
 // double-tap and K after the thrust has recovered must reach the moving prop.
-function dualContacts(secondK = 340, fromRun = false) {
+export function dualContacts(secondK = 340, fromRun = false) {
   reset(); if(fromRun){ key('a',true); adv(700); key('a',false); }
   const out = {cut:{wrist:0,knee:0,samples:0},twist:{wrist:0,forearm:0,upper:0,travel:0}}; let prevTwist=null;
   for(let t=0;t<3200;t+=4){
