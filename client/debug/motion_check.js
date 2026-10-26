@@ -146,7 +146,7 @@ export function dualContacts(secondK = 340, fromRun = false) {
       if(out[name] || a.t<at) continue;
       const hand=R.arm.L.ha, hq=hand.getWorldQuaternion(new Q());
       const palm=hand.getWorldPosition(new V()).add(R.grip.L.pt.clone().applyQuaternion(hq));
-      const back=R.backSwords[0].g, target=new V(0,.12,0).applyQuaternion(back.quaternion).add(back.position);
+      const back=R.backSwords[0].g, target=new V(0,.0835,0).applyQuaternion(back.quaternion).add(back.position);   // = KAT_TSUBA: the fist's place on the hilt
       const blade=new V(0,1,0).applyQuaternion(hq.multiply(R.grip.L.K.clone().invert()));
       out[name]={gap:palm.distanceTo(target),angle:blade.angleTo(new V(0,-1,0).applyQuaternion(back.quaternion))*D};
     }

@@ -208,6 +208,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { enableVolumeSkinning } from './rig/volume_skinning.js';
 const TSUKA_S=.85;   // katana grip cross-section scale (see the katana build: tsuka/fuchi/kashira/menuki and TSUKA_PROFILE)
+const KAT_TSUBA=.0835;   // tsuba centre on the wielded katana's local +Y (tsubaGeo .0335 + the .05 sword offset): a sheathed sword's tsuba sits on the saya mouth
 import { REFERENCE_RUN,prepareReferenceRun,applyReferenceRun,referenceHipOffset } from './rig/reference_run.js';
 
 // r128 (this game's original target) never applied sRGB/gamma color management at
@@ -565,9 +566,11 @@ const rig={};
   // sword, the other an EMPTY saya — the katana in hand came out of it. Sword space: origin = tsuba centre / saya mouth,
   // +Y up toward the hilt, the saya runs down -Y, +Z = away from the wearer's back. Placed from Spine01 (section 3b, BACK_SWORDS).
   const SAYA_L=.79;
+  // The full one also carries the empty mouth (hidden): when K K draws its sword only the hilt hides (`g.userData.hilt`), the saya stays on the back.
   rig.backSword=({empty=false}={})=>{
-    const g=new THREE.Group(), SY=empty?0:-.005;                    // saya mouth (butts against the tsuba when sheathed)
-    if(!empty){
+    const g=new THREE.Group(), SY=empty?0:-.005, hilt=new THREE.Group(), mouth=new THREE.Group(); // saya mouth (butts against the tsuba when sheathed)
+    g.add(hilt,mouth); g.userData.hilt=hilt; g.userData.mouth=mouth; mouth.visible=empty;
+    { const g=hilt; if(!empty){
       g.add(inked(new THREE.CylinderGeometry(.0175*TSUKA_S,.0165*TSUKA_S,.014,12).scale(1.06,1,.86).translate(0,.239,0),METAL,.004)); // kashira
       const tg=new THREE.LatheGeometry([[.0162,0],[.0168,.022],[.0176,.11],[.0168,.2],[.0158,.226]].map(([r,y])=>new THREE.Vector2(r*TSUKA_S,y)),16);
       tg.scale(1.06,1,.86); tg.translate(0,.006,0);
@@ -575,7 +578,7 @@ const rig={};
       for(const s of [-1,1]) g.add(inked(new THREE.BoxGeometry(.004,.022,.008).translate(0,.12,s*.0155*TSUKA_S),BRASS,.003));
       g.add(inked(new THREE.CylinderGeometry(.0185*TSUKA_S,.0175*TSUKA_S,.016,12).scale(1.05,1,.88).translate(0,.012,0),BRASS,.004)); // fuchi
       const tb=tsubaGeo.clone(); tb.translate(0,-.0335,0); g.add(inked(tb,0x1f1e1d,.005));
-    }
+    } }
     // saya: oval lacquered tube with a slight sideways curve (sori), koiguchi band, kurikata knob, metal kojiri cap
     const N=28, M=14, y0=SY, y1=SY-SAYA_L+.02, cx=u=>-.02*u*u, pos=[], idx=[];
     for(let i=0;i<=N;i++){ const u=i/N, y=y0+(y1-y0)*u, rx=.0182-.003*u, rz=.0138-.0024*u;
@@ -585,9 +588,9 @@ const rig={};
     if(sg.attributes.normal.getX(0)<0){ idx.reverse(); sg.setIndex(idx); sg.computeVertexNormals(); } // keep normals pointing out
     g.add(inked(sg,PAL.ink,.006));
     g.add(inked(new THREE.CylinderGeometry(.0196,.0192,.022,M).scale(1,1,.77).translate(0,y0-.011,0),0x1f1e1d,.004)); // koiguchi
-    if(empty){ // open mouth: horn rim + the dark slot the blade slid out of
-      g.add(inked(new THREE.CylinderGeometry(.0198,.0198,.004,M).scale(1,1,.77).translate(0,y0+.001,0),0x2b2a29,.003));
-      g.add(new THREE.Mesh(new THREE.CylinderGeometry(.0042,.0042,.002,8).scale(3.2,1,1).translate(.002,y0+.0035,0),new THREE.MeshBasicMaterial({color:0x050505})));
+    { // open mouth: horn rim + the dark slot the blade slid out of
+      mouth.add(inked(new THREE.CylinderGeometry(.0198,.0198,.004,M).scale(1,1,.77).translate(0,y0+.001,0),0x2b2a29,.003));
+      mouth.add(new THREE.Mesh(new THREE.CylinderGeometry(.0042,.0042,.002,8).scale(3.2,1,1).translate(.002,y0+.0035,0),new THREE.MeshBasicMaterial({color:0x050505})));
     }
     g.add(inked(new THREE.BoxGeometry(.008,.024,.012).translate(.019,y0-.1,0),0x1f1e1d,.003));                         // kurikata
     g.add(inked(new THREE.CylinderGeometry(.0158,.012,.03,M).scale(1,1,.77).translate(cx(1),y1-.005,0),METAL,.004));     // kojiri
@@ -595,6 +598,8 @@ const rig={};
   };
   // second katana for the left hand (K, K: dual-wield cut) — shares geometry/materials with the first; hidden until drawn from the back saya
   rig.katana2=kat.clone(true); rig.katana2.visible=false; scene.add(rig.katana2);
+  // the back sword's hilt in the wielded katana's frame (no mesh): what the left fingers close round before the draw / after the sheathe (setFingers/adaptLeft)
+  rig.backHilt=new THREE.Object3D(); rig.katana2Grip=new THREE.Object3D();   // katana2Grip: the drawn sword's pose in the fist, before the swap blend (see katana2)
   OL_SCALE=1;
 })();
 
@@ -844,21 +849,30 @@ function loadNinja(){
     for(const e of rig.eyes) scene.add(e);
     // Back swords (code-built; the model has none): two points on each sword's axis in Spine01-local METRES (Spine01 = Mixamo Spine1;
     // the glb has no 0.01 armature scale any more), the tsuba / saya mouth sits `mouth` m down from `top`, above their respective shoulders.
-    // Spine01-local -Z points out of the back. The outer one [1] is the empty saya of the katana in hand; [0] (the spare sword the K K draw uses) sits at the LEFT HIP since 2026-10-24 (was above the left shoulder).
-    const BACK_SWORDS=[{top:[.2486,-.2272,.3314], bot:[.0812,-.5510,-.5998], mouth:.29},
-                       {top:[-.4069,.4809,-.1116], bot:[.4681,-.6934,-.3452], mouth:.29, empty:true}];
-    real.backSwords=BACK_SWORDS.map(({top,bot,mouth,empty})=>{
+    // Spine01-local -Z points out of the back. [0] = the spare sword the K K draw uses (hilt above the LEFT shoulder), [1] = the empty saya of the katana in hand
+    // (outer, crossing over [0]). 2026-10-25 refit to the raw body and to the Meshy cloak: only the z of `top`/`bot` moved (an outward shear), fitted from the
+    // idle pose so the inner saya keeps ≥1.5 cm off the clothes and the outer one ≥1.2 cm off the inner one; `cloak` = the placement while the cloak is worn.
+    // With the cloak the inner saya presses ≤1 cm into the thick cowl below the shoulder (the saya capsules in cloak.js push the cloth under it): flush on
+    // the cowl its hilt sat 4 cm further back and the left hand reached it ~35° off the saya's axis on a quick K K.
+    const BACK_SWORDS=[{top:[.3568,.5159,-.0865], bot:[-.5278,-.6232,-.2265], cloak:{top:[.3568,.5159,-.1465], bot:[-.5278,-.6232,-.2965]}, mouth:.29},
+                       {top:[-.4069,.4809,-.0191], bot:[.4681,-.6934,-.4627], cloak:{top:[-.4069,.4809,-.2016], bot:[.4681,-.6934,-.3402]}, mouth:.29, empty:true}];
+    const backM=(top,bot,mouth)=>{
       const T=new THREE.Vector3(...top), B=new THREE.Vector3(...bot), Y=T.clone().sub(B).normalize();
       const X=new THREE.Vector3().crossVectors(Y,new THREE.Vector3(0,0,-1)).normalize(), Z=new THREE.Vector3().crossVectors(X,Y);
-      const M=new THREE.Matrix4().makeBasis(X,Y,Z).setPosition(T.clone().addScaledVector(Y,-mouth));
-      const g=rig.backSword({empty}); g.visible=BACK_GEAR.visible; scene.add(g); return {g,M};
+      return new THREE.Matrix4().makeBasis(X,Y,Z).setPosition(T.clone().addScaledVector(Y,-mouth));
+    };
+    real.backSwords=BACK_SWORDS.map(({top,bot,cloak,mouth,empty})=>{
+      const g=rig.backSword({empty}); g.visible=BACK_GEAR.visible; scene.add(g); return {g,M:backM(top,bot,mouth),Mc:backM(cloak.top,cloak.bot,mouth)};
     });
     rig.back.visible=false; rig.cloakRoot.visible=false; rig.hood.visible=false; rig.mask.visible=false;
     // hide the procedural body; the driver groups themselves keep running invisibly
     for(const [d] of BONE_MAP) for(const c of rig[d].children) if(c.userData.mesh) c.visible=false;
     for(const s of ['R','L']) for(const p of ['upper','fore','hand']) rig[p+s].visible=false;
     rig.real=real;
-    real.equipmentCloak=createCloak({THREE,root:rig.root,real,SOD,loadTexture:embeddedImageTexture,swords:()=>[rig.katana,rig.katana2],onReady:()=>setCloak(EQUIPMENT.cloak)});
+    // back sayas as cloth capsules (sword space: saya mouth at 0, saya down to -.77, hilt up to +.24): r = the saya's half-width + 6 mm
+    const sayaCapsules=()=>(BACK_GEAR.visible?real.backSwords:[]).flatMap(({g},i)=>{ g.updateMatrixWorld(true); const pt=y=>new THREE.Vector3(0,y,0).applyMatrix4(g.matrixWorld);
+      return [{name:'Saya'+i,a:pt(-.77),b:pt(0),r:.024,r1:.026}, ...(g.userData.hilt.visible&&i===0?[{name:'BackHilt'+i,a:pt(0),b:pt(.24),r:.025,r1:.025}]:[])]; });
+    real.equipmentCloak=createCloak({THREE,root:rig.root,real,SOD,loadTexture:embeddedImageTexture,swords:()=>[rig.katana,rig.katana2],extraCapsules:sayaCapsules,onReady:()=>setCloak(EQUIPMENT.cloak)});
     setCloak(EQUIPMENT.cloak);
     real.equipmentMask=createMask({THREE,root:rig.root,real,loadTexture:embeddedImageTexture,onReady:()=>setMask(EQUIPMENT.mask)});
     setMask(EQUIPMENT.mask);
@@ -1085,7 +1099,7 @@ function setCloak(on){
   b.textContent=b.disabled?'กำลังโหลดผ้าคลุม…':rig.real?.equipmentCloak?.status==='error'?'ผ้าคลุม · โหลดอีกครั้ง':EQUIPMENT.cloak?'ผ้าคลุม · สวมอยู่':'ผ้าคลุม · ถอดอยู่';
   try{localStorage.setItem('potsbm_equipment',JSON.stringify(EQUIPMENT));}catch{}
 }
-const BACK_GEAR={visible:false}; // temporarily hide back-mounted props while tuning the shoulder/grip
+const BACK_GEAR={visible:true}; // back-mounted swords: the spare sword (K K draws it) + the empty saya of the katana in hand
 // Clavicle drop/retraction in radians; carryTwist limits upper-arm roll in degrees.
 // Keep the shoulder close to rest height; retract ~6° walking / ~7° running.
 // runPulse adds ~1° of retraction per stride, rather than a repeated shrug.
@@ -1248,7 +1262,10 @@ function driveRealBones(real){
   real.equipmentMask?.update();
   const headM=real.bone.Head.matrixWorld, headQ=real.bone.Head.getWorldQuaternion(_q1);
   rig.eyes.forEach((e,i)=>{ e.position.copy(real.eyeLocal[i]).applyMatrix4(headM); e.quaternion.copy(headQ); e.rotateZ(real.eyeRot[i]); });
-  for(const s of real.backSwords) _m4.multiplyMatrices(real.bone.Spine01.matrixWorld,s.M).decompose(s.g.position,s.g.quaternion,s.g.scale);
+  const cloakOn=!!real.equipmentCloak?.group.visible;
+  for(const s of real.backSwords) _m4.multiplyMatrices(real.bone.Spine01.matrixWorld,cloakOn?s.Mc:s.M).decompose(s.g.position,s.g.quaternion,s.g.scale);
+  const bk=real.backSwords[0].g; rig.backHilt.quaternion.copy(bk.quaternion).multiply(_q1.setFromAxisAngle(V(0,0,1),Math.PI));
+  rig.backHilt.position.copy(V(0,KAT_TSUBA,0).applyQuaternion(bk.quaternion).add(bk.position)); rig.backHilt.updateMatrixWorld(true);
 }
 /* Fingers. The glb's hands are open with full finger bones (the previous model had a fist modelled into the mesh). Each finger is curled by rotating
    its three joints about a hand-local axis (right hand: +Z turns +Y toward -X = into the palm; left hand: the mirror), so the fist is a pure function of
@@ -1350,12 +1367,14 @@ function prepFingers(real){
   }
   return out;
 }
+// the hilt the left hand closes round: its own drawn sword, the back sword's hilt while reaching for / returning it, else the right sword's
+const leftHilt=()=>S.dualEff>S.twoEff?(rig.katana2?.visible?rig.katana2Grip:rig.backHilt):rig.katana;
 function setFingers(real, kL=1, kR=1, carry=0){ // k = how closed each fist is (0 = bind/open, 1 = full grip)
   const a=real.fingers; if(!a) return;
   // left hand on a hilt: rotation (hand-local) from the seat's blade axis (mirror of the right seat's) to the blade axis actually in the hand this frame
   let leftAdj=null;
   if(FIST.hiltGripAll&&Math.max(S.twoEff||0,S.dualEff||0)>0&&real.arm?.L?.ha){
-    const kat=S.dualEff>S.twoEff&&rig.katana2?.visible?rig.katana2:rig.katana;
+    const kat=leftHilt();
     const now=V(0,1,0).applyQuaternion(kat.getWorldQuaternion(_qk)).applyQuaternion(real.arm.L.ha.getWorldQuaternion(_qk2).invert()).normalize();
     const seat=V(0,1,0).applyQuaternion(_qh.copy(RUN_HOLD.K).invert()); seat.x=-seat.x;
     leftAdj=_qadj.setFromUnitVectors(seat.normalize(),now);
@@ -1423,7 +1442,7 @@ const TSUKA_PROFILE=[[-.172,.0158],[-.15,.0168],[-.06,.0176],[.03,.0168],[.054,.
 function tsukaR(y){ for(let k=1;k<TSUKA_PROFILE.length;k++) if(y<=TSUKA_PROFILE[k][0]){ const a=TSUKA_PROFILE[k-1],b=TSUKA_PROFILE[k]; return a[1]+(b[1]-a[1])*(y-a[0])/(b[0]-a[0]); } return .0172*TSUKA_S; }
 const FINGER_R={Index:.0098,Middle:.0101,Ring:.0096,Pinky:.0084,Thumb:.0118};   // Thumb: the 2026-10-22 thicker thumb (≈2.4 cm at the IP joint)
 function adaptLeft(real,job,leftAdj){
-  const {c,g,base}=job, kat=S.dualEff>S.twoEff&&rig.katana2?.visible?rig.katana2:rig.katana; kat.updateMatrixWorld(true); real.arm.L.ha.updateMatrixWorld(true);
+  const {c,g,base}=job, kat=leftHilt(); kat.updateMatrixWorld(true); real.arm.L.ha.updateMatrixWorld(true);
   const inv=_m4.copy(kat.matrixWorld).invert();
   runCurlAxis(c.f,AX_H); AX_H.set(AX_H.x,-AX_H.y,-AX_H.z);
   const tip=real.bone[`LeftHand${c.f}4`], pose=s=>{
@@ -1533,7 +1552,7 @@ function aimArm(a, S0, E, W, twistLimit=Math.PI, T=0, rollRate=0, restRoll=null,
       const limited=clampRoll(twist,a.upperRoll??twist,twistLimit);
       // A bounded joint must return THROUGH its interval, never take a modulo-2π shortcut around the shoulder.
       a.upperRoll=anatomical
-        ? (a.upperRoll??twist)+clamp((clamp(twist,-100*D2R,100*D2R)-(a.upperRoll??twist))*(1-Math.exp(-T/.06)),-300*D2R*T,300*D2R*T)
+        ? (a.upperRoll??twist)+clamp((clamp(twist,-100*D2R,100*D2R)-(a.upperRoll??twist))*(1-Math.exp(-T/.06)),-DUAL.upperRate*D2R*T,DUAL.upperRate*D2R*T)
         : twistLimit<Math.PI-.01   /* (carryR a hair above 0 after a stop gives a limit just under π: still not a carry) */
         ? smoothAngle(a.upperRoll??twist,limited,T,.06,GRIP_TUNE.carryRollRate*D2R)
         : rollRate>0 ? wrapA(smoothAngle(a.upperRoll??twist,restRoll==null?twist:restRoll+wrapA(twist-restRoll)*(1-Math.max(restW,straightW)),T,.05,rollRate*D2R)) : twist;   /* wrapped: the smoothed value drifted past ±π (383° ≡ 23°) and read as a huge roll */
@@ -1860,26 +1879,26 @@ const ATTACK2={ kanji:'突', lunge:10, impactMin:140, chain:99999, chainK:400, e
 // dual wield (K, K) — 双 sō, a paired cut: left diagonal downstroke and right inward cut. The second K (during the thrust's hold, or within DUAL_WINDOW after it) makes the LEFT hand reach
 // over to the back-saya hilt and draw the second sword (`draw`: the saya sword is swapped for the one in the hand at that moment — the draw pose below is
 // the hilt's own position, measured from the back sword, so the swap is seamless), wind both blades out wide, then a lunge (same stance/step as the thrust)
-// while the left blade falls from a high guard, hold, and the left hand returns to the hip hilt (`sheathe`).
+// while the left blade falls from a high guard, hold, and the left hand retraces the overhead route to the back hilt (`sheathe`).
 // `start` = the wind-up key (lunge/trail/hit test begin there; key 0 is only the draw).
 const DUAL_WINDOW=420;
-// The spare sword rides at the LEFT hip like a belt-worn katana (hilt forward, saya tip trailing behind the thigh, `BACK_SWORDS[0]`): the left hand reaches it
-// with the elbow ≥105° and a relaxed wrist (≤~35 % of its range). The hand-orientation rate caps (`handRate`, `aimRate`) are raised so the hand has turned
-// to the saya's axis by the swap (at 220/700 °/s it was still ~45° off when the sword changed hands). 2026-10-24: it used to sit above the left shoulder (hand 19 cm from the shoulder joint → elbow folded to 40°, 15 cm above
-// the shoulder, wrist pinned at its limit for ~0.4 s, hand beside the head grabbing nothing while the back gear is hidden).
-const DRAW2={ hx2:.239, hy2:-.299, hz2:.156, by2:-160, el2:-20 };
-const WAY2={ hx2:.30, hy2:-.22, hz2:.02, by2:-160, el2:-20 };
+// The spare sword is on the BACK, hilt above the left shoulder (`BACK_SWORDS[0]`, user 2026-10-25: K K draws from the back — the 2026-10-24 hip draw is gone).
+// The hand-orientation rate caps (`handRate`, `aimRate`) are raised so the hand has turned to the saya's axis by the swap (at 220/700 °/s it was ~45° off).
+const DRAW2={ hx2:.251, hy2:.346, hz2:-.056, by2:-106, el2:-51 };
+const WAY2={ hx2:.25, hy2:.36, hz2:.18, by2:-106, el2:-51 };
 // `closeHit`/`hitPad`: after the lunging thrust the dummy stands within ~10 cm of the hands, so the blade's closest approach is at the hilt (u≈.05) and the default
 // `u>.25` rule never fired at the cut — the old 'dual cut hit' check only passed by an accidental graze ~250 ms later (it flipped with any change to the left arm).
-// Same relaxation the finisher uses; `handRate`/`aimRate` (°/s): rate caps of the left hand's orientation during the dual (see the hip-draw note above).
-const DUAL={ kanji:'双', lunge:9, impactMin:860, chain:99999, end:1860, reach:2.2, hit:4, start:3, draw:530, sheathe:1480, hitPad:.09, closeHit:true, handRate:900, aimRate:400,
+// Same relaxation the finisher uses; `handRate`/`aimRate` (°/s): rate caps of the left hand's orientation during the dual (see DRAW2 above); `swapBlend` (ms):
+// the drawn blade eases out of the saya's axis into the fist (and back before the sheathe) — see the katana2 placement; `upperRate` (°/s): the left upper
+// arm's twist rate cap (aimArm, anatomical ±100°). At 300 a quick K K (straight out of the thrust) needed ~140° of twist and was still ~25° off the saya at the draw.
+const DUAL={ kanji:'双', lunge:9, impactMin:860, chain:99999, end:1860, reach:2.2, hit:4, start:3, draw:530, sheathe:1480, hitPad:.09, closeHit:true, handRate:900, aimRate:400, swapBlend:110, upperRate:600,
   keys:[ [170, P({...WAY2, dual:1, hx:-.3,hy:-.3,hz:.1, by:0, el:-20, hipY:-.12, hipYaw:-.12, chestYaw:-.18, lean:.1, spread:.3, step:.3}),'io'],
          [460, P({...DRAW2, dual:1, hx:-.3,hy:-.3,hz:.1, by:0, el:-20, hipY:-.12, hipYaw:-.12, chestYaw:-.18, lean:.1, spread:.3, step:.3}),'io'],
          [640, P({dual:1, hx2:.30,hy2:.34,hz2:.20, by2:10, el2:65, hx:-.3,hy:-.3,hz:.1, by:0, el:-20, hipY:-.14, hipYaw:-.08, chestYaw:-.1, lean:.12, spread:.33, step:.32}),'io'],
          [760, P({dual:1, hx:-.28,hy:-.18,hz:.22, by:-45, el:-10, hx2:.30,hy2:.20,hz2:.22, by2:15, el2:60, hipY:-.2, lean:.2, spread:.36, step:.35, glint:.6}),'io'],
          [900, P({dual:1, hx:-.1,hy:0,hz:.36, by:20, el:2, hx2:.12,hy2:.02,hz2:.36, by2:-20, el2:-15, hipY:-.16, hipYaw:.05, chestYaw:.08, lean:.28, headYaw:-.05, spread:.24, step:.55, glint:1}),'in'],
          [1030, P({dual:1, hx:-.1,hy:0,hz:.34, by:20, el:40, hx2:.08,hy2:-.08,hz2:.32, by2:-35, el2:-35, hipY:-.16, hipYaw:.05, chestYaw:.08, lean:.28, spread:.24, step:.55, glint:.5}),'out'],
-         [1190, P({dual:1, hx2:.28,hy2:-.12,hz2:.08, by2:-160, el2:-20, hx:-.24,hy:-.18,hz:.21, by:-20, el:25, hipY:-.15, lean:.15, spread:.26, step:.4}),'io'],
+         [1190, P({dual:1, hx2:.30,hy2:.34,hz2:.20, by2:10, el2:65, hx:-.24,hy:-.18,hz:.21, by:-20, el:25, hipY:-.15, lean:.15, spread:.26, step:.4}),'io'],
          [1350, P({...DRAW2, dual:1, hx:-.26,hy:-.22,hz:.12, by:-15, el:55, hipY:-.08, lean:.1, spread:.2, step:.2}),'io'],
          [1480, P({...DRAW2, dual:1, hx:-.26,hy:-.22,hz:.12, by:-15, el:55, hipY:-.05, lean:.1, spread:.2, step:.2}),'io'],
          [1580, P({...WAY2, dual:1, hx:-.26,hy:-.22,hz:.12, by:-15, el:55, hipY:-.05, lean:.1, spread:.18, step:.1}),'io'],
@@ -1977,9 +1996,9 @@ function pressL(){ if(S.phase==='idle') startAttack(COMBO.length,ISSEN); else if
 // Passes over ponds / dummies, but lands only on free ground (so a wall or the island's edge shortens it). Cancels an attack's recovery.
 const BLINK={ dist:4, hide:110, land:200, cd:450 };
 const BLINK_LAND=P({hx:-.26,hy:-.2,hz:.2, by:-20, el:25, hipY:-.2, lean:.42, spread:.32, step:.65, headYaw:0});
-// S.sword2: the second sword is in the left hand (drawn from the back saya) — the sheathed back sword (backSwords[0], the full one) is hidden meanwhile
+// S.sword2: the second sword is in the left hand (drawn from the back saya) — the back sword (backSwords[0]) shows its saya empty meanwhile (hilt hidden, open mouth shown)
 function setNinjaVisible(v){ rig.root.visible=v; rig.katana.visible=v; rig.katana2.visible=v&&S.sword2; for(const e of rig.eyes) e.visible=v;
-  ((rig.real&&rig.real.backSwords)||[]).forEach((b,i)=>{ b.g.visible=v&&BACK_GEAR.visible&&!(i===0&&S.sword2); }); }
+  ((rig.real&&rig.real.backSwords)||[]).forEach((b,i)=>{ b.g.visible=v&&BACK_GEAR.visible; if(i===0){ b.g.userData.hilt.visible=!S.sword2; b.g.userData.mouth.visible=S.sword2; } }); }
 function setBackGearVisible(on){ BACK_GEAR.visible=!!on; setNinjaVisible(rig.root.visible); }
 function setSword2(on){ if(on===S.sword2||!rig.real) return; S.sword2=on; setNinjaVisible(rig.root.visible);
   if(!reduceMotion) for(let i=0;i<10;i++) spawn(rig.katana2.position.clone().add(V((rnd()-.5)*.3,(rnd()-.5)*.3,(rnd()-.5)*.3)),V((rnd()-.5)*2,.5+rnd()*1.5,(rnd()-.5)*2),[.55,.53,.5],.35); }
@@ -2346,7 +2365,7 @@ function applySkeleton(p,T){
       const contact=dt<0?0:smooth(clamp((dt-170)/100,0,1))*(1-smooth(clamp((dt-550)/90,0,1)))
         +smooth(clamp((dt-1190)/100,0,1))*(1-smooth(clamp((dt-1490)/90,0,1)));
       if(contact>0){ const back=real.backSwords[0].g;
-        G2.lerp(V(0,.12,0).applyQuaternion(back.quaternion).add(back.position),contact);
+        G2.lerp(V(0,KAT_TSUBA,0).applyQuaternion(back.quaternion).add(back.position),contact);   // where the fist sits on a wielded katana: the swap needs no slide
         qD0.slerp(back.quaternion.clone().multiply(new THREE.Quaternion().setFromAxisAngle(V(0,0,1),Math.PI)),contact);
         dir2=V(0,1,0).applyQuaternion(qD0); }
       S.rho.D=S.rho.D||0;
@@ -2423,8 +2442,13 @@ function applySkeleton(p,T){
     limitWrist(aL,'L',Math.max(smooth(clamp(dE/.3,0,1)),smooth(clamp((.8-(S.twoEff||0))/.3,0,1))*(1-dE)),T,cutLimits);   // full strength once the hand is mostly off the hilt / mostly on its own sword (hand-overs)
     S.dualHandQ=dualAct?aL.ha.getWorldQuaternion(new THREE.Quaternion()):null;
     // the second sword is glued to the left fist the same way (blade = hand * K⁻¹)
+    // except right at the swaps: for `swapBlend` ms after the draw (and before the sheathe) the blade turns about the fist between the saya's own axis
+    // and the fist's, so the hand-off never pops while the bounded wrist is still ~10–20° off the saya. `rig.katana2Grip` keeps the unblended pose (fingers).
     if(S.sword2){ const qH=aL.ha.getWorldQuaternion(new THREE.Quaternion()), qB2=qH.clone().multiply(_q.copy(gL.K).invert());
       r.katana2.quaternion.copy(qB2); r.katana2.position.copy(aL.ha.getWorldPosition(V())).add(gL.pt.clone().applyQuaternion(qH));
+      r.katana2Grip.position.copy(r.katana2.position); r.katana2Grip.quaternion.copy(qB2); r.katana2Grip.updateMatrixWorld(true);
+      const sb=DUAL.swapBlend, swapK=dualAct?Math.max(1-smooth(clamp((S.act.t-DUAL.draw)/sb,0,1)),smooth(clamp((S.act.t-DUAL.sheathe+sb)/sb,0,1))):0;
+      if(swapK>0){ qB2.slerp(real.backSwords[0].g.quaternion.clone().multiply(_q.setFromAxisAngle(V(0,0,1),Math.PI)),swapK); r.katana2.quaternion.copy(qB2); }
       const d2=V(0,1,0).applyQuaternion(qB2); sw2={G:r.katana2.position.clone(),dir:d2}; }
   } else {
     r.katana.position.copy(G);

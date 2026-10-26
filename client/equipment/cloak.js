@@ -2,7 +2,7 @@ import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 
 // Full-resolution fitted source. Optimization is deferred until the fit is final.
 // A separate skin drives broad cloth strips while retaining dense source detail.
-export function createCloak({THREE,root,real,SOD,loadTexture,swords=()=>[],onReady=()=>{}}){
+export function createCloak({THREE,root,real,SOD,loadTexture,swords=()=>[],extraCapsules=()=>[],onReady=()=>{}}){
   const group=new THREE.Group();group.name='equipment-cloak';root.add(group);
   const V=()=>new THREE.Vector3(),M=()=>new THREE.Matrix4(),Q=()=>new THREE.Quaternion();
   const rootInv=M(),chestDelta=M(),chestBindInv=M(),hipBind=V(),hipShift=V();
@@ -34,7 +34,7 @@ export function createCloak({THREE,root,real,SOD,loadTexture,swords=()=>[],onRea
   }
   // Arms and swords the cloth must not cut through. Radii = visible sleeve/glove + a cloth-thickness margin.
   // The push itself runs in the vertex shader (see load()), so every one of the 351k vertices is handled at full resolution.
-  const CAPSULES=[],MAX_CAPSULES=12,CLOTH_GAP=.014,SOFT=.012;
+  const CAPSULES=[],MAX_CAPSULES=16,CLOTH_GAP=.014,SOFT=.012;
   /* [radius at the joint, radius at the next joint]: the sleeve's measured silhouette (90th percentile of the skin-weighted body vertices
      around each bone axis), not a guess — the upper arm is ~8.5 cm thick, the forearm tapers 7 → 4 cm. */
   const ARM_RADIUS={up:[.082,.088],fore:[.072,.042],hand:[.045,.062]};
@@ -57,6 +57,7 @@ export function createCloak({THREE,root,real,SOD,loadTexture,swords=()=>[],onRea
       CAPSULES.push({name:'Hilt'+i,a:point(-.154),b:point(.08),r:.034+CLOTH_GAP,r1:.034+CLOTH_GAP});
       CAPSULES.push({name:'Blade'+i,a:point(.08),b:point(.84),r:.02+CLOTH_GAP,r1:.02+CLOTH_GAP});
     }
+    for(const c of extraCapsules())CAPSULES.push(c);   /* the back sayas: cloth swaying up under them is pushed back under them */
     const mask=real.equipmentMask?.collisionCapsule?.();   /* keep the hood/collar outside the worn mask */
     if(mask)CAPSULES.push(mask);
     return CAPSULES;
