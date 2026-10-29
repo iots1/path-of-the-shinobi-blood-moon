@@ -1,5 +1,7 @@
 # Blender pitfalls when editing `ninja.glb`
 
+> **2026-10-26 working-file update:** the current live file is `blender-ninja/new_ninja_raw_body_cloak_2026-10-25.blend`, now with `ThreeJS_Rig`. It supersedes the older master-path instruction below. The user explicitly requested a pre-edit backup; verified copies are in `blender-ninja/backups/before-anatomical-rig-20261026-170718/`. See `anatomical-rig-2026-10-26.md` for control axes, weights, export and runtime limits.
+
 > Moved verbatim out of `CLAUDE.md` on 2026-10-22 (it was over the size limit). See also `docs/BLENDER_MCP.md`. Some entries refer to the older hooded model (`char1`, cm units, 0.01 armature scale); the no-hood model is in metres with no armature scale.
 
 ### Blender

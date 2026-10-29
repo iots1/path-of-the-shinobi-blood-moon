@@ -6,7 +6,9 @@ export function encodeRigidTransform(p,q,real,dual,o=0){
   dual[o+3]=-.5*(p.x*q.x+p.y*q.y+p.z*q.z);
 }
 export function transformBlendedPoint(real,dual,indices,weights,p){
-  const r=[0,0,0,0],d=[0,0,0,0],ref=indices[0]*4;
+  const r=[0,0,0,0],d=[0,0,0,0];
+  let strongest=0;for(let k=1;k<4;k++)if(weights[k]>weights[strongest])strongest=k;
+  const ref=indices[strongest]*4;
   for(let k=0;k<4;k++){
     const o=indices[k]*4;let dot=0;for(let c=0;c<4;c++)dot+=real[ref+c]*real[o+c];
     const w=weights[k]*(dot<0?-1:1);

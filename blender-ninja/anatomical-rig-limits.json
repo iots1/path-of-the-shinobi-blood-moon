@@ -1,0 +1,167 @@
+{
+  "source": "/Users/PEEPO/Project/game/path-of-the-shinobi-blood-moon/assets/ninja.glb",
+  "blend": "/Users/PEEPO/Project/game/path-of-the-shinobi-blood-moon/blender-ninja/new_ninja_raw_body_cloak_2026-10-25.blend",
+  "scene": "ThreeJS_Rig",
+  "rig": "Ninja_ExportRig",
+  "mesh": "Ninja_CurrentBody",
+  "vertices": 392678,
+  "originalJoints": 70,
+  "deformJoints": 82,
+  "restMatrixMaxError": 4.76837158203125e-07,
+  "smoothedVerticesBySide": {
+    "Left": 18872,
+    "Right": 17559
+  },
+  "maxInfluences": 4,
+  "limits": {
+    "CTRL_Shoulder.L": {
+      "minDegrees": [
+        -25,
+        -20,
+        -30
+      ],
+      "maxDegrees": [
+        40,
+        20,
+        30
+      ]
+    },
+    "CTRL_Arm.L": {
+      "minDegrees": [
+        -120,
+        0,
+        -100
+      ],
+      "maxDegrees": [
+        145,
+        0,
+        100
+      ]
+    },
+    "CTRL_ArmRoll.L": {
+      "minDegrees": [
+        0,
+        -90,
+        0
+      ],
+      "maxDegrees": [
+        0,
+        90,
+        0
+      ]
+    },
+    "CTRL_ForeArm.L": {
+      "minDegrees": [
+        -5,
+        0,
+        0
+      ],
+      "maxDegrees": [
+        145,
+        0,
+        0
+      ]
+    },
+    "CTRL_ForeArmRoll.L": {
+      "minDegrees": [
+        0,
+        -85,
+        0
+      ],
+      "maxDegrees": [
+        0,
+        85,
+        0
+      ]
+    },
+    "CTRL_Hand.L": {
+      "minDegrees": [
+        -70,
+        -15,
+        -25
+      ],
+      "maxDegrees": [
+        70,
+        15,
+        25
+      ]
+    },
+    "CTRL_Shoulder.R": {
+      "minDegrees": [
+        -25,
+        -20,
+        -30
+      ],
+      "maxDegrees": [
+        40,
+        20,
+        30
+      ]
+    },
+    "CTRL_Arm.R": {
+      "minDegrees": [
+        -120,
+        0,
+        -100
+      ],
+      "maxDegrees": [
+        145,
+        0,
+        100
+      ]
+    },
+    "CTRL_ArmRoll.R": {
+      "minDegrees": [
+        0,
+        -90,
+        0
+      ],
+      "maxDegrees": [
+        0,
+        90,
+        0
+      ]
+    },
+    "CTRL_ForeArm.R": {
+      "minDegrees": [
+        -5,
+        0,
+        0
+      ],
+      "maxDegrees": [
+        145,
+        0,
+        0
+      ]
+    },
+    "CTRL_ForeArmRoll.R": {
+      "minDegrees": [
+        0,
+        -85,
+        0
+      ],
+      "maxDegrees": [
+        0,
+        85,
+        0
+      ]
+    },
+    "CTRL_Hand.R": {
+      "minDegrees": [
+        -70,
+        -15,
+        -25
+      ],
+      "maxDegrees": [
+        70,
+        15,
+        25
+      ]
+    }
+  },
+  "twistRule": "Arm/ForeArmTwist1..3 local Y = constrained matching CTRL roll Y * (1/3,2/3,1)",
+  "previewSkinning": "linear, compatible with default Three.js; game already supports DQ",
+  "runtime": "Bake evaluated deform motion; glTF does not execute Blender constraints or drivers.",
+  "twistWeightAttachment": "Upper arm starts twist after 35% of length; forearm after 15%; wrist cuff has a continuous 75 mm transition.",
+  "weightNotes": "Shoulder spine influences consolidated to Spine2 to reserve four-weight budget; twelve local smoothing passes; fingers excluded. Wrist cuff has continuous 75 mm transition."
+}

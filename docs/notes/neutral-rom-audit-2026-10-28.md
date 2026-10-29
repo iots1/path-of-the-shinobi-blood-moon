@@ -1,0 +1,39 @@
+# Neutral-frame RoM audit and run-entry / ankle corrections — 2026-10-28
+
+Historical initial candidate: `anatomy-20261028-v12`. Later corrections and final validation are in [J recovery and K K wind-up](j-return-and-dual-windup-2026-10-28.md). In particular, the final running J/L entry blend affects the right arm only; independently blending the left support arm caused hand/hilt separation and was rejected. This pass preserves either sword's local grip, the Blender master, GLB, weights, UVs, textures, normals and fingers. Before-code and calibrated baseline reports are in `out/rom-neutral-before/`. The working asset remains `ninja-anatomical-preview.glb`.
+
+## Measurement, zero and interpretation
+
+`client/debug/anatomical_measure.js` constructs virtual anatomical frames from the retained bind rotations, actual long-bone directions, anterior direction and anatomical shoe frame. It never moves the skeleton to establish zero. Source-bone XYZ, Blender authoring controls and these anatomical proxies are distinct measurements.
+
+The actual bind is not a neutral anatomical pose: upper arms point about 75–77° from down; there is sagittal elbow prebend as well as carrying angle; both knees have about **17.22° sagittal prebend**. Zeroing the bind would hide that knee bend and falsely report hyperextension during walking. The knee measurement therefore uses the thigh's long axis, not the bind calf direction. The ankle uses the actual ankle→knee direction in the shoe frame, not an Euler difference from the tilted bind shin. Hip flexion / abduction use segment direction to avoid false abduction from a YXZ Euler branch at a deeply flexed hip. Neck and spine flexion have the opposite X sign to a downward-pointing limb.
+
+Elbow flexion projects the forearm into the upper arm's anterior plane. `elbow.hingeFlexion`, `elbow.offPlane` and `forearm.controlRoll` retain the separate authoring-frame diagnostics. Carrying angle must not be silently counted as sagittal elbow flexion. Shoulder elevation is humerothoracic, not isolated glenohumeral motion. Forearm pronation uses a virtual palm frame: this asset has no radius/ulna landmarks. Shoulder axial swing/twist and forearm pronation remain **proxies requiring review**, not a clinical ISB calibration. A 180° swing has no unique axial decomposition and is recorded as undefined instead of a fabricated zero.
+
+The configured reference envelopes are character review limits, informed by the user's reference table; they are **not a verified AAOS certification or a universal injury threshold**. In particular, the ±5° elbow off-plane flag is an authoring-hinge review criterion. Existing ordinary wrist limits 80/70/25/40 and K K authoring controls remain as before; therefore upper-limb review flags are expected and remain visible. Primary references for coordinate-system practice and population variability: [ISB joint coordinate recommendations](https://media.isbweb.org/images/documents/standards/isb_jcs_part_ii.pdf), [CDC normal RoM study](https://archive.cdc.gov/www_cdc_gov/ncbddd/jointrom/index_1704899060.html).
+
+## Runtime corrections
+
+- **Running into J / L:** capture the actual incoming clavicle/upper/forearm/hand pose for every attack. Original K / K K keep their existing entry code. J / L from movement blend from the captured pose over 160 ms and retain local rate bounds throughout that attack (clavicle 300, upper/forearm 1500, hand 3000°/s). Ending the rate cap abruptly at 180 ms was avoided. Both fist transforms still determine their swords through the same local grip calibration.
+- **Ankles:** `client/rig/ankle_limits.js` runs after procedural/clip/reference leg posing, before ground snap. It bounds actual dorsiflexion / plantarflexion to 20° / 50° by rotating the shoe about its own lateral axis. It preserves the forefoot's world orientation, permitting heel rise instead of forcing the entire foot flat. Ground snap then uses the existing sole points. This also applies during locomotion transitions.
+- **Trailing hip:** the procedural thigh extension is capped at 30°. Previously the deepest thrust / L lunge drove the trailing hip behind the configured envelope and compensated with excessive ankle dorsiflexion.
+
+The rejected diagnostic experiment which reoriented only the upper arm to its exact source hinge (retaining the hand) is not shipped. It reduced the elbow off-plane residual but concentrated rotation in the forearm / shoulder. `out/rom-audit-hinge-candidate.json` is experimental evidence, not a current passing result.
+
+## Coverage and review tools
+
+`?mode=romaudit` runs **13 scenarios, 12,600 simulation steps at 4 ms**: idle, walk→stop, run→stop, four-way running, J J J, K, quick / delayed / repeated K K, running into K K and J J J, L, and blink. `out/rom-audit.json` contains every step's angles, time/action context and flags, ranges and peak times, projected coordinate rates, and branch-free source-quaternion angular rates / accelerations. Acceleration is a diagnostic, not a medical threshold.
+
+The report offers a scenario selector and links to `?mode=romframe&scenario=<name>&at=<ms>&bones=1`. Those links re-simulate the named scenario and capture the requested point plus ±20 / ±40 ms, in four directions at full resolution, with the actual captured frame's joint readings. They preserve real lunging / routing rather than forcing attacks in place. Because the audit runs stabilized scenarios sequentially and these links start a fresh simulation, history-dependent details can differ slightly; the displayed angle table belongs to the actual new image. `motion_check.views` also includes calibrated readings / method metadata for ordinary captures. The existing zoom / pan controls remain available.
+
+`?mode=romcombo&bones=1` focuses the running entry. `liftcheck`, `thrustdetail`, `powerdraw` remain the K / K K close-up routes. The RoM page explicitly distinguishes reference flags from a passing game regression result.
+
+## Verification and remaining work
+
+- Combined `m.run()`: **166 PASS, 0 FAIL**. Includes the original K / K K 4 ms contact / attachment checks plus all 13 full-body numerical and lower-body / neck / spine envelope checks, and guards against the severe running-entry regression. `out/joint-audit.json`: revision v12, 7,900 arm samples, zero configured game violations, no shader errors.
+- New RoM report: all finite; no configured knee / hip / ankle / neck / spine reference flags in the 13 scenarios. Maximum measured dorsiflexion is about 20.00003° (floating-point error).
+- In the calibrated running→combo comparison, the right elbow's projected reversed branch (about −178°) becomes about −4.3°; peak source-hinge off-plane angle falls from about 80–82° to 36–43°. The right wrist's projected flexion rate falls from about 6,449 to 2,409°/s. These are regression improvements, **not proof that the remaining arm motion is anatomically correct**.
+- Eleven math tests pass (arc, twist, volume invariance, neutral/mirrored direction signs, carrying-angle separation and ankle envelope). Inline module / changed JS syntax checks pass.
+- Fresh run/walk/combo/stop sheets have been inspected in all four directions; close-up capture results are retained in `out/` with revision metadata.
+
+**Still open:** upper-arm axial proxies, forearm pronation proxies, source elbow-plane residuals in the legacy controller, and wrist deviation outside the stricter review envelope still occur. They are reported, not hidden or counted as medical passes. The 166 passing checks establish game-regression / contact / numerical / selected-envelope criteria only. Do not describe this pass as “every joint in every animation is anatomically correct.” Further upper-limb work must solve a feasible elbow trajectory and forearm/wrist orientation together while retaining palm contact; rotating the shoulder alone is insufficient.

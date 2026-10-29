@@ -13,7 +13,7 @@ You are helping build an isometric ink-brush-style action game. The user is new 
 - `client/legacy/ninja-dojo-2d.html` — the 2D prototype (PixiJS), kept for reference, do not edit
 - `server/main.go` — Go dev server (serves the client + assets)
 - `art/reference/` — reference images: `ninja-sword/` (no face covering, sword on the back), `ninja-body/` (no face covering, no sword — body/proportions only), `cloak/` (hooded — the current in-game model's source reference)
-- `assets/ninja.glb` — the character (the no-hood Meshy ninja, Mixamo rig, 70 joints incl. fingers + palm metacarpals; Git LFS; carries its own `Walking`/`Running` clips — see "Current model at a glance"). Older models/backups: `assets/raw/backup-*`. Inspect with `python3 tools/inspect_glb.py assets/ninja.glb`.
+- `assets/ninja-anatomical-preview.glb` — current in-game character, 82 joints including 12 arm twist helpers; `client/rig/twist_skinning.js` connects the retained arm controller to skin rotation (see `docs/notes/anatomical-rig-2026-10-26.md`). `assets/ninja.glb` remains the 70-joint source/rollback model used by preparation/export tools. Both carry original `Walking`/`Running` clips; gameplay ignores the new asset's validation clip.
 
 Run with `cd server && go run .` then open http://localhost:8080
 
@@ -31,6 +31,18 @@ CLAUDE.md is kept short (size limit). Every finding, measurement, dead end and "
 | `docs/notes/model-2026-10-18.md` | key reach rescaling policy, beat-2 stiffness dead end, post-attack droop (`IDLE_RELAX_MS`), grip-flicker history, `embeddedImageTexture()`, shoulder-mesh fix lessons |
 | `docs/notes/architecture-details.md` | rig driving, leg correction, ground snap, locomotion clips, arm/grip continuity, every attack's design (beats 1–3, Space blink, K, K K, L), `BODY`/off-hand, material, back cloak, back swords, debug tips |
 | `docs/notes/blender-pitfalls.md` | any Blender edit/export of `ninja.glb` |
+| `docs/notes/anatomical-rig-2026-10-26.md` | current working `.blend` path, `ThreeJS_Rig` arm controls/twist weights, backups, and candidate GLB integration |
+| `docs/notes/upper-arm-roll-2026-10-26.md` | continuous axial arm motion, preserved grip trajectories, and before/after attack tests |
+| `docs/notes/debug-frame-viewer-2026-10-27.md` | full-resolution anatomical debug viewer, zoom/pan and camera-invariant capture metadata |
+| `docs/notes/shoulder-attachment-and-thrust-2026-10-28.md` | current K two-hand support, continuous K→K K hand-off, bounded shoulder-head travel and frame verification |
+| `docs/notes/neutral-rom-audit-2026-10-28.md` | virtual anatomical zero, full-body 4 ms audit, run→attack entry and ankle/hip bounds; remaining upper-limb reference flags |
+| `docs/notes/j-return-and-dual-windup-2026-10-28.md` | standing reference recovery after J, preserved support grip, earlier and wider K K right wind-up and downward cut |
+| `docs/notes/left-lift-detail-2026-10-27.md` | latest K K left-lift comfort, clavicle protraction, 600 ms approach and dense 20 ms frame review |
+| `docs/notes/shoulder-led-draw-2026-10-27.md` | user reference for shoulder-led K K reach, locked distal shape, saya extraction and extended downward cut |
+| `docs/notes/dual-reach-anatomy-2026-10-27.md` | K K anatomical control frames, continuous constrained back-hilt grip, per-4-ms joint and velocity audit |
+| `docs/notes/kk-skin-winding-2026-10-27.md` | K K corkscrew regression, bounded skin twist, Blender/runtime constraint distinction and repeated recovery tests |
+| `docs/notes/elbow-folds-and-left-support-2026-10-26.md` | latest elbow fold weights, left support-arm plane, exact hand preservation and validation |
+| `docs/notes/elbow-shoulder-surface-2026-10-26.md` | latest shoulder fit/elbow weights, dominant-weight DQ reference, regional hybrid skinning and export workflow |
 | `docs/notes/hires-raw-rig-2026-10-22.md` | rigging the raw 750k-tri Meshy body onto the current skeleton (`tools/rig_raw_hands.py`, `tools/graft_mesh2.py`) — now `ninja.glb` incl. the raw hands; grip re-solved |
 | `docs/BONES.md`, `docs/BLENDER_MCP.md`, `docs/RUN_V2.md`, `docs/CREDITS.md` | bone names, Blender MCP setup, run v2, credits |
 
@@ -76,5 +88,5 @@ Raw Meshy body (≈390k verts / 732k tris, raw face/clothes, 4096² JPEG texture
 - Work in small steps and explain what changed at each one, since the user is new to this.
 
 ## Blender
-See `docs/BLENDER_MCP.md` — uses blender-mcp (configured in `.mcp.json`). The user needs to have Blender open and click Connect first. If the blender tools aren't visible, ask the user to check that step (and restart `claude` after approving the MCP server). **The only `.blend` is `blender-ninja/new_ninja_raw_body_rigged_rebuilt_hands_2026-10-23.blend` — the master/template; edit and save over it, never create dated copies or extra `.blend` files (see `blender-pitfalls.md`).** Read `docs/notes/blender-pitfalls.md` before any edit/export; export recipes for the current model are in `docs/notes/hands-grip.md` ("Rebuilt hands" → Export) and `docs/notes/face.md`. **Render headless (`Blender -b`) — a render through the MCP crashed the user's Blender once.**
+See `docs/BLENDER_MCP.md` — uses blender-mcp (configured in `.mcp.json`). The user needs to have Blender open and click Connect first. If the blender tools aren't visible, ask the user to check that step (and restart `claude` after approving the MCP server). **Current working master: `blender-ninja/new_ninja_raw_body_cloak_2026-10-25.blend`, including `ThreeJS_Rig`; this supersedes the older 2026-10-23 path. Verified user-requested backups and the separate 82-joint preview are documented in `docs/notes/anatomical-rig-2026-10-26.md`. Save over this working master for future edits.** Read `docs/notes/blender-pitfalls.md` before any edit/export; export recipes for the current model are in `docs/notes/hands-grip.md` ("Rebuilt hands" → Export) and `docs/notes/face.md`. **Render headless (`Blender -b`) — a render through the MCP crashed the user's Blender once.**
 - Hand detail (knit glove, nails): see docs/notes/hires-raw-rig-2026-10-22.md Step 6; tool tools/refine_hands.py runs on assets/raw/ninja-before-hand-detail-2026-10-25.glb.

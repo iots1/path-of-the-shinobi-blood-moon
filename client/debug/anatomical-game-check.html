@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ตรวจเฟรมแขนและดาบ</title><link rel="stylesheet" href="/debug/frame_viewer.css"></head>
+<body>
+<header><div class="identity"><span class="seal" aria-hidden="true">忍</span><div><h1>ตรวจเฟรมแขนและดาบ</h1><p id="scenario">กำลังเตรียมภาพ…</p></div></div><a href="/">กลับเข้าเกม</a></header>
+<main>
+<aside>
+<div class="section"><label for="mode">ท่าที่ต้องการตรวจ</label><select id="mode"><option value="jreturnview">J คืนท่ายืน (ระยะใกล้)</option><option value="dualwindup">K K ง้างดาบขวา (ระยะใกล้)</option><option value="powerdraw">K K ชักดาบและฟันลง</option><option value="liftcheck">K K ยกแขนซ้าย (ทุก 20 ms)</option><option value="attachmentview">K K รอยต่อบ่าและแขน</option><option value="thrustdetail">K แทงสองมือ (ระยะใกล้)</option><option value="drawdetail">K K รายละเอียดแขน</option><option value="dual">K K ทั้งท่า</option><option value="combo">คอมโบ J J J</option><option value="run">วิ่ง</option><option value="walk">เดิน</option><option value="stop">วิ่งแล้วหยุด</option><option value="idle">ยืน</option><option value="thrust">แทง K</option><option value="issen">ฟัน L</option><option value="romsaved">ผล RoM ล่าสุด</option><option value="romaudit">RoM ทุกท่า / ทุก 4 ms</option><option value="check">ตรวจค่าการเคลื่อนไหว</option></select></div>
+<div class="section"><p class="label">มุมมองตัวละคร</p><div id="angles" class="angles" role="group" aria-label="มุมมอง"></div></div>
+<div class="section"><p class="label">เฟรมที่เลือก</p><strong id="time" class="time">— ms</strong><p id="actionTime">เวลาของท่า —</p><p id="phase">กำลังบันทึกเฟรม</p><div class="stepper"><button id="previous" aria-label="เฟรมก่อนหน้า">← ก่อนหน้า</button><button id="next" aria-label="เฟรมถัดไป">ถัดไป →</button></div><label class="range-label" for="timeline">เลื่อนเวลา <span id="frameCount">—</span></label><input id="timeline" type="range" min="0" max="0" value="0" disabled></div>
+<div class="section"><label class="check"><input id="bones" type="checkbox">แสดงเส้นกระดูก</label><p id="resolution" class="muted">ภาพรายเฟรมความละเอียดเต็ม</p><a id="download" class="download" aria-disabled="true">บันทึกเฟรม PNG</a></div>
+<div id="jointReadout" hidden></div><p class="hint">เลื่อนล้อเมาส์เพื่อซูม<br>ลากภาพเพื่อดูรายละเอียด<br>ปุ่ม ← → เปลี่ยนเฟรม<br>ปุ่ม + − ซูม และ 0 ดูเต็มภาพ</p>
+</aside>
+<section class="workspace" aria-label="ภาพตรวจท่า">
+<div class="toolbar"><div class="view-switch"><button id="single" aria-pressed="true">ทีละเฟรม</button><button id="overview" aria-pressed="false" disabled>ภาพรวม</button></div><div class="zoom-tools"><button id="zoomOut" aria-label="ย่อภาพ">−</button><output id="zoom">—%</output><button id="zoomIn" aria-label="ขยายภาพ">+</button><button id="actual">100%</button><button id="fit">พอดีหน้าต่าง</button></div></div>
+<div id="viewport" tabindex="0" role="region" aria-label="ภาพเฟรม ซูมด้วยล้อเมาส์และลากเพื่อเลื่อน"><img id="frameImage" data-testid="frame-image" alt="" draggable="false" hidden><p id="empty">กำลังโหลดตัวละครและบันทึกภาพ…</p><span id="viewLabel"></span></div>
+<div id="status" role="status">กำลังโหลดเกม…</div>
+<div id="thumbnails" class="thumbnails" aria-label="เลือกเฟรม"></div>
+<section id="romSummary" hidden></section><details id="report"><summary>ผลตรวจและข้อมูลเฟรม</summary><pre id="result">กำลังเตรียม…</pre></details>
+</section></main>
+<iframe id="game" title="เกมสำหรับบันทึกเฟรม" tabindex="-1" aria-hidden="true"></iframe>
+<script type="module" src="/debug/frame_viewer.js"></script></body></html>

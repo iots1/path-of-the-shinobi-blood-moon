@@ -1,0 +1,14 @@
+[
+  {
+    "source": "/Users/PEEPO/Project/game/path-of-the-shinobi-blood-moon/blender-ninja/new_ninja_raw_body_cloak_2026-10-25.blend",
+    "backup": "/Users/PEEPO/Project/game/path-of-the-shinobi-blood-moon/blender-ninja/backups/before-anatomical-rig-20261026-170718/new_ninja_raw_body_cloak_2026-10-25.blend",
+    "sha256": "01963318baaae245d5a8a235524809f4f82bb99bfff2be0da9b5966dff2152c6",
+    "bytes": 330162576
+  },
+  {
+    "source": "/Users/PEEPO/Project/game/path-of-the-shinobi-blood-moon/assets/ninja.glb",
+    "backup": "/Users/PEEPO/Project/game/path-of-the-shinobi-blood-moon/blender-ninja/backups/before-anatomical-rig-20261026-170718/ninja.glb",
+    "sha256": "0cb30940960a32f6a83920157b6f84d740f12f8627136fa50b64ccc2ddc6c533",
+    "bytes": 43099984
+  }
+]

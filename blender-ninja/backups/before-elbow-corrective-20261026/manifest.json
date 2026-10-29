@@ -1,0 +1,23 @@
+[
+  {
+    "source": "blender-ninja/new_ninja_raw_body_cloak_2026-10-25.blend",
+    "backup": "blender-ninja/backups/before-elbow-corrective-20261026/new_ninja_raw_body_cloak_2026-10-25.blend",
+    "sha256": "863dd4eaf364b7deb06266256d635b3258d09718ac2156051221d0452ae04b0b",
+    "compression": "none; verified hard-link snapshot; subsequent master save must use atomic replacement"
+  },
+  {
+    "source": "assets/ninja-anatomical-preview.glb",
+    "backup": "blender-ninja/backups/before-elbow-corrective-20261026/ninja-anatomical-preview.glb",
+    "sha256": "41822249766589027b06d1638f60ae84f93a2aa61f1d68cfdfcfa7244f262163"
+  },
+  {
+    "source": "client/index.html",
+    "backup": "blender-ninja/backups/before-elbow-corrective-20261026/index.html",
+    "sha256": "1c19744ae6ec5899215797b9e103da257a78d0fd9e4d27c12bf2020f0a7943b0"
+  },
+  {
+    "source": "client/rig/volume_skinning.js",
+    "backup": "blender-ninja/backups/before-elbow-corrective-20261026/volume_skinning.js",
+    "sha256": "acf777ef5a701ab2e390f0ad5bc4b2b76f960c138507e256f7d5931817878c8b"
+  }
+]

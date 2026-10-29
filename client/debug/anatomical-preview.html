@@ -1,0 +1,26 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><title>Ninja · Anatomical rig preview</title>
+<style>body{margin:0;background:#20242a;color:#e4e8ed;font:15px system-ui}header{position:fixed;z-index:2;top:18px;left:24px;max-width:650px}h1{font-size:23px;margin:0 0 8px}p{margin:5px 0;color:#b9c2cd}button,input,select{margin:12px 8px 0 0}button,select{padding:7px 12px}canvas{display:block}#status{color:#8fdfb5}</style>
+<header><h1>Ninja · Anatomical rig</h1><p>ศอก · ข้อมือ · ไหล่ · การกระจาย Twist — โมเดลทดสอบแยกจากเกม</p>
+<select id="clip"><option>Anatomical_Rig_Validation</option><option>Walking</option><option>Running</option></select><button id="play">Pause</button><input id="time" aria-label="Animation time" type="range" min="0" max="4" step="0.01" value="0"><span id="readout">0.00 s</span><button id="sheet">Save pose sheet</button><p id="status">Loading…</p></header>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);document.body.append(renderer.domElement);
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+const scene=new THREE.Scene();scene.background=new THREE.Color('#20242a');scene.add(new THREE.HemisphereLight(0xffffff,0x576171,2));const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(-2,4,3);scene.add(light);
+const camera=new THREE.PerspectiveCamera(35,innerWidth/innerHeight,.01,30);camera.position.set(2,1.7,3.1);const orbit=new OrbitControls(camera,renderer.domElement);orbit.target.set(0,.95,0);orbit.update();
+const grid=new THREE.GridHelper(3,12,0x647080,0x343d48);scene.add(grid);
+const gltf=await new GLTFLoader().loadAsync('/assets/ninja-anatomical-preview.glb');scene.add(gltf.scene);
+const mixer=new THREE.AnimationMixer(gltf.scene);let action,playing=true,t=0;const selector=document.querySelector('#clip'),slider=document.querySelector('#time'),readout=document.querySelector('#readout'),status=document.querySelector('#status');
+function choose(){mixer.stopAllAction();action=mixer.clipAction(gltf.animations.find(a=>a.name===selector.value));action.play();t=0;slider.max=action.getClip().duration;}
+choose();selector.onchange=choose;document.querySelector('#play').onclick=()=>{playing=!playing;document.querySelector('#play').textContent=playing?'Pause':'Play';};slider.oninput=()=>{playing=false;t=Number(slider.value);document.querySelector('#play').textContent='Play';};
+let skin;gltf.scene.traverse(o=>{if(o.isSkinnedMesh)skin=o;});status.textContent=`${skin.skeleton.bones.length} joints · ${skin.geometry.attributes.position.count.toLocaleString()} vertices · 3 animation clips`;
+function pose(time){mixer.setTime(time);gltf.scene.updateMatrixWorld(true);skin.skeleton.update();}
+let last=performance.now();function render(now){const dt=Math.min(.05,(now-last)/1000);last=now;if(playing)t=(t+dt)%action.getClip().duration;pose(t);slider.value=t;readout.textContent=t.toFixed(2)+' s';orbit.update();renderer.render(scene,camera);requestAnimationFrame(render);}requestAnimationFrame(render);
+document.querySelector('#sheet').onclick=async()=>{playing=false;document.querySelector('#play').textContent='Play';selector.value='Anatomical_Rig_Validation';choose();const canvas=document.createElement('canvas');canvas.width=1800;canvas.height=1800;const ctx=canvas.getContext('2d');ctx.fillStyle='#20242a';ctx.fillRect(0,0,1800,1800);renderer.setPixelRatio(1);renderer.setSize(450,600,false);camera.aspect=.75;camera.updateProjectionMatrix();const frames=[.5,1,1.5,2,2.5,3,3.5,0],angles=[0,Math.PI/2,-Math.PI/2,Math.PI];
+for(let row=0;row<3;row++)for(let col=0;col<4;col++){const tm=frames[row*2+(col>1?1:0)],a=angles[col];pose(tm);camera.position.set(Math.sin(a)*3.3,1.12,Math.cos(a)*3.3);camera.lookAt(0,.95,0);renderer.render(scene,camera);ctx.drawImage(renderer.domElement,col*450,row*600);ctx.fillStyle='#e4e8ed';ctx.font='18px system-ui';ctx.fillText(`${tm.toFixed(2)} s · ${['front','right','left','back'][col]}`,col*450+16,row*600+32);}
+const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));await fetch('/debug/save?name=anatomical-rig-threejs-sheet.png',{method:'POST',body:blob});status.textContent='Saved out/anatomical-rig-threejs-sheet.png';renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();camera.position.set(2,1.7,3.1);orbit.update();};
+window.addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();});
+</script></html>

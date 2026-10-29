@@ -28,6 +28,7 @@ const LIMITS = {
   // per-frame shoulder checks (shoulderTrace) — provisional, set from the first measurement (2026-10-21), see CLAUDE.md
   shoulderJumpMax: 1.0, // m/s the shoulder joint (LeftArm/RightArm) may move in the chest bone's own frame — it only moves by the clavicle, so a fast slide = a pop
   clavRateMax: 400,     // °/s clavicle bone angular speed
+  upperRollMax: 450,   // °/s axial roll; post-solve transport retains the grip pose
   runRollSwingMax: 6,   // ° peak-to-peak side-to-side sway of the hips→neck axis while running steadily (front reference: upright, no visible lean)
   runShoulderRollSwingMax: 10, // ° peak-to-peak tilt of the shoulder line while running steadily
   // anatomical range of motion (2026-10-21, adult averages; same numbers as WRIST_LIM in index.html, which enforces them)
@@ -112,8 +113,8 @@ export function dualHits(diag = false) { // K then K: the thrust and the dual cu
   reset(1.2, 1.4, 0);
   let t = 0, prevH = 0, shown = false; const out = [];
   const dummy = diag ? I.targets.filter(x => x.type === 'dummy').sort((a, b) => Math.hypot(a.x - 1.2, a.z - 2.8) - Math.hypot(b.x - 1.2, b.z - 2.8))[0] : null, near = { R: 9, L: 9 }, trace = [], xz = (a, b, c, full) => { const ab = b.clone().sub(a), u = Math.max(0, Math.min(1, ((c.x - a.x) * ab.x + (c.z - a.z) * ab.z) / (ab.x * ab.x + ab.z * ab.z || 1))), d = Math.hypot(a.x + ab.x * u - c.x, a.z + ab.z * u - c.z); return full ? `d${d.toFixed(2)} u${u.toFixed(2)} y${(a.y + ab.y * u).toFixed(2)}` : d; };
-  while (t < 2000) { if (t === 0 || t === 340) I.pressK(); I.frame(0, 4, true); t += 4; if (S.sword2) shown = true; if (S.hitstop > 0 && prevH <= 0 && S.act && S.act.t >= 200) { out.push(S.act.def.kanji); if (diag) trace.push(`HIT ${S.act.def.kanji} at a.t ${Math.round(S.act.t)} lastHit ${dummy.lastHit}`); } prevH = S.hitstop;
-    if (diag && S.act?.def === I.DUAL && S.act.t >= 740 && S.act.t <= 1100) { const bl = (k) => [k.localToWorld(new V(0, .07, 0)), k.localToWorld(new V(0, .82, 0))]; near.R = Math.min(near.R, xz(...bl(I.rig.katana), dummy)); if (I.rig.katana2.visible) near.L = Math.min(near.L, xz(...bl(I.rig.katana2), dummy));
+  while (t < 2800) { if (t === 0 || t === 340) I.pressK(); I.frame(0, 4, true); t += 4; if (S.sword2) shown = true; if (S.hitstop > 0 && prevH <= 0 && S.act && S.act.t >= 200) { out.push(S.act.def.kanji); if (diag) trace.push(`HIT ${S.act.def.kanji} at a.t ${Math.round(S.act.t)} lastHit ${dummy.lastHit}`); } prevH = S.hitstop;
+    if (diag && S.act?.def === I.DUAL && S.act.t >= I.DUAL.spreadEnd && S.act.t <= I.DUAL.returnStart) { const bl = (k) => [k.localToWorld(new V(0, .07, 0)), k.localToWorld(new V(0, .82, 0))]; near.R = Math.min(near.R, xz(...bl(I.rig.katana), dummy)); if (I.rig.katana2.visible) near.L = Math.min(near.L, xz(...bl(I.rig.katana2), dummy));
       if (t % 20 === 0) trace.push(`${Math.round(S.act.t)}:R[${xz(...bl(I.rig.katana), dummy, true)}] L[${I.rig.katana2.visible ? xz(...bl(I.rig.katana2), dummy, true) : '-'}] h${dummy.h}`); } }
   return { thrust: out.includes('突'), dual: out.includes('双'), shown, ...(diag ? { reachR: +near.R.toFixed(3), reachL: +near.L.toFixed(3), need: +(dummy.r + (I.DUAL.hitPad ?? .06)).toFixed(3), hits: out.join(''), trace: trace.filter(x => x.startsWith('HIT')).join(' | ') + ' || ' + trace.filter(x => !x.startsWith('HIT')).join(' | ') } : {}) };
 }
@@ -135,7 +136,7 @@ export function dualContacts(secondK = 340, fromRun = false) {
       if(prevTwist!==null) out.twist.travel+=Math.abs(Math.atan2(Math.sin(tw-prevTwist),Math.cos(tw-prevTwist)))*D;
       prevTwist=tw;
     }
-    if(a.t>=760 && a.t<=1060){
+    if(a.t>=I.DUAL.spreadEnd && a.t<=I.DUAL.returnStart){
       const ang=armAngles('L');
       out.cut.wrist=Math.max(out.cut.wrist,Math.hypot(ang.flex,ang.radial));
       const hip=R.bone.LeftUpLeg.getWorldPosition(new V()), knee=R.bone.LeftLeg.getWorldPosition(new V()), ankle=R.bone.LeftFoot.getWorldPosition(new V());
@@ -263,7 +264,7 @@ export function armAngles(side) {
 }
 // Steps a scenario 4 ms at a time and records, for each shoulder: the shoulder joint's speed in the chest's own frame (a pop = the joint jumping on
 // the torso), the clavicle bone's angular speed, and the balance angles above. `steady` = the window used for the roll amplitudes.
-export async function shoulderTrace({ until = 2600, runMs = 1200, shift = false, presses = [], fn, steady = [600, 1200], route } = {}) {
+export async function shoulderTrace({ until = 2600, runMs = 1200, shift = false, presses = [], fn, steady = [600, 1200], route, onSample } = {}) {
   await ready();
   reset();
   const out = { jump: { L: 0, R: 0, at: '' }, clavRate: { L: 0, R: 0, at: '' }, amp: {}, worst: [], samples: [] };
@@ -275,6 +276,7 @@ export async function shoulderTrace({ until = 2600, runMs = 1200, shift = false,
     if (!route && runMs && t === runMs) key('a', false, shift);
     if (pi < presses.length && t >= presses[pi]) { (fn ? I[fn] : I.press)(); pi++; }
     I.frame(0, 4, true); t += 4;
+    onSample?.(t,4);
     const inv = R.bone.Spine.matrixWorld.clone().invert();
     for (const s of ['L', 'R']) {
       const side = s === 'L' ? 'Left' : 'Right', p = wp(side + 'Arm').applyMatrix4(inv), q = R.bone[side + 'Shoulder'].quaternion.clone();
@@ -337,7 +339,7 @@ export async function run() {
     check(`${name} arms inside torso`, r.torso <= LIMITS.comboTorsoMax, `deepest ${(r.torso * 100).toFixed(1)} cm ${r.torsoAt} (limit ${LIMITS.comboTorsoMax * 100} cm)`);
     check(`${name} NaN`, !r.nan, r.nan ? 'NaN in a bone' : 'none');
     if (r.worst.length) lines.push('      spikes: ' + r.worst.join(' | ')); }
-  { const o = { presses: [0, 340], until: 2400, fn: I.pressK }, r = simulate(o), e = Math.max(r.elbowR.max, r.elbowL.max), wm = Math.max(r.wristR.max, r.wristL.max), wp95 = Math.max(r.wristR.p95, r.wristL.p95), name = 'dual K K';
+  { const o = { presses: [0, 340], until: 3400, fn: I.pressK }, r = simulate(o), e = Math.max(r.elbowR.max, r.elbowL.max), wm = Math.max(r.wristR.max, r.wristL.max), wp95 = Math.max(r.wristR.p95, r.wristL.p95), name = 'dual K K';
     check(`${name} elbow jumps`, e <= LIMITS.comboElbowMax, `max ${e.toFixed(1)} m/s (limit ${LIMITS.comboElbowMax})`);
     check(`${name} wrist peak`, wm <= LIMITS.comboWristMax, `max ${f(wm)}°/s (limit ${LIMITS.comboWristMax})`);
     check(`${name} wrist p95`, wp95 <= LIMITS.comboWristP95, `${f(wp95)}°/s (limit ${LIMITS.comboWristP95})`);
@@ -350,8 +352,8 @@ export async function run() {
     const tw=r.twist;
     check(`dual K K loaded wrist (${context})`,r.cut.samples>0 && r.cut.wrist<=26,`peak bend ${f(r.cut.wrist)}° during cut (limit 26)`);
     check(`dual K K support knee (${context})`,r.cut.samples>0 && r.cut.knee<=85,`peak flexion ${f(r.cut.knee)}° during cut (limit 85)`);
-    check(`dual K K axial joint limits (${context})`,tw.wrist<=30 && tw.forearm<=70 && tw.upper<=105,
-      `wrist ${f(tw.wrist)}° / forearm ${f(tw.forearm)}° / upper arm ${f(tw.upper)}° (limits 30/70/105)`);
+    check(`dual K K axial joint limits (${context})`,tw.wrist<=30 && tw.forearm<=85.001 && tw.upper<=105,
+      `wrist ${f(tw.wrist)}° / forearm ${f(tw.forearm)}° / upper arm ${f(tw.upper)}° (limits 30/85/105; forearm authoring stop)`);
     check(`dual K K no wrist spin (${context})`,tw.travel<=200,`cumulative axial travel ${f(tw.travel)}° from draw to sheathe (limit 200)`);
     for(const name of ['draw','sheathe']){
       const c=r[name]; check(`dual K K ${name} contact (${context})`, !!c && c.gap<=.025 && c.angle<=25,
@@ -382,7 +384,7 @@ export async function run() {
   // every 4 ms step: shoulder pops + side-to-side sway (see shoulderTrace)
   for (const [name, o] of [['run→stop', { until: 2600, runMs: 1200, steady: [700, 1200] }], ['walk→stop', { until: 3000, runMs: 1600, shift: true, steady: [900, 1600] }],
                            ['combo (standing)', { until: 1900, runMs: 0, presses: [0, 420, 860], steady: [0, 0] }], ['run reversals', { until: 6000, route: ['a', 'd', 'a', 'd', 'w', 's'], steady: [0, 0] }],
-                           ['thrust K', { until: 1200, runMs: 0, presses: [0], fn: 'pressK', steady: [0, 0] }], ['dual K K', { until: 2500, runMs: 0, presses: [0, 340], fn: 'pressK', steady: [0, 0] }],
+                           ['thrust K', { until: 1200, runMs: 0, presses: [0], fn: 'pressK', steady: [0, 0] }], ['dual K K', { until: 3500, runMs: 0, presses: [0, 340], fn: 'pressK', steady: [0, 0] }],
                            ['finisher L', { until: 2000, runMs: 0, presses: [0], fn: 'pressL', steady: [0, 0] }]]) {
     const r = await shoulderTrace(o), j = Math.max(r.jump.L, r.jump.R), c = Math.max(r.clavRate.L, r.clavRate.R);
     // joint range of motion, every frame, both arms
@@ -403,9 +405,57 @@ export async function run() {
       check('run sway: shoulder line', a.shoulderRoll.swing <= LIMITS.runShoulderRollSwingMax, `${rs('shoulderRoll')} (limit swing ${LIMITS.runShoulderRollSwingMax}); pelvis ${rs('pelvisRoll')}, head ${rs('headRoll')}, L−R shoulder height ${a.shoulderDyCm.min}…${a.shoulderDyCm.max} cm`);
     }
   }
+  const roll=R.upperRoll?.stats;
+  check('upper-arm roll continuity outside anatomical IK',!!roll&&roll.samples>0&&Number.isFinite(roll.maxRateDegrees)&&roll.maxRateDegrees<=LIMITS.upperRollMax+.01,
+    roll?`max ${f(roll.maxRateDegrees)}°/s (limit ${LIMITS.upperRollMax}; constrained K K audited separately)`:'missing controller');
+  check('upper-arm correction preserves grip chain',!!roll&&roll.maxElbowErrorM<1e-6&&roll.maxDownstreamRotationErrorDegrees<.001,
+    roll?`elbow ${(roll.maxElbowErrorM*1000).toFixed(6)} mm, downstream rotation ${roll.maxDownstreamRotationErrorDegrees.toFixed(6)}°`:'missing controller');
+  const support=R.supportElbow?.stats;
+  check('support elbow preserves hand pose',!!support&&support.samples>0&&support.maxWristErrorM<1e-6&&support.maxHandErrorDegrees<.001,
+    support?`wrist ${(support.maxWristErrorM*1000).toFixed(6)} mm, hand ${support.maxHandErrorDegrees.toFixed(6)}°`:'missing controller');
+  check('support elbow plane bounds',!!support&&Number.isFinite(support.maxRateDegrees)&&support.maxCorrectionDegrees<=55.01,
+    support?`peak rate ${f(support.maxRateDegrees)}°/s, wrist projection ${f(support.maxProjectionDegrees)}°, correction ${f(support.maxCorrectionDegrees)}° (limit 55)`:'missing controller');
+  R.skinning?.update(); // The preceding ROM traces step physics without rendering. Compare palettes from this same pose.
+  const skinTwist=R.twist?.stats,twistPose=R.twist?.snapshot()||[];
+  check('skin twist anatomical bounds',!!skinTwist&&skinTwist.samples>0&&skinTwist.maxUpperDegrees<=90.0001&&skinTwist.maxForeDegrees<=85.0001,
+    skinTwist?`upper ${f(skinTwist.maxUpperDegrees)}° / forearm ${f(skinTwist.maxForeDegrees)}° (limits 90/85)`:'missing skin controller');
+  check('skin twist gradient continuity',!!skinTwist&&Number.isFinite(skinTwist.maxRateDegrees)&&skinTwist.maxRateDegrees<=450.001,
+    skinTwist?`max ${f(skinTwist.maxRateDegrees)}°/s (limit 450)`:'missing skin controller');
+  check('skin twist retains solved endpoint transforms',twistPose.length===4&&twistPose.every(s=>s.finite&&s.fullRollMatrixError<1e-8),
+    `segments ${twistPose.length}, max matrix error ${Math.max(0,...twistPose.map(s=>s.fullRollMatrixError)).toExponential(2)}`);
+  const audit=JSON.parse(await (await import('./joint_audit.js')).jointAudit());
+  for(const report of audit.reports)check(`K K anatomical frames: ${report.name}`,report.violatingSamples===0,`${report.jointSamples} arm samples at ${audit.stepMs} ms; violations ${report.violatingSamples}`);
+  check('K K anatomical shader errors',audit.shaderErrors.length===0,JSON.stringify(audit.shaderErrors));
+  const fullRom=JSON.parse(await (await import('./rom_audit.js')).romAudit());
+  for(const report of fullRom.reports){
+    check(`full-body neutral measurement: ${report.name}`,report.nonFinite===0&&report.steps>0,`${report.steps} steps at 4 ms; invalid values ${report.nonFinite}`);
+    const bodyFlags=Object.keys(report.referenceFlags).filter(k=>/^(neck|spine)\.|^[LR]\.(hip|knee|ankle)\./.test(k));
+    check(`lower-body / neck / spine envelope: ${report.name}`,bodyFlags.length===0,bodyFlags.join(', ')||'all configured projected ranges retained');
+  }
+  const entry=fullRom.reports.find(r=>r.name==='run-combo');
+  check('run→combo avoids reversed elbow branch',entry.ranges['R.elbow.flexion'].min>=-10,`projected minimum ${f(entry.ranges['R.elbow.flexion'].min)}°; old reversed branch −178° (diagnostic bound −10°, not a medical RoM limit)`);
+  check('run→combo right elbow plane continuity',Math.max(Math.abs(entry.ranges['R.elbow.offPlane'].min),Math.abs(entry.ranges['R.elbow.offPlane'].max))<=55,'primary arm source-hinge deviation ≤55°; old transition exceeded 80°. Left support follows the hilt and its legacy hinge flags remain in the RoM report; this is not clinical acceptance.');
+  check('run→combo wrist transition rate',entry.rate['R.wrist.flexion'].degreesPerSecond<=3000,`projected rate ${f(entry.rate['R.wrist.flexion'].degreesPerSecond)}°/s; old 6400+°/s`);
+  check('full-body measurement shader errors',fullRom.shaderErrors.length===0,JSON.stringify(fullRom.shaderErrors));
+  const contact=JSON.parse(await (await import('./entry_contact_check.js')).entryContactCheck()),held=contact.reports.find(r=>r.entryBlend).fullyEngaged;
+  check('run→combo left support contact',held.samples>0&&held.worst.gapM<=.03,`fully engaged >95%: worst ${(held.worst.gapM*1000).toFixed(1)} mm (limit 30); partial reach reported separately`);
+  const firstCutMs=I.COMBO[0].keys[3][0];
+  check('run→combo support before first cut',held.first.combo===0&&held.first.actionMs<=firstCutMs,`fully engaged at ${held.first.actionMs} ms in first beat (cut pose ${firstCutMs} ms)`);
+  const recovery=JSON.parse(await (await import('./j_return_check.js')).jReturnCheck('after'));
+  for(const report of recovery.reports){
+    const drift=Math.max(...Object.values(report.lateDeviation));
+    check(`J standing shoulder return: ${report.name}`,drift<=5,`chest-relative upper-arm difference from fresh standing ${f(drift)}° (limit 5°)`);
+  }
+  const windup=JSON.parse(await (await import('./dual_windup_check.js')).dualWindupCheck());
+  for(const report of windup.reports){
+    check(`K K right wind-up: ${report.name}`,report.peakOut.palmOutM>=.25&&report.high.bladeUp>=.4,`outboard ${(report.peakOut.palmOutM*100).toFixed(1)} cm, blade up ${f(Math.asin(report.high.bladeUp)*D)}°`);
+    check(`K K right downward cut: ${report.name}`,report.dropM>=.12&&report.low.bladeUp<=-.3,`hand drop ${(report.dropM*100).toFixed(1)} cm, blade down ${f(Math.asin(-report.low.bladeUp)*D)}°`);
+    check(`K K right grip retained: ${report.name}`,report.maxGripErrorM<1e-6,`palm / original sword grip error ${(report.maxGripErrorM*1000).toFixed(6)} mm`);
+  }
+  lines.push(`REFERENCE REVIEW: ${fullRom.referenceFlagSamples} coordinate samples remain outside review envelopes; see rom-audit.json. Passing game regression does not mean every joint is anatomically correct.`);
   lines.unshift(fail.length ? `MOTION CHECK: ${fail.length} FAIL` : 'MOTION CHECK: all PASS');
   lines.push('Now LOOK at it from every side: await m.views({mode:"run"|"walk"|"combo"}) → 8 frames × front/right/back/left, saved to out/motion-views-<mode>.png — open that file.');
-  try { await fetch('/debug/save?name=motion-check.json', { method: 'POST', body: JSON.stringify({ fail: fail.length, failed: fail, lines, at: Date.now() }, null, 1) }); } catch (e) { lines.push('(could not save out/motion-check.json: ' + e.message + ')'); }
+  try { await fetch('/debug/save?name=motion-check.json', { method: 'POST', body: JSON.stringify({ revision:I.runtimeRevision,fail: fail.length, failed: fail, lines, at: Date.now() }, null, 1) }); } catch (e) { lines.push('(could not save out/motion-check.json: ' + e.message + ')'); }
   return lines.join('\n');
 }
 
@@ -461,14 +511,16 @@ export async function sheet({ mode = 'combo', times, cols = 6, yawOff = 20, pitc
 //   await m.views({mode:'run'})   modes: run | stop (run → stop) | walk | combo | thrust | dual | issen | idle
 //   extra options: skeleton:true (draw the real bones over the body, like the in-game Skeleton toggle), angles:['front'] (subset), times:[...] (ms),
 //   tag:'x' (saves motion-views-<mode>-x.* instead, so a close-up study doesn't replace the definition-of-done capture)
-export async function views({ mode = 'run', pitch = 6, zoom = 1.3, fy = .95, width = .34, save = true, skeleton = false, angles, times: tOverride, tag = '', presses: pOverride } = {}) {
+export async function views({ mode = 'run', pitch = 6, zoom = 1.3, fy = .95, width = .75, save = true, skeleton = false, angles, times: tOverride, tag = '', presses: pOverride, runMs: runOverride, shift: shiftOverride, fn: fnOverride, route, inPlace=true, captureFrames = window.__motionCaptureFrames === true, saveFrames = false } = {}) {
   await ready();
+  await Promise.all([R.equipmentCloak?.ready,R.equipmentMask?.ready]);
+  if(typeof window.__motionSkeletonOverride==='boolean')skeleton=window.__motionSkeletonOverride;
   const sc0 = rig.root.parent; let k = rig.katana; while (k.parent && k.parent !== sc0) k = k.parent;
   const keep = new Set([rig.root, k, rig.katana2]); for (const e of rig.eyes) { let p = e; while (p.parent && p.parent !== sc0) p = p.parent; keep.add(p); }
   for (const s of rig.real?.backSwords || []) keep.add(s.g);
   for (const c of sc0.children) { if (keep.has(c) || c.isLight || c.isCamera || (c.isMesh && c.renderOrder === 5) || (c.type === 'Object3D' && !c.children.length)) continue; if (skeleton && c.renderOrder === 10) continue; c.visible = false; }
-  const bb = document.getElementById('bBones');
-  if (skeleton && bb && bb.getAttribute('aria-pressed') !== 'true') bb.click();
+  const bb = document.getElementById('bBones'),bonesBefore=bb?.getAttribute('aria-pressed')==='true';
+  if(bb&&bonesBefore!==skeleton)bb.click();
   const ev = (a, n, step) => Array.from({ length: n }, (_, i) => a + i * step);
   const plan = { run: { runMs: 1500, times: ev(860, 8, 79) },   // one 0.633 s RunningV2 cycle, steady speed
                  stop: { runMs: 1200, times: [1100, 1180, 1240, 1300, 1360, 1440, 1560, 1800] },
@@ -476,56 +528,97 @@ export async function views({ mode = 'run', pitch = 6, zoom = 1.3, fy = .95, wid
                  idle: { times: ev(600, 8, 120) },
                  combo: { presses: [0, 420, 860], times: [100, 190, 300, 450, 600, 760, 1000, 1250] },
                  thrust: { presses: [0], fn: 'pressK', times: [60, 170, 220, 260, 300, 420, 640, 900] },
-                 dual: { presses: [0, 340], fn: 'pressK', times: [700, 900, 1080, 1180, 1320, 1640, 1880, 2200] },
+                 dual: { presses: [0, 340], fn: 'pressK', times: [700, 1000, 1300, 1680, 1900, 2100, 2500, 3100] },
                  issen: { presses: [0], fn: 'pressL', times: [250, 540, 610, 640, 700, 1150, 1320, 1600] } }[mode];
   if (!plan) throw new Error('views: unknown mode ' + mode);
   if (tOverride) plan.times = tOverride;
   if (pOverride) plan.presses = pOverride;   // e.g. a single J: presses:[0]
+  if (runOverride!==undefined) plan.runMs=runOverride;
+  if (shiftOverride!==undefined) plan.shift=shiftOverride;
+  if (fnOverride!==undefined) plan.fn=fnOverride;
+  const anatomical=(await import('./anatomical_measure.js')).createAnatomicalMeasure(I);
   const ANG = [['front', 0], ['right', -90], ['back', 180], ['left', 90]].filter(a => !angles || angles.includes(a[0]));
   const lunged = { combo: I.COMBO, thrust: [I.ATTACK2, I.DUAL], dual: [I.ATTACK2, I.DUAL], issen: [I.ISSEN] }[mode] || [];
-  for (const d of lunged) { d._lunge ??= d.lunge; d.lunge = 0; }   // keep the character in frame
-  reset();
-  const cv = document.querySelector('canvas'), W = cv.width, H = cv.height, cw = Math.round(W * width), ch = Math.round(H * .8), cx = Math.round(W * .5 - cw / 2);
-  const cols = plan.times.length, s = Math.min(3600 / (cols * cw), 1), lab = 34;
-  let out = document.getElementById('motionSheet');
-  if (!out) { out = document.createElement('canvas'); out.id = 'motionSheet'; out.style.cssText = 'position:fixed;left:0;top:0;z-index:99;background:#fff;max-width:100vw;max-height:100vh'; document.body.appendChild(out); }
-  out.style.display = 'block'; out.width = cols * cw * s; out.height = ANG.length * (ch * s + lab);
-  const g = out.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, out.width, out.height);
-  const frames = [];
-  if (plan.runMs) key('a', true, plan.shift);
-  let t = 0, i = 0, pi = 0;
-  while (i < cols) {
-    if (plan.runMs && t === plan.runMs) key('a', false, plan.shift);
-    if (pi < (plan.presses || []).length && t >= plan.presses[pi]) { (plan.fn ? I[plan.fn] : I.press)(); pi++; }
-    if (t >= plan.times[i]) {
-      const m = poseMetrics(), saved = [I.CAM.yaw.y, I.CAM.yawT, I.CAM.focus.clone(), I.CAM.pitch.y, I.CAM.pitchT, I.CAM.zoom.y, I.CAM.zoomT];
-      ANG.forEach(([name, yawOff], r) => {
-        I.CAM.yaw.y = I.CAM.yawT = rig.root.rotation.y * D + yawOff; I.CAM.pitch.y = I.CAM.pitchT = pitch; I.CAM.zoom.y = I.CAM.zoomT = zoom; I.CAM.focus.set(S.pos.x, fy, S.pos.z); I.frame(0, 0);
-        const x = i * cw * s, y = r * (ch * s + lab);
-        g.drawImage(cv, cx, 0, cw, ch, x, y, cw * s, ch * s); g.strokeStyle = '#999'; g.strokeRect(x, y, cw * s, ch * s);
-        g.fillStyle = '#c00'; g.font = 'bold 20px sans-serif'; g.fillText(`${name} ${plan.times[i]}ms`, x + 6, y + 22);
-        g.fillStyle = '#222'; g.font = '15px sans-serif';
-        g.fillText(`torso roll ${m.torsoRoll}°  shoulders ${m.shoulderRoll}°  pelvis ${m.pelvisRoll}°  head ${m.headRoll}°`, x + 4, y + ch * s + 15);
-        g.fillText(`L−R shoulder ${m.shoulderDyCm} cm  clavicle L ${m.clavL}° R ${m.clavR}°  pitch ${m.torsoPitch}°`, x + 4, y + ch * s + 31);
-      });
-      [I.CAM.yaw.y, I.CAM.yawT] = saved; I.CAM.focus.copy(saved[2]); I.CAM.pitch.y = saved[3]; I.CAM.pitchT = saved[4]; I.CAM.zoom.y = saved[5]; I.CAM.zoomT = saved[6];   // movement is camera-relative: don't steer the run
-      frames.push({ t: plan.times[i], speed: +Math.hypot(S.vel.x, S.vel.z).toFixed(2), ...m });
-      i++; continue;
+  const lungeBefore=lunged.map(d=>d.lunge),pixelRatio=I.renderer.getPixelRatio();
+  const camera=I.camera,savedCamera=camera.clone(),captureId=`${mode}-${Date.now()}`;
+  const send=(type,detail)=>{if(captureFrames&&window.parent!==window)window.parent.postMessage({type,...detail},location.origin);};
+  const sourceBones=[...new Set(Object.values(R.bone))];
+  const phase=()=>{
+    const a=S.act,d=I.DUAL;
+    if(!a){const moving=Math.hypot(S.vel.x,S.vel.z)>.05,label=moving?(plan.shift?'เดิน':'วิ่ง'):'พัก / คืนท่า';return {action:moving?'locomotion':'idle',actionLabel:label,actionTimeMs:null,stage:label};}
+    if(a.def===d){const t=a.t;return {action:'dual',actionLabel:'K K',actionTimeMs:Math.round(t),stage:t<d.reachEnd*.44?'เตรียมแขน':t<d.draw?'ยกไหล่ไปจับด้าม':t<d.extractEnd?'ชักดาบขึ้น':t<d.spreadEnd?'เหยียดออกด้านข้าง':t<d.cutEnd?'ฟันลง':t<d.returnStart?'ตามแรงฟัน':t<d.sheathe?'เก็บดาบ':'ปล่อยมือ / คืนท่า'};}
+    return {action:a.def===I.ATTACK2?'thrust':'attack',actionLabel:a.def.kanji||mode,actionTimeMs:Math.round(a.t),stage:a.def.kanji||mode};
+  };
+  const blobOf=canvas=>new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+  let data,saved='',maxPoseDriftDegrees=0,maxPosePositionDriftM=0;
+  try{
+    if(inPlace)for(const d of lunged)d.lunge=0;
+    if(captureFrames||saveFrames)I.renderer.setPixelRatio(1);
+    reset();
+    const cv=I.renderer.domElement,W=cv.width,H=cv.height,cw=Math.round(W*width),ch=Math.round(H*.8),cx=Math.round((W-cw)/2);
+    const cols=plan.times.length,s=Math.min(3600/(cols*cw),1),lab=34;
+    let out=document.getElementById('motionSheet');
+    if(!out){out=document.createElement('canvas');out.id='motionSheet';out.style.cssText='position:fixed;left:0;top:0;z-index:99;background:#fff;max-width:100vw;max-height:100vh';document.body.appendChild(out);}
+    out.style.display='block';out.width=cols*cw*s;out.height=ANG.length*(ch*s+lab);
+    const g=out.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,out.width,out.height);
+    const frames=[];
+    send('motion-capture-start',{captureId,mode,times:plan.times,angles:ANG.map(a=>a[0]),width:W,height:H,skeleton});
+    if(route)key(route[0],true);else if(plan.runMs)key('a',true,plan.shift);
+    let t=0,i=0,pi=0,ri=0;
+    while(i<cols){
+      if(route&&ri<route.length&&t>=(ri+1)*1000){key(route[ri],false);ri++;if(ri<route.length)key(route[ri],true);}
+      if(!route&&plan.runMs&&t===plan.runMs)key('a',false,plan.shift);
+      if(pi<(plan.presses||[]).length&&t>=plan.presses[pi]){(plan.fn?I[plan.fn]:I.press)();pi++;}
+      if(t>=plan.times[i]){
+        const m=poseMetrics(),info={t:plan.times[i],simulatedTimeMs:t,...phase(),arms:{L:armAngles('L'),R:armAngles('R')},anatomy:anatomical.sample(),speed:+Math.hypot(S.vel.x,S.vel.z).toFixed(2),...m};
+        const pose=sourceBones.map(b=>({p:b.position.clone(),q:b.quaternion.clone().normalize()}));
+        for(let r=0;r<ANG.length;r++){
+          const [name,yawOff]=ANG[r],yaw=rig.root.rotation.y+yawOff/D,tilt=pitch/D,look=new V(S.pos.x,fy,S.pos.z);
+          // Render an exact camera. Game camera spring velocity, focus mode,
+          // pan and shake must not leak into a diagnostic view or advance it.
+          camera.position.copy(look).add(new V(Math.sin(yaw)*Math.cos(tilt),Math.sin(tilt),Math.cos(yaw)*Math.cos(tilt)).multiplyScalar(40));
+          camera.up.set(0,1,0);camera.lookAt(look);camera.top=zoom;camera.bottom=-zoom;camera.left=-zoom*W/H;camera.right=zoom*W/H;camera.updateProjectionMatrix();camera.updateMatrixWorld(true);
+          R.skinning?.update();R.equipmentCloak?.prepareRender();I.renderer.render(sc0,camera);
+          (info.views??={})[name]=Object.fromEntries(['L','R'].map(side=>[side,[R.arm[side].up,R.arm[side].fo,R.arm[side].ha,R.bone.Head].map(b=>{const p=b.getWorldPosition(new V()).project(camera);return [(p.x+1)*W/2,(1-p.y)*H/2];})]));
+          let drift=0,positionDrift=0;
+          sourceBones.forEach((b,n)=>{drift=Math.max(drift,pose[n].q.angleTo(b.quaternion.clone().normalize())*D);positionDrift=Math.max(positionDrift,pose[n].p.distanceTo(b.position));});
+          maxPoseDriftDegrees=Math.max(maxPoseDriftDegrees,drift);maxPosePositionDriftM=Math.max(maxPosePositionDriftM,positionDrift);
+          const x=i*cw*s,y=r*(ch*s+lab);
+          g.drawImage(cv,cx,0,cw,ch,x,y,cw*s,ch*s);g.strokeStyle='#999';g.strokeRect(x,y,cw*s,ch*s);
+          g.fillStyle='#c00';g.font='bold 20px sans-serif';g.fillText(`${name} ${t}ms`,x+6,y+22);
+          g.fillStyle='#222';g.font='15px sans-serif';g.fillText(`torso roll ${m.torsoRoll}° shoulders ${m.shoulderRoll}° pelvis ${m.pelvisRoll}° head ${m.headRoll}°`,x+4,y+ch*s+15);
+          g.fillText(`L−R shoulder ${m.shoulderDyCm} cm clavicle L ${m.clavL}° R ${m.clavR}° pitch ${m.torsoPitch}°`,x+4,y+ch*s+31);
+          if(captureFrames||saveFrames){
+            // Keep the full framebuffer, not the downsampled contact-sheet tile.
+            const shot=document.createElement('canvas');shot.width=W;shot.height=H;shot.getContext('2d').drawImage(cv,0,0);
+            const blob=await blobOf(shot);shot.width=shot.height=0;
+            if(saveFrames)await fetch(`/debug/save?name=motion-frame-${tag||mode}-${t}-${name}.png`,{method:'POST',body:blob});
+            send('motion-capture-frame',{captureId,index:i,angle:name,blob,meta:{...info,width:W,height:H,skeleton,poseDriftDegrees:drift,posePositionDriftM:positionDrift,camera:{yawOffsetDegrees:yawOff,pitchDegrees:pitch,zoom,focusY:fy}}});
+          }
+        }
+        frames.push(info);i++;continue;
+      }
+      I.frame(0,4,true);t+=4;
     }
-    I.frame(0, 4, true); t += 4;
+    key('a',false,plan.shift);
+    data={revision:I.runtimeRevision,mode,calibration:anatomical.calibration,angles:ANG.map(a=>a[0]),frames,capture:{width:W,height:H,maxPoseDriftDegrees,maxPosePositionDriftM},at:Date.now()};
+    const sheetBlob=save||captureFrames?await blobOf(out):null;
+    if(save){
+      try{
+        await fetch(`/debug/save?name=motion-views-${mode}${tag?'-'+tag:''}.png`,{method:'POST',body:sheetBlob});
+        await fetch(`/debug/save?name=motion-views-${mode}${tag?'-'+tag:''}.json`,{method:'POST',body:JSON.stringify(data,null,1)});
+        saved=` → saved out/motion-views-${mode}${tag?'-'+tag:''}.png + .json (open the PNG to look at it)`;
+      }catch(e){saved=' (save failed: '+e.message+')';}
+    }
+    send('motion-capture-complete',{captureId,blob:sheetBlob,data});
+  }finally{
+    if(route)for(const k of route)key(k,false);
+    key('a',false,plan.shift);lunged.forEach((d,i)=>{d.lunge=lungeBefore[i];});
+    camera.copy(savedCamera);camera.updateMatrixWorld(true);
+    if(captureFrames||saveFrames)I.renderer.setPixelRatio(pixelRatio);
+    if(bb&&(bb.getAttribute('aria-pressed')==='true')!==bonesBefore)bb.click();
   }
-  key('a', false, plan.shift);
-  for (const d of lunged) d.lunge = d._lunge;
-  const data = { mode, angles: ANG.map(a => a[0]), frames, at: Date.now() };
-  let saved = '';
-  if (save) {
-    try {
-      const blob = await new Promise(r => out.toBlob(r, 'image/png'));
-      await fetch(`/debug/save?name=motion-views-${mode}${tag ? "-" + tag : ""}.png`, { method: 'POST', body: blob });
-      await fetch(`/debug/save?name=motion-views-${mode}${tag ? "-" + tag : ""}.json`, { method: 'POST', body: JSON.stringify(data, null, 1) });
-      saved = ` → saved out/motion-views-${mode}${tag ? "-" + tag : ""}.png + .json (open the PNG to look at it)`;
-    } catch (e) { saved = ' (save failed: ' + e.message + ')'; }
-  }
+  const cols=plan.times.length,frames=data.frames;
   const sw = k => { const v = frames.map(f => f[k]); return `${Math.min(...v)}…${Math.max(...v)}`; };
   return `views ${mode}: ${cols} frames × ${ANG.length} angles; torso roll ${sw('torsoRoll')}°, shoulder line ${sw('shoulderRoll')}°, pelvis ${sw('pelvisRoll')}°, head ${sw('headRoll')}°${saved}`;
 }
